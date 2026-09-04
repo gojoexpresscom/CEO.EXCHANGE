@@ -510,7 +510,7 @@ export default function AuthScreen({ onAuth }: Props) {
     <main style={styles.page}>
       <div style={styles.logoWrap}>
         <img
-          src="/ceo-auth-reference.svg"
+          src="/ceo-auth-reference-transparent.png"
           alt="CEO Exchange"
           style={styles.logo}
         />
