@@ -270,7 +270,13 @@ function initials(name: string) {
   return name.trim().slice(0, 2).toUpperCase() || "CE";
 }
 
-export default function Home({ onLogout }: { onLogout?: () => void }) {
+export default function Home({
+  onLogout,
+  onTrade,
+}: {
+  onLogout?: () => void;
+  onTrade?: (symbol: string) => void;
+}) {
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [wallets, setWallets] = useState<Wallet[]>([]);
