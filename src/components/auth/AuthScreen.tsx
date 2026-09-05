@@ -915,7 +915,7 @@ export default function AuthScreen({ onAuth }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
-    padding: "72px 18px 34px",
+    padding: "22px 18px 34px",
     background: "radial-gradient(circle at 50% 20%, rgba(245,181,27,.055), transparent 30%), #111111",
     color: "#f5f5f5",
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -931,7 +931,7 @@ const styles: Record<string, React.CSSProperties> = {
   logoWrap: {
     width: "100%",
     maxWidth: 500,
-    height: 370,
+    height: 300,
     margin: "0 auto 0",
     display: "flex",
     alignItems: "center",
