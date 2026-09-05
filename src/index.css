@@ -2,19 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body,
-#root {
-  min-height: 100%;
-  margin: 0;
-}
-
-html {
-  background: #080808;
-}
-
-body {
-  background: #080808;
+:root {
+  background: #050505;
   color: #ffffff;
   font-family:
     Inter,
@@ -24,6 +13,28 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  min-height: 100%;
+  background: #050505;
+  color-scheme: dark;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+  background: #050505;
+  color: #ffffff;
+}
+
+#root {
+  min-height: 100vh;
+  background: #050505;
 }
 
 * {
@@ -31,6 +42,48 @@ body {
 }
 
 button,
-input {
+input,
+textarea,
+select {
   font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  color-scheme: dark;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #68686d;
+  opacity: 1;
+}
+
+select {
+  appearance: auto;
+}
+
+select option {
+  background: #101010;
+  color: #ffffff;
+}
+
+img {
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 14px;
+  }
 }
