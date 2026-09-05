@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import TermsScreen from "../legal/TermsScreen";
 import PrivacyScreen from "../legal/PrivacyScreen";
@@ -79,7 +79,49 @@ function Arrow({ left = false }: { left?: boolean }) {
 }
 
 function Eye({ open }: { open: boolean }) {
-  return <span aria-hidden="true">{open ? "◉" : "◌"}</span>;
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+      {open ? (
+        <>
+          <path d="M2.5 12s3.2-5 9.5-5 9.5 5 9.5 5-3.2 5-9.5 5-9.5-5-9.5-5Z" fill="none" stroke="currentColor" strokeWidth="1.8"/>
+          <circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.8"/>
+        </>
+      ) : (
+        <>
+          <path d="M3 3l18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <path d="M5.2 8.2C3.5 9.4 2.5 12 2.5 12s3.2 5 9.5 5c1.7 0 3.2-.35 4.5-.88" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <path d="M9.4 5.42C10.08 5.15 10.8 5 12 5c6.3 0 9.5 5 9.5 5s-.7 1.1-1.9 2.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+        </>
+      )}
+    </svg>
+  );
+}
+
+function MailIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.2" y="5.2" width="17.6" height="13.6" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.9"/>
+      <path d="m4.3 7 7.7 5.7L19.7 7" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4.1" y="10" width="15.8" height="10.5" rx="2" fill="none" stroke="currentColor" strokeWidth="1.9"/>
+      <path d="M7.5 10V7.2a4.5 4.5 0 0 1 9 0V10" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+function PasskeyIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="8.3" cy="10.3" r="3.1" fill="none" stroke="currentColor" strokeWidth="1.8"/>
+      <path d="M10.9 12.6 20 21.7M14.2 15.9h2.6v-2.6h2.5v-2.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
 }
 
 function GoogleIcon() {
@@ -189,10 +231,6 @@ export default function AuthScreen({ onAuth }: Props) {
 
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined;
 
-  const checks = useMemo(
-    () => Object.fromEntries(PASSWORD_RULES.map(([label, test]) => [label, test(password)])),
-    [password],
-  );
 
   const clearNotice = () => {
     setError("");
@@ -275,6 +313,7 @@ export default function AuthScreen({ onAuth }: Props) {
         ...(emailValue ? { email: emailValue } : { phone: phoneValue! }),
         password: makeTempPassword(),
         options: {
+          ...(phoneValue ? { channel: "sms" } : {}),
           captchaToken: turnstileSiteKey ? turnstileToken : undefined,
           data: {
             signup_method: method,
@@ -650,7 +689,7 @@ export default function AuthScreen({ onAuth }: Props) {
 
             <label style={styles.label}>Email / Mobile Number</label>
             <div style={styles.field}>
-              <span style={styles.icon}>✉</span>
+              <span style={styles.icon}><MailIcon /></span>
               <input
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
@@ -663,7 +702,7 @@ export default function AuthScreen({ onAuth }: Props) {
 
             <label style={styles.label}>Password</label>
             <div style={styles.field}>
-              <span style={styles.icon}>♙</span>
+              <span style={styles.icon}><LockIcon /></span>
               <input
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -711,17 +750,19 @@ export default function AuthScreen({ onAuth }: Props) {
                 setLoading(false);
               }
             }}>
-              ◉ &nbsp; Login with Passkey
+              <span style={styles.passkeyIcon}><PasskeyIcon /></span> Login with Passkey
             </button>
 
             <div style={styles.divider}><span>Or continue with</span></div>
 
-            <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}>
-              <GoogleIcon /> Continue with Google
-            </button>
-            <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}>
-              <XIcon /> Continue with X (Twitter)
-            </button>
+            <div style={styles.socialGrid}>
+              <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}>
+                <GoogleIcon /> Google
+              </button>
+              <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}>
+                <XIcon /> X
+              </button>
+            </div>
           </>
         )}
 
@@ -737,7 +778,7 @@ export default function AuthScreen({ onAuth }: Props) {
 
             <label style={styles.label}>Email / Mobile Number</label>
             <div style={styles.field}>
-              <span style={styles.icon}>✉</span>
+              <span style={styles.icon}><MailIcon /></span>
               <input
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
@@ -853,7 +894,7 @@ export default function AuthScreen({ onAuth }: Props) {
             </p>
 
             <div style={styles.field}>
-              <span style={styles.icon}>♙</span>
+              <span style={styles.icon}><LockIcon /></span>
               <input
                 value={passwordCreateScreen ? password : confirmPassword}
                 onChange={(e) => passwordCreateScreen ? setPassword(e.target.value) : setConfirmPassword(e.target.value)}
@@ -906,7 +947,7 @@ export default function AuthScreen({ onAuth }: Props) {
             <p style={styles.centerText}>Enter your email and we’ll send a secure 6-digit recovery code.</p>
             <label style={styles.label}>Email</label>
             <div style={styles.field}>
-              <span style={styles.icon}>✉</span>
+              <span style={styles.icon}><MailIcon /></span>
               <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} type="email" placeholder="Enter your email" autoComplete="email" style={styles.input} />
             </div>
             <Turnstile siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
@@ -925,8 +966,8 @@ export default function AuthScreen({ onAuth }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
-    padding: "18px 20px 52px",
-    background: "radial-gradient(circle at 50% 9%, rgba(245,181,27,.09), transparent 31%), #090909",
+    padding: "72px 18px 34px",
+    background: "radial-gradient(circle at 50% 20%, rgba(245,181,27,.055), transparent 30%), #111111",
     color: "#f5f5f5",
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     position: "relative",
@@ -936,17 +977,20 @@ const styles: Record<string, React.CSSProperties> = {
     position: "fixed",
     inset: 0,
     pointerEvents: "none",
-    background: "radial-gradient(circle at 50% 45%, rgba(245,181,27,.035), transparent 42%)",
+    background: "linear-gradient(180deg, rgba(255,255,255,.012), transparent 28%)",
   },
   logoWrap: {
     width: "100%",
-    maxWidth: 680,
-    margin: "0 auto 14px",
-    textAlign: "center",
+    maxWidth: 500,
+    height: 370,
+    margin: "0 auto 0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   logo: {
-    width: "min(78vw, 500px)",
-    maxHeight: 310,
+    width: "min(68vw, 330px)",
+    maxHeight: 300,
     objectFit: "contain",
     display: "block",
     margin: "0 auto",
@@ -957,10 +1001,10 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 680,
     margin: "0 auto",
     padding: "28px 28px 30px",
-    borderRadius: 28,
-    border: "1px solid rgba(245,181,27,.62)",
-    background: "linear-gradient(145deg, #171717, #101010)",
-    boxShadow: "0 0 40px rgba(245,181,27,.08)",
+    borderRadius: 26,
+    border: "1px solid rgba(245,181,27,.36)",
+    background: "#0c0c0c",
+    boxShadow: "0 -10px 45px rgba(0,0,0,.24)",
   },
   passwordCard: { maxWidth: 620 },
   headerRow: {
@@ -968,52 +1012,54 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 16,
-    marginBottom: 22,
+    marginBottom: 18,
   },
   title: {
     margin: 0,
-    fontSize: "clamp(28px, 6vw, 40px)",
-    lineHeight: 1.08,
+    fontSize: "clamp(28px, 6vw, 38px)",
+    lineHeight: 1.05,
     fontWeight: 800,
+    letterSpacing: "-.7px",
   },
   signupTitle: {
-    margin: "0 0 20px",
-    fontSize: "clamp(30px, 6vw, 38px)",
-    lineHeight: 1.15,
+    margin: "0 0 16px",
+    fontSize: "clamp(28px, 6vw, 36px)",
+    lineHeight: 1.1,
     fontWeight: 800,
   },
-  subtitle: { margin: "7px 0 0", color: "#858585", fontSize: 15 },
-  centerTitle: { margin: "8px 0 12px", textAlign: "center", fontSize: "clamp(27px, 6vw, 34px)", fontWeight: 800 },
-  centerText: { margin: "8px 0", color: "#999", fontSize: 15, lineHeight: 1.55, textAlign: "center" },
-  emailText: { margin: "10px 0", textAlign: "center", color: "#fff", fontSize: 16, overflowWrap: "anywhere" },
-  goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 15, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", padding: "8px 0" },
-  circleBack: { width: 48, height: 48, borderRadius: "50%", border: "1px solid rgba(245,181,27,.35)", background: "#171717", color: GOLD_LIGHT, cursor: "pointer", fontSize: 22 },
-  label: { display: "block", margin: "4px 0 8px", fontSize: 13, fontWeight: 700, color: "#cfcfcf" },
-  field: { minHeight: 62, marginBottom: 13, padding: "0 15px", display: "flex", alignItems: "center", borderRadius: 15, border: "1px solid #3c3c3c", background: "#0c0c0c" },
-  icon: { width: 28, flexShrink: 0, color: GOLD_LIGHT, fontSize: 19 },
-  input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 16, padding: "4px 0" },
-  eyeButton: { border: 0, background: "transparent", color: "#aaa", cursor: "pointer", padding: 5, fontSize: 17 },
-  turnstile: { minHeight: 72, display: "flex", alignItems: "center", justifyContent: "center", margin: "4px 0 8px", overflow: "hidden" },
-  turnstileMissing: { minHeight: 58, display: "flex", alignItems: "center", justifyContent: "center", margin: "4px 0 12px", padding: "10px 14px", borderRadius: 14, border: "1px dashed rgba(245,181,27,.35)", color: "#999", fontSize: 12, textAlign: "center" },
-  forgot: { display: "block", margin: "0 4px 14px auto", border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 13, cursor: "pointer" },
-  primaryButton: { width: "100%", minHeight: 62, marginTop: 10, border: 0, borderRadius: 15, background: "linear-gradient(135deg, #ffca3a, #f1a900)", color: "#111", fontSize: 16, fontWeight: 900, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 },
-  outlineButton: { width: "100%", minHeight: 56, marginTop: 12, border: "1px solid rgba(245,181,27,.55)", borderRadius: 14, background: "#121212", color: GOLD_LIGHT, fontSize: 15, fontWeight: 700, cursor: "pointer" },
-  divider: { display: "flex", alignItems: "center", gap: 12, margin: "20px 0 12px", color: "#777", fontSize: 12 },
-  socialButton: { width: "100%", minHeight: 54, marginTop: 10, border: "1px solid #414141", borderRadius: 13, background: "#151515", color: "#eee", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, fontWeight: 700 },
+  subtitle: { margin: "7px 0 0", color: "#707070", fontSize: 14 },
+  centerTitle: { margin: "4px 0 10px", textAlign: "center", fontSize: "clamp(26px, 6vw, 34px)", fontWeight: 800 },
+  centerText: { margin: "7px 0", color: "#858585", fontSize: 14, lineHeight: 1.5, textAlign: "center" },
+  emailText: { margin: "9px 0", textAlign: "center", color: "#f5f5f5", fontSize: 15, overflowWrap: "anywhere" },
+  goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 15, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", padding: "6px 0" },
+  circleBack: { width: 40, height: 40, borderRadius: "50%", border: "1px solid #333", background: "#141414", color: "#eee", cursor: "pointer", fontSize: 20 },
+  label: { display: "block", margin: "2px 0 7px", fontSize: 12, fontWeight: 700, color: "#9a9a9a" },
+  field: { minHeight: 58, marginBottom: 11, padding: "0 16px", display: "flex", alignItems: "center", borderRadius: 13, border: "1px solid #2c2c2c", background: "#17171b" },
+  icon: { width: 29, height: 29, flexShrink: 0, color: GOLD_LIGHT, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 16, padding: "3px 0" },
+  eyeButton: { border: 0, background: "transparent", color: "#6c6c70", cursor: "pointer", padding: 5, display: "inline-flex" },
+  turnstile: { minHeight: 72, display: "flex", alignItems: "center", justifyContent: "center", margin: "3px 0 5px", overflow: "hidden" },
+  turnstileMissing: { minHeight: 56, display: "flex", alignItems: "center", justifyContent: "center", margin: "3px 0 9px", padding: "9px 12px", borderRadius: 12, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
+  forgot: { display: "block", margin: "0 2px 11px auto", border: 0, background: "transparent", color: "#b77c27", fontSize: 13, cursor: "pointer" },
+  primaryButton: { width: "100%", minHeight: 58, marginTop: 8, border: 0, borderRadius: 13, background: "linear-gradient(135deg, #ffbd22, #e99a00)", color: "#111", fontSize: 16, fontWeight: 850, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 9 },
+  outlineButton: { width: "100%", minHeight: 54, marginTop: 10, border: "1px solid #3a3a3d", borderRadius: 13, background: "#0c0c0c", color: "#eee", fontSize: 15, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
+  passkeyIcon: { color: GOLD_LIGHT, display: "inline-flex", alignItems: "center" },
+  divider: { display: "flex", alignItems: "center", gap: 12, margin: "18px 0 8px", color: "#626266", fontSize: 12 },
+  socialButton: { width: "100%", minHeight: 50, marginTop: 9, border: "1px solid #27272b", borderRadius: 13, background: "#1b1b20", color: "#eee", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, fontWeight: 600 },
   socialGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 },
-  globalRow: { display: "flex", alignItems: "center", gap: 12, color: "#aaa", fontSize: 15, marginBottom: 25 },
-  referral: { width: "100%", padding: "8px 2px 15px", border: 0, background: "transparent", color: "#eee", fontSize: 14, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between" },
-  agreeRow: { display: "flex", alignItems: "flex-start", gap: 9, margin: "8px 0 14px", color: "#aaa", fontSize: 12, lineHeight: 1.55 },
-  checkbox: { width: 20, height: 20, marginTop: 1, accentColor: GOLD_LIGHT, flexShrink: 0 },
+  globalRow: { display: "flex", alignItems: "center", gap: 9, color: "#8c8c8f", fontSize: 13, marginBottom: 17 },
+  referral: { width: "100%", padding: "5px 2px 11px", border: 0, background: "transparent", color: "#d8d8d8", fontSize: 13, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between" },
+  agreeRow: { display: "flex", alignItems: "flex-start", gap: 8, margin: "7px 0 11px", color: "#7f7f83", fontSize: 11, lineHeight: 1.5 },
+  checkbox: { width: 18, height: 18, marginTop: 1, accentColor: GOLD_LIGHT, flexShrink: 0 },
   inlineLink: { padding: 0, border: 0, background: "transparent", color: GOLD_LIGHT, cursor: "pointer", fontSize: "inherit", textDecoration: "underline" },
-  otpRow: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, margin: "24px 0 16px" },
-  otpBox: { width: "100%", minWidth: 0, aspectRatio: "1 / 1.08", maxHeight: 64, border: "1px solid rgba(245,181,27,.45)", borderRadius: 12, background: "#101010", color: "#fff", textAlign: "center", fontSize: 24, fontWeight: 800, outline: "none" },
-  resend: { display: "block", margin: "0 auto 10px", border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 13, fontWeight: 750, cursor: "pointer" },
-  rules: { display: "grid", gap: 8, margin: "8px 0 18px", padding: "12px 14px", borderRadius: 13, background: "#0d0d0d", border: "1px solid #272727" },
-  rule: { display: "flex", alignItems: "center", gap: 9, color: "#aaa", fontSize: 12 },
-  confirmHint: { fontSize: 12, margin: "6px 0 10px", textAlign: "center" },
-  error: { marginTop: 14, padding: "11px 13px", borderRadius: 12, background: "rgba(255,70,70,.10)", border: "1px solid rgba(255,70,70,.35)", color: "#ff9d9d", fontSize: 12, lineHeight: 1.45 },
-  message: { marginTop: 14, padding: "11px 13px", borderRadius: 12, background: "rgba(245,181,27,.08)", border: "1px solid rgba(245,181,27,.30)", color: "#f8cf67", fontSize: 12, lineHeight: 1.45 },
+  otpRow: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 7, margin: "20px 0 13px" },
+  otpBox: { width: "100%", minWidth: 0, height: 56, border: "1px solid #343438", borderRadius: 11, background: "#17171b", color: "#fff", textAlign: "center", fontSize: 22, fontWeight: 800, outline: "none" },
+  resend: { display: "block", margin: "0 auto 8px", border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  rules: { display: "grid", gap: 6, margin: "6px 0 14px", padding: "10px 12px", borderRadius: 12, background: "#111113", border: "1px solid #27272a" },
+  rule: { display: "flex", alignItems: "center", gap: 8, color: "#99999d", fontSize: 11 },
+  confirmHint: { fontSize: 11, margin: "5px 0 8px", textAlign: "center" },
+  error: { marginTop: 11, padding: "10px 12px", borderRadius: 11, background: "rgba(255,70,70,.08)", border: "1px solid rgba(255,70,70,.26)", color: "#ff9d9d", fontSize: 11, lineHeight: 1.4 },
+  message: { marginTop: 11, padding: "10px 12px", borderRadius: 11, background: "rgba(245,181,27,.06)", border: "1px solid rgba(245,181,27,.22)", color: "#e7bd58", fontSize: 11, lineHeight: 1.4 },
   legalWrap: { width: "100%", maxWidth: 900, margin: "0 auto" },
 };
 
@@ -1023,13 +1069,14 @@ if (typeof document !== "undefined") {
     const style = document.createElement("style");
     style.id = id;
     style.textContent = `
+      * { box-sizing: border-box; }
+      button { touch-action: manipulation; }
+      button:disabled { opacity: .48; cursor: not-allowed; }
+      input::placeholder { color: #68686d; }
+      input, button { -webkit-tap-highlight-color: transparent; }
       @media (max-width: 520px) {
-        button { touch-action: manipulation; }
-        .card { width: 100%; }
+        body { overflow-x: hidden; }
       }
-      button:disabled { opacity: .5; cursor: not-allowed; }
-      input::placeholder { color: #626262; }
-      a, button { -webkit-tap-highlight-color: transparent; }
     `;
     document.head.appendChild(style);
   }
