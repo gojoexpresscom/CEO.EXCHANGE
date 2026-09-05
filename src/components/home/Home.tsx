@@ -144,22 +144,31 @@ type Network = {
   privy_chain_type: string | null;
   min_withdrawal: number | null;
   withdrawal_fee: number | null;
-  min_deposit: number | null;
-  required_confirmations: number | null;
+  is_active: boolean | null;
   deposit_enabled: boolean | null;
   withdrawal_enabled: boolean | null;
-  is_active: boolean | null;
+  min_deposit: number | null;
+  required_confirmations: number | null;
+  privy_network_identifier: string | null;
   assets?: { symbol: string; name: string } | null;
 };
 
-type FeeScheduleNetwork = {
-  currency: string;
-  network: string;
-  min_deposit: number;
-  min_withdrawal: number;
-  platform_fee_percent: number;
-  platform_fee_flat: number;
-  default_network_fee: number;
+type WalletAddress = {
+  id: string;
+  user_id: string;
+  network_id: string;
+  address: string;
+  privy_wallet_id: string | null;
+  chain_type: string | null;
+};
+
+type DepositAddress = {
+  id: string;
+  user_id: string | null;
+  coin: string | null;
+  network: string | null;
+  address: string | null;
+  created_at: string | null;
 };
 
 type Deposit = {
@@ -179,7 +188,6 @@ type Withdrawal = {
   network: string | null;
   amount: number;
   fee: number;
-  net_amount?: number | null;
   destination_address: string;
   status: string | null;
   payout_provider: string | null;
@@ -229,6 +237,7 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
     copy: <><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></>,
     close: <><path d="M6 6l12 12"/><path d="M18 6 6 18"/></>,
     arrow: <path d="m9 18 6-6-6-6"/>,
+    arrowLeft: <path d="m15 18-6-6 6-6"/>,
     chevron: <path d="m7 9 5 5 5-5"/>,
     home: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></>,
     chart: <><path d="M5 19V9"/><path d="M12 19V5"/><path d="M19 19v-7"/><path d="M3 19h18"/></>,
@@ -247,6 +256,11 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
     upload: <><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M4 3h16"/></>,
   };
   return <svg {...common}>{paths[name] ?? paths.menu}</svg>;
+}
+
+function formatAmount(value: number) {
+  if (!Number.isFinite(value)) return "0";
+  return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
 }
 
 function formatMoney(value: number) {
@@ -310,12 +324,14 @@ export default function Home({
   const [giveaways, setGiveaways] = useState<Giveaway[]>([]);
   const [referral, setReferral] = useState<Referral | null>(null);
   const [networks, setNetworks] = useState<Network[]>([]);
-  const [feeSchedules, setFeeSchedules] = useState<FeeScheduleNetwork[]>([]);
+  const [walletAddresses, setWalletAddresses] = useState<WalletAddress[]>([]);
+  const [depositAddresses, setDepositAddresses] = useState<DepositAddress[]>([]);
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [depositResult, setDepositResult] = useState<any>(null);
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("Announcements");
   const [feedTab, setFeedTab] = useState<FeedTab>("CEO Exchange");
   const [marketTab, setMarketTab] = useState<MarketTab>("Hot");
@@ -456,13 +472,22 @@ export default function Home({
   }, []);
 
   const loadNetworks = useCallback(async () => {
-    const { data } = await supabase.from("asset_networks").select("id,asset_id,network_name,payout_provider,privy_chain_type,min_withdrawal,withdrawal_fee,min_deposit,required_confirmations,deposit_enabled,withdrawal_enabled,is_active,assets(symbol,name)").eq("is_active", true).order("network_name");
+    const { data, error: e } = await supabase
+      .from("asset_networks")
+      .select("id,asset_id,network_name,payout_provider,privy_chain_type,min_withdrawal,withdrawal_fee,is_active,deposit_enabled,withdrawal_enabled,min_deposit,required_confirmations,privy_network_identifier,assets(symbol,name)")
+      .eq("is_active", true)
+      .order("network_name");
+    if (e) throw e;
     setNetworks((data ?? []) as unknown as Network[]);
   }, []);
 
-  const loadFeeSchedules = useCallback(async () => {
-    const { data } = await supabase.from("fee_schedules_networks").select("currency,network,min_deposit,min_withdrawal,platform_fee_percent,platform_fee_flat,default_network_fee");
-    setFeeSchedules((data ?? []) as FeeScheduleNetwork[]);
+  const loadDepositAddresses = useCallback(async (id: string) => {
+    const [{ data: wa }, { data: da }] = await Promise.all([
+      supabase.from("wallet_addresses").select("id,user_id,network_id,address,privy_wallet_id,chain_type").eq("user_id", id),
+      supabase.from("deposit_addresses").select("id,user_id,coin,network,address,created_at").eq("user_id", id),
+    ]);
+    setWalletAddresses((wa ?? []) as WalletAddress[]);
+    setDepositAddresses((da ?? []) as DepositAddress[]);
   }, []);
 
   const loadTransactions = useCallback(async (id: string) => {
@@ -480,14 +505,14 @@ export default function Home({
     try {
       await Promise.all([
         loadProfileAndWallets(id), loadMarkets(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
-        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadFeeSchedules(), loadTransactions(id),
+        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadDepositAddresses(id), loadTransactions(id),
       ]);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load the Home Page.");
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadGiveaways, loadMarkets, loadNetworks, loadFeeSchedules, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadPlatformAnnouncements]);
+  }, [feedTab, loadDepositAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements]);
 
   useEffect(() => {
     let alive = true;
@@ -576,7 +601,7 @@ export default function Home({
   const unreadSecurity = notifications.filter((n) => !n.is_read && /security|login|warning|2fa/i.test(n.type ?? "")).length + warningCountDelta;
   const unreadTotal = unreadAnnouncements + unreadTransactions + unreadSecurity;
 
-  const closeModal = () => setModal(null);
+  const closeModal = () => { setModal(null); if (modal === "deposit") setDepositResult(null); };
 
   const toggleFavorite = (symbol: string) => {
     const next = favoriteSymbols.includes(symbol)
@@ -689,11 +714,12 @@ export default function Home({
   };
 
   const createDeposit = async (asset: string, network: string, amount: string) => {
-    if (!amount || Number(amount) <= 0) { notify("Enter a positive deposit amount."); return null; }
-    if (!network) { notify("Choose a supported network."); return null; }
+    if (!amount || Number(amount) <= 0) return notify("Enter a positive deposit amount.");
+    if (!network) return notify("Choose a supported network.");
     const { data, error: e } = await supabase.functions.invoke("nowpayments-create-payment", { body: { asset, network, amount: Number(amount) } });
-    if (e) { notify(e.message); return null; }
-    if (data?.error) { notify(String(data.error)); return null; }
+    if (e) return notify(e.message);
+    if (data?.error) return notify(String(data.error));
+    setDepositResult(data);
     await loadTransactions(userId ?? "");
     notify("Deposit address created.");
     return data;
@@ -701,10 +727,9 @@ export default function Home({
 
   const requestWithdrawalOtp = async () => {
     const { data, error: e } = await supabase.functions.invoke("send-otp", { body: { purpose: "withdrawal" } });
-    if (e) { notify(e.message); return false; }
-    if (data?.email_delivered === false) { notify("Withdrawal OTP email delivery is not configured. Add BREVO_API_KEY and BREVO_SENDER_EMAIL in Supabase Edge Function secrets."); return false; }
-    notify("A 6-digit code was sent to your account email.");
-    return true;
+    if (e) return notify(e.message);
+    if (data?.email_delivered === false) notify("Withdrawal OTP email delivery is not configured. Add BREVO_API_KEY and BREVO_SENDER_EMAIL in Supabase Edge Function secrets.");
+    else notify("A 6-digit withdrawal OTP was sent to your account email.");
   };
 
   const calculateFee = async (asset: string, network: string, amount: string) => {
@@ -714,21 +739,27 @@ export default function Home({
     return data as any;
   };
 
-  const confirmWithdrawal = async (asset: string, network: string, destination: string, amount: string, otp: string): Promise<Withdrawal | null> => {
-    if (!destination.trim() || !amount || Number(amount) <= 0 || !/^\d{6}$/.test(otp)) { notify("Destination, amount and a 6-digit code are required."); return null; }
+  const submitWithdrawal = async (asset: string, network: string, destination: string, amount: string, otp: string): Promise<string | null> => {
+    if (!destination.trim() || !amount || Number(amount) <= 0 || !/^\d{6}$/.test(otp)) {
+      notify("Asset, network, destination, amount and a 6-digit OTP are required.");
+      return null;
+    }
     const { data: verification, error: verifyError } = await supabase.functions.invoke("verify-otp", { body: { code: otp, purpose: "withdrawal" } });
     if (verifyError) { notify(verifyError.message); return null; }
     if (verification?.error) { notify(String(verification.error)); return null; }
-    const { data: withdrawalId, error: e } = await supabase.rpc("process_crypto_withdrawal", { p_asset: asset, p_network: network, p_destination_address: destination.trim(), p_amount: Number(amount), p_otp_code: otp });
+    const { data, error: e } = await supabase.rpc("process_crypto_withdrawal", {
+      p_asset: asset,
+      p_network: network,
+      p_destination_address: destination.trim(),
+      p_amount: Number(amount),
+      p_otp_code: otp,
+    });
     if (e) { notify(e.message); return null; }
-    const { data: record } = await supabase.from("withdrawals").select("id,asset,network,amount,fee,net_amount,destination_address,status,payout_provider,provider_reference,tx_hash,created_at").eq("id", withdrawalId as string).maybeSingle();
     await loadTransactions(userId ?? "");
     await loadProfileAndWallets(userId ?? "");
-    notify(`Withdrawal request ${String(withdrawalId).slice(0, 8)}… created.`);
-    return (record as Withdrawal) ?? {
-      id: String(withdrawalId), asset, network, amount: Number(amount), fee: 0, destination_address: destination.trim(),
-      status: "PENDING", payout_provider: null, provider_reference: null, tx_hash: null, created_at: new Date().toISOString(),
-    };
+    const requestId = String(data);
+    notify(`Withdrawal request ${requestId.slice(0, 8)}… created.`);
+    return requestId;
   };
 
   const createPlatformAnnouncement = async (title: string, content: string, type: string) => {
@@ -827,8 +858,8 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} feeSchedules={feeSchedules} deposits={deposits} onClose={closeModal} onGenerate={createDeposit} />}
-      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} feeSchedules={feeSchedules} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onConfirm={confirmWithdrawal} />}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} result={depositResult} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} />}
+      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
@@ -882,312 +913,493 @@ function ModalShell({ title, children, onClose, wide = false }: { title: string;
   return <div style={styles.overlay}><div style={{ ...styles.modal, ...(wide ? styles.modalWide : {}) }}><div style={styles.modalHeader}><h2>{title}</h2><button style={styles.iconButton} onClick={onClose}><Icon name="close" size={22} /></button></div>{children}</div></div>;
 }
 
-function BackRow({ onClick }: { onClick: () => void }) {
-  return (
-    <button style={styles.backRow} onClick={onClick}>
-      <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="arrow" size={17} /></span>
-      Back
-    </button>
-  );
-}
-
-type DepositStep = "method" | "coin" | "network" | "address";
-
 function DepositModal({
-  networks, feeSchedules, deposits, onClose, onGenerate,
+  networks,
+  walletAddresses,
+  depositAddresses,
+  deposits,
+  onClose,
 }: {
   networks: Network[];
-  feeSchedules: FeeScheduleNetwork[];
+  walletAddresses: WalletAddress[];
+  depositAddresses: DepositAddress[];
   deposits: Deposit[];
   onClose: () => void;
-  onGenerate: (asset: string, network: string, amount: string) => Promise<any>;
 }) {
-  const [step, setStep] = useState<DepositStep>("method");
-  const [query, setQuery] = useState("");
-  const [asset, setAsset] = useState<{ symbol: string; name: string } | null>(null);
+  type Step = "methods" | "coins" | "networks" | "address";
+  const [step, setStep] = useState<Step>("methods");
+  const [search, setSearch] = useState("");
+  const [asset, setAsset] = useState("");
   const [network, setNetwork] = useState<Network | null>(null);
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<any>(null);
 
-  // Only coins/networks that actually exist in Supabase's asset_networks table.
-  const coins = [...new Map(networks.map((n) => [String(n.assets?.symbol ?? "").toUpperCase(), n.assets])).values()].filter(Boolean) as { symbol: string; name: string }[];
-  const filteredCoins = coins.filter((c) => !query.trim() || c.symbol.toLowerCase().includes(query.trim().toLowerCase()) || c.name.toLowerCase().includes(query.trim().toLowerCase()));
-  const recentSymbols = [...new Set(deposits.map((d) => d.asset))].filter((s) => coins.some((c) => c.symbol.toUpperCase() === s.toUpperCase())).slice(0, 6);
-  const chainsForAsset = networks.filter((n) => (n.assets?.symbol || "").toUpperCase() === (asset?.symbol || "").toUpperCase());
-  const fee = network ? feeSchedules.find((f) => f.currency.toUpperCase() === (asset?.symbol || "").toUpperCase() && f.network.toUpperCase() === network.network_name.toUpperCase()) : null;
-  const minDeposit = network?.min_deposit ?? fee?.min_deposit ?? null;
+  const depositNetworks = networks.filter((n) => n.is_active !== false && n.deposit_enabled === true);
+  const assetMap = new Map<string, { symbol: string; name: string }>();
+  depositNetworks.forEach((n) => {
+    const symbol = String(n.assets?.symbol ?? "").toUpperCase();
+    if (symbol && !assetMap.has(symbol)) assetMap.set(symbol, { symbol, name: String(n.assets?.name ?? symbol) });
+  });
 
-  const pickCoin = (c: { symbol: string; name: string }) => { setAsset(c); setNetwork(null); setResult(null); setStep("network"); };
+  const assets = [...assetMap.values()]
+    .filter((x) => `${x.symbol} ${x.name}`.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-  const back = () => {
-    if (step === "address") { setStep("network"); setResult(null); setAmount(""); }
-    else if (step === "network") { setStep("coin"); setNetwork(null); }
-    else if (step === "coin") { setStep("method"); setAsset(null); }
+  const assetNetworks = depositNetworks.filter(
+    (n) => String(n.assets?.symbol ?? "").toUpperCase() === asset.toUpperCase()
+  );
+
+  const addressForNetwork = (n: Network | null) => {
+    if (!n) return "";
+    const walletAddress = walletAddresses.find((x) => x.network_id === n.id)?.address;
+    if (walletAddress) return walletAddress;
+    return depositAddresses.find(
+      (x) =>
+        String(x.coin ?? "").toUpperCase() === asset.toUpperCase() &&
+        String(x.network ?? "").toUpperCase() === n.network_name.toUpperCase()
+    )?.address ?? "";
   };
 
-  const generate = async () => {
-    if (!asset || !network || !amount || Number(amount) <= 0) return;
-    if (minDeposit != null && Number(amount) < Number(minDeposit)) return;
-    setBusy(true);
-    const data = await onGenerate(asset.symbol, network.network_name, amount);
-    setBusy(false);
-    if (data?.pay_address) setResult(data);
+  const address = addressForNetwork(network);
+  const minDeposit = network?.min_deposit ?? null;
+  const qrUrl = address
+    ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(address)}`
+    : "";
+
+  const goBack = () => {
+    if (step === "methods") onClose();
+    else if (step === "coins") setStep("methods");
+    else if (step === "networks") setStep("coins");
+    else setStep("networks");
   };
+
+  const chooseAsset = (symbol: string) => {
+    setAsset(symbol);
+    setNetwork(null);
+    setSearch("");
+    setStep("networks");
+  };
+
+  const chooseNetwork = (n: Network) => {
+    setNetwork(n);
+    setStep("address");
+  };
+
+  const recentAssets = [...new Set(
+    deposits.map((d) => String(d.asset ?? "").toUpperCase()).filter(Boolean)
+  )].slice(0, 6);
 
   return (
-    <ModalShell title="Deposit" onClose={onClose}>
-      {step !== "method" && <BackRow onClick={back} />}
-
-      {step === "method" && (
-        <div style={styles.methodList}>
-          <button style={styles.methodRow} onClick={() => setStep("coin")}>
-            <div><b>Deposit Crypto</b><small>Transfer crypto from an on-chain wallet or another exchange</small></div>
-            <Icon name="chevron" size={18} />
-          </button>
-          <button style={{ ...styles.methodRow, ...styles.methodRowDisabled }} disabled>
-            <div><b>P2P Trading</b><small>Coming soon</small></div>
-            <Icon name="chevron" size={18} />
-          </button>
-          <button style={{ ...styles.methodRow, ...styles.methodRowDisabled }} disabled>
-            <div><b>Deposit via CEO User</b><small>Coming soon</small></div>
-            <Icon name="chevron" size={18} />
-          </button>
-        </div>
+    <ModalShell
+      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : `${asset}-Deposit`}
+      onClose={onClose}
+      wide={step === "coins" || step === "networks"}
+    >
+      {step !== "methods" && (
+        <button type="button" style={styles.flowBack} onClick={goBack}>
+          <Icon name="arrowLeft" size={19} /> Back
+        </button>
       )}
 
-      {step === "coin" && (
+      {step === "methods" && (
         <>
-          <div style={styles.searchWrap}>
-            <Icon name="search" size={17} />
-            <input style={styles.searchInput} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search coin" autoFocus />
+          <button type="button" style={styles.methodLarge} onClick={() => setStep("coins")}>
+            <span style={styles.methodLargeIcon}><Icon name="download" size={23} /></span>
+            <span style={styles.methodLargeText}><b>Deposit Crypto</b><small>Transfer crypto from your on-chain wallet or another exchange.</small></span>
+            <Icon name="arrow" size={21} />
+          </button>
+          <button type="button" style={styles.methodLargeDisabled} disabled>
+            <span style={styles.methodLargeIcon}><Icon name="trade" size={23} /></span>
+            <span style={styles.methodLargeText}><b>P2P Trading</b><small>More choices, better prices — available later.</small></span>
+            <span style={styles.comingSoon}>Later</span>
+          </button>
+          <button type="button" style={styles.methodLargeDisabled} disabled>
+            <span style={styles.methodLargeIcon}><Icon name="userPlus" size={23} /></span>
+            <span style={styles.methodLargeText}><b>Deposit via CEO User</b><small>CEO User transfers will be added later.</small></span>
+            <span style={styles.comingSoon}>Later</span>
+          </button>
+        </>
+      )}
+
+      {step === "coins" && (
+        <>
+          <div style={styles.depositSearch}>
+            <Icon name="search" size={20} />
+            <input style={styles.depositSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search deposit coin" />
+            {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")}><Icon name="close" size={18} /></button>}
           </div>
-          {!query.trim() && recentSymbols.length > 0 && (
-            <>
-              <div style={styles.subtleLabel}>Your recent deposits</div>
+
+          {recentAssets.length > 0 && (
+            <div style={styles.recentBlock}>
+              <div style={styles.recentTitle}>Recent</div>
               <div style={styles.chipRow}>
-                {recentSymbols.map((s) => {
-                  const c = coins.find((x) => x.symbol.toUpperCase() === s.toUpperCase());
-                  return c ? <button key={s} style={styles.chip} onClick={() => pickCoin(c)}>{s}</button> : null;
-                })}
+                {recentAssets.map((x) => <button type="button" key={x} style={styles.assetChip} onClick={() => chooseAsset(x)}>{x}</button>)}
+              </div>
+            </div>
+          )}
+
+          <div style={styles.assetList}>
+            {assets.map((x) => (
+              <button type="button" key={x.symbol} style={styles.assetRow} onClick={() => chooseAsset(x.symbol)}>
+                <span style={styles.assetIcon}>{x.symbol.slice(0, 1)}</span>
+                <span style={styles.assetInfo}><b>{x.symbol}</b><small>{x.name}</small></span>
+                <Icon name="arrow" size={19} />
+              </button>
+            ))}
+            {!assets.length && (
+              <div style={styles.emptyPanel}>
+                <b>No crypto deposit currencies are enabled.</b>
+                <p>Only active deposit networks configured in Supabase are shown. No fake currencies or networks are added.</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {step === "networks" && (
+        <>
+          <div style={styles.networkNotice}>
+            <Icon name="shield" size={18} />
+            <span>Make sure the network you deposit on is the same network used for the deposit address.</span>
+          </div>
+          <div style={styles.chainList}>
+            {assetNetworks.map((n) => (
+              <button type="button" key={n.id} style={styles.chainRow} onClick={() => chooseNetwork(n)}>
+                <span style={styles.chainIcon}>{n.network_name.slice(0, 1)}</span>
+                <span style={styles.chainInfo}>
+                  <b>{n.network_name}</b>
+                  <small>Minimum deposit: {n.min_deposit == null ? "Not configured" : `${formatAmount(Number(n.min_deposit))} ${asset}`}</small>
+                </span>
+                <Icon name="arrow" size={19} />
+              </button>
+            ))}
+            {!assetNetworks.length && (
+              <div style={styles.emptyPanel}>
+                <b>No enabled deposit network for {asset}.</b>
+                <p>This page never invents a network or address.</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {step === "address" && network && (
+        <>
+          <div style={styles.depositNetworkPicker}>
+            <span>Network:</span>
+            <button type="button" onClick={() => setStep("networks")}>
+              {network.network_name}<Icon name="chevron" size={17} />
+            </button>
+          </div>
+
+          {!address ? (
+            <div style={styles.emptyPanel}>
+              <b>Deposit address is not available yet.</b>
+              <p>There is no real user-specific address stored for this asset/network. The frontend will not display a fake address.</p>
+            </div>
+          ) : (
+            <>
+              <div style={styles.depositQrWrap}>
+                <img src={qrUrl} alt={`${asset} ${network.network_name} deposit QR code`} style={styles.depositQrLarge} />
+              </div>
+
+              <div style={styles.addressCard}>
+                <div style={styles.addressLabel}>Wallet Address</div>
+                <div style={styles.addressValue}>{address}</div>
+              </div>
+
+              <div style={styles.depositDetails}>
+                <div>
+                  <span>Minimum Deposit Amount</span>
+                  <b>{minDeposit == null ? "Not configured" : `${formatAmount(Number(minDeposit))} ${asset}`}</b>
+                </div>
+              </div>
+
+              <div style={styles.depositActions}>
+                <button type="button" style={styles.secondaryButtonFull} onClick={() => { void navigator.clipboard?.writeText(address); }}>
+                  <Icon name="copy" size={18} /> Copy Address
+                </button>
+                <button type="button" style={styles.primaryButtonFull} onClick={() => {
+                  const link = document.createElement("a");
+                  link.href = qrUrl;
+                  link.target = "_blank";
+                  link.rel = "noreferrer";
+                  link.click();
+                }}>
+                  Save Picture
+                </button>
               </div>
             </>
           )}
-          <div style={styles.coinList}>
-            {filteredCoins.map((c) => (
-              <button key={c.symbol} style={styles.coinRow} onClick={() => pickCoin(c)}>
-                <b>{c.symbol}</b><span style={styles.coinName}>{c.name}</span>
-              </button>
-            ))}
-            {!filteredCoins.length && <Empty text="No matching coin." />}
-          </div>
         </>
       )}
 
-      {step === "network" && asset && (
+      {step !== "methods" && (
         <>
-          <div style={styles.warningBox}><Icon name="alert" size={18} /><span>Make sure the network you deposit to is the one you make withdrawals from.</span></div>
-          <div style={styles.coinList}>
-            {chainsForAsset.map((n) => (
-              <button key={n.id} style={{ ...styles.coinRow, ...(n.deposit_enabled ? {} : styles.coinRowDisabled) }} disabled={!n.deposit_enabled} onClick={() => { setNetwork(n); setStep("address"); }}>
-                <b>{n.network_name}</b>
-                <span style={styles.coinName}>{n.deposit_enabled ? "Available" : "Not enabled yet"}</span>
-              </button>
-            ))}
-            {!chainsForAsset.length && <Empty text="No network is configured for this coin yet." />}
-          </div>
-        </>
-      )}
-
-      {step === "address" && asset && network && (
-        <>
-          <div style={{ textAlign: "center" }}>
-            <button style={styles.networkPill} onClick={() => setStep("network")}>Network: {network.network_name} <Icon name="chevron" size={15} /></button>
-          </div>
-
-          {!result ? (
-            <>
-              <label style={styles.label}>
-                Amount ({asset.symbol})
-                <input style={styles.input} type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={minDeposit != null ? `Min. deposit ${minDeposit}` : "Amount"} />
-              </label>
-              {minDeposit != null && <div style={styles.balanceMini}>Minimum deposit: {minDeposit} {asset.symbol}</div>}
-              <button style={styles.primaryButtonFull} disabled={busy || !amount || Number(amount) <= 0 || (minDeposit != null && Number(amount) < Number(minDeposit))} onClick={() => void generate()}>
-                {busy ? "Generating…" : "Generate Deposit Address"}
-              </button>
-            </>
-          ) : (
-            <div style={styles.depositResult}>
-              <div style={styles.resultTitle}>Send exactly</div>
-              <strong style={styles.resultAmount}>{result.pay_amount} {String(result.pay_currency || asset.symbol).toUpperCase()}</strong>
-              <img src={`https://quickchart.io/qr?size=220&text=${encodeURIComponent(String(result.pay_address))}`} alt="Deposit QR code" style={styles.qr} />
-              <div style={styles.addressBox}>{result.pay_address}</div>
-              {minDeposit != null && <div style={styles.balanceMini}>Minimum deposit: {minDeposit} {asset.symbol}</div>}
-              <button type="button" style={styles.secondaryButtonFull} onClick={() => void navigator.clipboard?.writeText(String(result.pay_address))}>
-                <Icon name="copy" size={17} /> Copy Address
-              </button>
-              <a style={{ ...styles.secondaryButtonFull, textDecoration: "none" }} href={`https://quickchart.io/qr?size=600&text=${encodeURIComponent(String(result.pay_address))}`} download={`${asset.symbol}-${network.network_name}-address.png`}>
-                <Icon name="download" size={17} /> Save Picture
-              </a>
+          <div style={styles.divider} />
+          <h3 style={styles.smallTitle}>Recent deposits</h3>
+          {deposits.slice(0, 8).map((d) => (
+            <div key={d.id} style={styles.listRow}>
+              <span><b>{d.asset}</b> {formatAmount(Number(d.amount))}</span>
+              <span style={styles.status}>{d.status || "PENDING"}</span>
             </div>
-          )}
+          ))}
+          {!deposits.length && <Empty text="No deposits yet." />}
         </>
       )}
-
-      <div style={styles.divider} />
-      <h3 style={styles.smallTitle}>Recent deposits</h3>
-      {deposits.slice(0, 8).map((d) => <div key={d.id} style={styles.listRow}><span><b>{d.asset}</b> {d.amount}</span><span style={styles.status}>{d.status || "PENDING"}</span></div>)}
-      {!deposits.length && <Empty text="No deposits yet." />}
     </ModalShell>
   );
 }
 
-type WithdrawStep = "coin" | "method" | "form" | "otp" | "receipt";
-
 function WithdrawModal({
-  wallets, networks, feeSchedules, withdrawals, onClose, onRequestOtp, onCalculateFee, onConfirm,
+  wallets,
+  networks,
+  withdrawals,
+  onClose,
+  onRequestOtp,
+  onCalculateFee,
+  onWithdraw,
 }: {
   wallets: Wallet[];
   networks: Network[];
-  feeSchedules: FeeScheduleNetwork[];
   withdrawals: Withdrawal[];
   onClose: () => void;
-  onRequestOtp: () => Promise<boolean>;
+  onRequestOtp: () => Promise<void>;
   onCalculateFee: (asset: string, network: string, amount: string) => Promise<any>;
-  onConfirm: (asset: string, network: string, destination: string, amount: string, otp: string) => Promise<Withdrawal | null>;
+  onWithdraw: (asset: string, network: string, destination: string, amount: string, otp: string) => Promise<string | null>;
 }) {
-  const [step, setStep] = useState<WithdrawStep>("coin");
-  const [hideZero, setHideZero] = useState(false);
-  const [asset, setAsset] = useState<string | null>(null);
-  const [network, setNetwork] = useState<Network | null>(null);
+  type Step = "coins" | "method" | "form" | "otp" | "done";
+  const [step, setStep] = useState<Step>("coins");
+  const [asset, setAsset] = useState("");
+  const [network, setNetwork] = useState("");
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
-  const [fee, setFee] = useState<any>(null);
   const [otp, setOtp] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [receipt, setReceipt] = useState<Withdrawal | null>(null);
+  const [fee, setFee] = useState<any>(null);
+  const [requestId, setRequestId] = useState("");
+  const [otpSending, setOtpSending] = useState(false);
+  const [search, setSearch] = useState("");
 
-  const balance = Number(wallets.find((w) => (w.asset || "").toUpperCase() === (asset || "").toUpperCase())?.balance ?? 0);
-  const chainsForAsset = networks.filter((n) => (n.assets?.symbol || "").toUpperCase() === (asset || "").toUpperCase());
-  const visibleWallets = wallets.filter((w) => !hideZero || Number(w.balance ?? 0) > 0);
-  const feeSchedule = network ? feeSchedules.find((f) => f.currency.toUpperCase() === (asset || "").toUpperCase() && f.network.toUpperCase() === network.network_name.toUpperCase()) : null;
+  const withdrawableWallets = wallets
+    .filter((w) => Number(w.balance ?? 0) > 0)
+    .filter((w) => w.wallet_type.toLowerCase() !== "savings");
+
+  const uniqueWallets = [...new Map(withdrawableWallets.map((w) => [w.asset.toUpperCase(), w])).values()]
+    .filter((w) => w.asset.toLowerCase().includes(search.trim().toLowerCase()));
+
+  const balance = Number(
+    wallets.find((w) => w.asset.toUpperCase() === asset.toUpperCase() && w.wallet_type.toLowerCase() !== "savings")?.balance ??
+    wallets.find((w) => w.asset.toUpperCase() === asset.toUpperCase())?.balance ??
+    0
+  );
+
+  const availableNetworks = networks.filter(
+    (n) =>
+      n.withdrawal_enabled === true &&
+      (n.assets?.symbol || "").toUpperCase() === asset.toUpperCase()
+  );
+  const selectedNetwork = availableNetworks.find((n) => n.network_name === network) ?? null;
 
   useEffect(() => {
-    if (!asset || !network || !amount || Number(amount) <= 0) { setFee(null); return; }
+    if (!amount || !network || !asset) {
+      setFee(null);
+      return;
+    }
     let cancelled = false;
-    const t = window.setTimeout(() => { void onCalculateFee(asset, network.network_name, amount).then((x) => { if (!cancelled) setFee(x); }); }, 350);
-    return () => { cancelled = true; window.clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asset, network, amount]);
+    void onCalculateFee(asset, network, amount).then((x) => {
+      if (!cancelled) setFee(x);
+    });
+    return () => { cancelled = true; };
+  }, [amount, asset, network, onCalculateFee]);
 
-  const pickAsset = (a: string) => { setAsset(a); setNetwork(null); setStep("method"); };
-
-  const back = () => {
-    if (step === "method") { setStep("coin"); setAsset(null); }
-    else if (step === "form") { setStep("method"); setNetwork(null); setDestination(""); setAmount(""); setFee(null); }
+  const chooseAsset = (value: string) => {
+    setAsset(value);
+    setNetwork("");
+    setDestination("");
+    setAmount("");
+    setFee(null);
+    setStep("method");
   };
 
-  const startWithdraw = async () => {
-    if (!asset || !network || !destination.trim() || !amount || Number(amount) <= 0) return;
-    setBusy(true);
-    const sent = await onRequestOtp();
-    setBusy(false);
-    if (sent) setStep("otp");
+  const sendOtp = async () => {
+    if (!destination.trim() || !amount || Number(amount) <= 0 || !network || Number(amount) > balance) return;
+    setOtpSending(true);
+    try {
+      await onRequestOtp();
+      setStep("otp");
+    } finally {
+      setOtpSending(false);
+    }
   };
 
-  const confirm = async () => {
-    if (!asset || !network || !/^\d{6}$/.test(otp)) return;
-    setBusy(true);
-    const record = await onConfirm(asset, network.network_name, destination, amount, otp);
-    setBusy(false);
-    if (record) { setReceipt(record); setStep("receipt"); }
+  const confirmWithdrawal = async () => {
+    if (!/^\d{6}$/.test(otp)) return;
+    const id = await onWithdraw(asset, network, destination, amount, otp);
+    if (id) {
+      setRequestId(id);
+      setStep("done");
+    }
   };
+
+  const goBack = () => {
+    if (step === "coins") onClose();
+    else if (step === "method") setStep("coins");
+    else if (step === "form") setStep("method");
+    else if (step === "otp") setStep("form");
+    else setStep("coins");
+  };
+
+  const qrUrl = destination
+    ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(destination)}`
+    : "";
 
   return (
-    <ModalShell title="Withdraw" onClose={onClose}>
-      {(step === "method" || step === "form") && <BackRow onClick={back} />}
+    <ModalShell title={step === "coins" ? "Select Coin" : step === "method" ? "Withdraw" : step === "form" ? `${asset}-On-Chain` : step === "otp" ? "Confirm Withdrawal" : "Transaction Details"} onClose={onClose} wide={step === "coins"}>
+      {step !== "coins" && step !== "done" && (
+        <button type="button" style={styles.flowBack} onClick={goBack}>
+          <Icon name="arrowLeft" size={19} /> Back
+        </button>
+      )}
 
-      {step === "coin" && (
+      {step === "coins" && (
         <>
-          <label style={styles.toggleRow}><input type="checkbox" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} /> Hide zero balances</label>
-          <div style={styles.coinList}>
-            {visibleWallets.map((w) => (
-              <button key={w.id} style={styles.coinRow} onClick={() => pickAsset(w.asset)}>
-                <b>{w.asset}</b><span style={styles.coinName}>{formatMoney(Number(w.balance ?? 0))}</span>
+          <div style={styles.depositSearch}>
+            <Icon name="search" size={20} />
+            <input style={styles.depositSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search withdrawal currency" />
+            {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")}><Icon name="close" size={18} /></button>}
+          </div>
+          <div style={styles.assetList}>
+            {uniqueWallets.map((w) => (
+              <button type="button" key={w.asset} style={styles.assetRow} onClick={() => chooseAsset(w.asset)}>
+                <span style={styles.assetIcon}>{w.asset.slice(0, 1)}</span>
+                <span style={styles.assetInfo}><b>{w.asset.toUpperCase()}</b><small>Available balance</small></span>
+                <span style={styles.assetBalance}>{formatAmount(Number(w.balance ?? 0))}</span>
               </button>
             ))}
-            {!visibleWallets.length && <Empty text="No wallet balances yet." />}
+            {!uniqueWallets.length && <div style={styles.emptyPanel}><b>No currency with an available balance.</b><p>Only balances currently present in your Supabase wallet are shown.</p></div>}
           </div>
-          <div style={styles.divider} />
-          <h3 style={styles.smallTitle}>Recent withdrawals</h3>
-          {withdrawals.slice(0, 8).map((w) => <div key={w.id} style={styles.listRow}><span><b>{w.asset}</b> {w.amount}</span><span style={styles.status}>{w.status || "PENDING"}</span></div>)}
-          {!withdrawals.length && <Empty text="No withdrawals yet." />}
         </>
       )}
 
-      {step === "method" && asset && (
-        <div style={styles.methodList}>
-          <button style={styles.methodRow} onClick={() => setStep("form")}>
-            <div><b>On-Chain</b><small>Withdrawal to an on-chain address</small></div>
-            <Icon name="chevron" size={18} />
+      {step === "method" && (
+        <>
+          <div style={styles.balanceHero}>
+            <div><span>Available balance</span><strong>{formatAmount(balance)} {asset}</strong></div>
+          </div>
+          <button type="button" style={styles.methodLarge} onClick={() => setStep("form")}>
+            <span style={styles.methodLargeIcon}><Icon name="upload" size={23} /></span>
+            <span style={styles.methodLargeText}><b>On-Chain</b><small>Withdrawal to an on-chain address</small></span>
+            <Icon name="arrow" size={21} />
           </button>
-          <button style={{ ...styles.methodRow, ...styles.methodRowDisabled }} disabled>
-            <div><b>Internal Transfer</b><small>Withdraw via CEO Exchange user — coming soon</small></div>
-            <Icon name="chevron" size={18} />
+          <button type="button" style={styles.methodLargeDisabled} disabled>
+            <span style={styles.methodLargeIcon}><Icon name="userPlus" size={23} /></span>
+            <span style={styles.methodLargeText}><b>Internal Transfer to CEO User</b><small>CEO User transfer will be added later. No Bybit transfer is used.</small></span>
+            <span style={styles.comingSoon}>Later</span>
           </button>
-        </div>
+        </>
       )}
 
-      {step === "form" && asset && (
+      {step === "form" && (
         <>
-          <label style={styles.label}>Address<input style={styles.input} value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="Enter the withdrawal address" /></label>
-          <label style={styles.label}>
-            Network
-            <select style={styles.input} value={network?.id ?? ""} onChange={(e) => { setNetwork(chainsForAsset.find((n) => n.id === e.target.value) ?? null); setFee(null); }}>
-              <option value="">Please choose a network</option>
-              {chainsForAsset.map((n) => <option key={n.id} value={n.id} disabled={!n.withdrawal_enabled}>{n.network_name}{!n.withdrawal_enabled ? " (not enabled yet)" : ""}</option>)}
+          <div style={styles.balanceHero}>
+            <div><span>Available balance</span><strong>{formatAmount(balance)} {asset}</strong></div>
+          </div>
+
+          <label style={styles.cleanField}>
+            <span>Address</span>
+            <input style={styles.cleanInput} value={destination} onChange={(e) => setDestination(e.target.value.trimStart())} placeholder="Input or paste withdrawal address" autoCapitalize="none" autoCorrect="off" />
+          </label>
+
+          <label style={styles.cleanField}>
+            <span>Network</span>
+            <select style={styles.cleanInput} value={network} onChange={(e) => setNetwork(e.target.value)}>
+              <option value="">Please choose a chain type</option>
+              {availableNetworks.map((n) => <option key={n.id} value={n.network_name}>{n.network_name}</option>)}
             </select>
           </label>
-          <div style={styles.balanceMini}>Available: {formatMoney(balance)} {asset}</div>
-          <label style={styles.label}>Amount<input style={styles.input} type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={feeSchedule ? `Min. ${feeSchedule.min_withdrawal}` : "Amount"} /></label>
+
+          <label style={styles.cleanField}>
+            <span>Amount</span>
+            <div style={styles.amountInputWrap}>
+              <input style={styles.cleanInput} type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Min. withdrawal: ${selectedNetwork?.min_withdrawal == null ? "Not configured" : formatAmount(Number(selectedNetwork.min_withdrawal))}`} />
+              <b>{asset}</b>
+            </div>
+          </label>
+
+          {selectedNetwork?.min_withdrawal != null && <div style={styles.minimumLine}>Minimum withdrawal: {formatAmount(Number(selectedNetwork.min_withdrawal))} {asset}</div>}
+
           {fee?.success && (
             <div style={styles.feeBox}>
-              <span>Network fee</span><b>{fee.network_fee}</b>
-              <span>Platform fee</span><b>{fee.platform_fee}</b>
-              <span>Total fee</span><b>{fee.total_fee}</b>
-              <span>You receive</span><b>{fee.net_amount}</b>
+              <span>Network fee</span><b>{formatAmount(Number(fee.network_fee))}</b>
+              <span>Platform fee</span><b>{formatAmount(Number(fee.platform_fee))}</b>
+              <span>Total fee</span><b>{formatAmount(Number(fee.total_fee))}</b>
+              <span>You receive</span><b>{formatAmount(Number(fee.net_amount))}</b>
             </div>
           )}
-          {fee && fee.success === false && <div style={styles.warningBox}><Icon name="alert" size={18} /><span>{fee.error_message}</span></div>}
-          <div style={styles.warningBox}><Icon name="alert" size={18} /><span>Blockchain withdrawals cannot normally be reversed. Double-check the address and network.</span></div>
-          <button style={styles.primaryButtonFull} disabled={busy || !network || !network.withdrawal_enabled || !destination.trim() || !amount || Number(amount) <= 0} onClick={() => void startWithdraw()}>
-            {busy ? "Sending code…" : "Withdraw"}
+
+          <button
+            type="button"
+            style={styles.primaryButtonFull}
+            disabled={!destination.trim() || !network || !amount || Number(amount) <= 0 || Number(amount) > balance || otpSending}
+            onClick={() => void sendOtp()}
+          >
+            <Icon name="upload" size={19} /> Withdraw
           </button>
         </>
       )}
 
       {step === "otp" && (
+        <div style={styles.otpPage}>
+          <div style={styles.otpIcon}><Icon name="shield" size={30} /></div>
+          <h3>Check your email</h3>
+          <p>A 6-digit verification code was sent to your account email. Enter it below to confirm this withdrawal.</p>
+          <input
+            style={styles.otpInputLarge}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+            placeholder="000000"
+          />
+          <button type="button" style={styles.primaryButtonFull} disabled={otp.length !== 6} onClick={() => void confirmWithdrawal()}>
+            Confirm
+          </button>
+        </div>
+      )}
+
+      {step === "done" && (
         <>
-          <div style={styles.infoBox}><Icon name="shield" size={18} /><span>A 6-digit verification code was sent to your account email.</span></div>
-          <label style={styles.label}>Verification code<input style={styles.input} inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))} placeholder="6-digit code" autoFocus /></label>
-          <button style={styles.secondaryButtonFull} onClick={() => void onRequestOtp()}>Resend code</button>
-          <button style={styles.primaryButtonFull} disabled={busy || !/^\d{6}$/.test(otp)} onClick={() => void confirm()}>{busy ? "Processing…" : "Confirm"}</button>
+          <div style={styles.transactionHero}>
+            <div style={styles.successMark}>✓</div>
+            <h3>Withdrawal Submitted</h3>
+            <span>{requestId}</span>
+          </div>
+          <div style={styles.transactionQr}>
+            {qrUrl && <img src={qrUrl} alt="Withdrawal destination QR code" style={styles.depositQrLarge} />}
+          </div>
+          <div style={styles.transactionCard}>
+            <div><span>Asset</span><b>{asset}</b></div>
+            <div><span>Network</span><b>{network}</b></div>
+            <div><span>Amount</span><b>{formatAmount(Number(amount))} {asset}</b></div>
+            <div><span>Address</span><b>{destination}</b></div>
+            <div><span>Transaction ID</span><b>{requestId}</b></div>
+            <div><span>Status</span><b>Pending</b></div>
+          </div>
+          <button type="button" style={styles.secondaryButtonFull} onClick={onClose}>Done</button>
         </>
       )}
 
-      {step === "receipt" && receipt && (
-        <div style={styles.receiptCard}>
-          <div style={styles.resultTitle}>Withdrawal</div>
-          <strong style={styles.resultAmount}>-{formatMoney(Number(receipt.amount))} {receipt.asset}</strong>
-          <div style={styles.status}>{receipt.status || "PENDING"}</div>
-          <img src={`https://quickchart.io/qr?size=180&text=${encodeURIComponent(receipt.destination_address)}`} alt="Destination address QR code" style={styles.qr} />
-          <div style={styles.addressBox}>{receipt.destination_address}</div>
-          <div style={styles.receiptRow}><span>Network</span><b>{receipt.network}</b></div>
-          <div style={styles.receiptRow}><span>Fee</span><b>{receipt.fee}</b></div>
-          <div style={styles.receiptRow}><span>Withdrawal ID</span><b>{receipt.id}</b></div>
-          <div style={styles.receiptRow}><span>Time</span><b>{receipt.created_at ? new Date(receipt.created_at).toLocaleString() : ""}</b></div>
-          <button style={styles.primaryButtonFull} onClick={onClose}>Done</button>
-        </div>
+      {step !== "done" && step !== "coins" && (
+        <>
+          <div style={styles.divider} />
+          <h3 style={styles.smallTitle}>Recent withdrawals</h3>
+          {withdrawals.slice(0, 8).map((w) => (
+            <div key={w.id} style={styles.listRow}>
+              <span><b>{w.asset}</b> {formatAmount(Number(w.amount))}</span>
+              <span style={styles.status}>{w.status || "PENDING"}</span>
+            </div>
+          ))}
+          {!withdrawals.length && <Empty text="No withdrawals yet." />}
+        </>
       )}
     </ModalShell>
   );
@@ -1317,6 +1529,65 @@ const styles: Record<string, React.CSSProperties> = {
   modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 },
   "modalHeader h2": { margin: 0, fontSize: 19 },
   modalHint: { color: "#8c8c8c", fontSize: 13, lineHeight: 1.5 },
+  flowBack: { border: 0, background: "transparent", color: "#aaa", display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 0 10px", cursor: "pointer", fontWeight: 700 },
+  methodLarge: { width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", border: "1px solid #242424", borderRadius: 14, background: "#101010", color: "#fff", padding: "14px 12px", marginBottom: 9, cursor: "pointer" },
+  methodLargeDisabled: { width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", border: "1px solid #202020", borderRadius: 14, background: "#0e0e0e", color: "#777", padding: "14px 12px", marginBottom: 9, cursor: "not-allowed" },
+  methodLargeIcon: { width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: "#181818", color: GOLD_LIGHT, flex: "0 0 auto" },
+  methodLargeText: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 },
+  "methodLargeText b": { fontSize: 15, color: "#fff" },
+  "methodLargeText small": { color: "#777", lineHeight: 1.35, fontSize: 11 },
+  comingSoon: { color: "#777", fontSize: 10, fontWeight: 800, border: "1px solid #2a2a2a", borderRadius: 999, padding: "4px 7px" },
+  depositSearch: { display: "flex", alignItems: "center", gap: 8, minHeight: 48, borderRadius: 16, background: "#17171b", padding: "0 13px", color: "#666", marginBottom: 12 },
+  depositSearchInput: { flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 15 },
+  recentBlock: { marginBottom: 12 },
+  recentTitle: { color: "#777", fontSize: 11, marginBottom: 7 },
+  chipRow: { display: "flex", gap: 7, flexWrap: "wrap" },
+  assetChip: { border: 0, borderRadius: 999, background: "#1b1b21", color: "#eee", padding: "8px 14px", cursor: "pointer", fontWeight: 700 },
+  assetList: { display: "flex", flexDirection: "column", gap: 2 },
+  assetRow: { width: "100%", display: "flex", alignItems: "center", gap: 11, border: 0, borderBottom: "1px solid #171717", background: "transparent", color: "#fff", padding: "12px 2px", textAlign: "left", cursor: "pointer" },
+  assetIcon: { width: 40, height: 40, borderRadius: "50%", background: "#1c1c22", border: "1px solid #2a2a2a", display: "grid", placeItems: "center", color: "#eee", fontWeight: 900, flex: "0 0 auto" },
+  assetInfo: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 },
+  "assetInfo b": { fontSize: 15 },
+  "assetInfo small": { color: "#666", fontSize: 11 },
+  assetBalance: { color: "#ddd", fontWeight: 700, fontSize: 13 },
+  networkNotice: { display: "flex", gap: 9, alignItems: "flex-start", background: "#17181c", borderRadius: 12, padding: 12, color: "#bbb", fontSize: 11, lineHeight: 1.45, marginBottom: 12 },
+  chainList: { display: "flex", flexDirection: "column", gap: 2 },
+  chainRow: { width: "100%", display: "flex", alignItems: "center", gap: 11, border: 0, borderBottom: "1px solid #171717", background: "transparent", color: "#fff", padding: "13px 2px", textAlign: "left", cursor: "pointer" },
+  chainIcon: { width: 40, height: 40, borderRadius: "50%", background: "#181818", border: "1px solid #2b2b2b", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, flex: "0 0 auto" },
+  chainInfo: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 },
+  "chainInfo b": { fontSize: 15 },
+  "chainInfo small": { color: "#666", fontSize: 11 },
+  depositNetworkPicker: { display: "flex", justifyContent: "center", alignItems: "center", gap: 6, margin: "2px 0 12px", color: "#666", fontSize: 13 },
+  depositNetworkPickerButton: { border: 0, background: "transparent", color: "#ddd", display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", fontWeight: 700 },
+  depositQrWrap: { display: "flex", justifyContent: "center", padding: "4px 0 14px" },
+  depositQrLarge: { width: 220, height: 220, background: "#fff", borderRadius: 10, padding: 6, display: "block", objectFit: "contain" },
+  addressCard: { background: "#151519", borderRadius: 15, padding: 13, border: "1px solid #232329" },
+  addressLabel: { color: "#777", fontSize: 12, marginBottom: 7 },
+  addressValue: { color: "#fff", fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere", fontWeight: 700 },
+  depositDetails: { marginTop: 12, padding: "0 2px", color: "#777", fontSize: 12 },
+  depositActions: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 },
+  balanceHero: { padding: "12px 13px", borderRadius: 14, background: "#111113", border: "1px solid #202024", marginBottom: 12 },
+  cleanField: { display: "flex", flexDirection: "column", gap: 7, margin: "13px 0", color: "#999", fontSize: 12 },
+  cleanInput: { width: "100%", minHeight: 50, border: 0, borderRadius: 12, outline: 0, background: "#202126", color: "#fff", padding: "12px 14px", colorScheme: "dark" },
+  amountInputWrap: { position: "relative" },
+  "amountInputWrap .cleanInput": { paddingRight: 68 },
+  "amountInputWrap b": { position: "absolute", right: 13, top: 15, color: "#fff", pointerEvents: "none" },
+  minimumLine: { color: "#777", fontSize: 11, margin: "-3px 2px 9px" },
+  otpPage: { textAlign: "center", padding: "20px 6px 6px" },
+  otpIcon: { width: 60, height: 60, margin: "0 auto 10px", borderRadius: "50%", display: "grid", placeItems: "center", background: "#17130a", color: GOLD_LIGHT, border: "1px solid #5a4313" },
+  "otpPage h3": { margin: "6px 0", fontSize: 19, color: "#fff" },
+  "otpPage p": { color: "#777", lineHeight: 1.5, fontSize: 12, margin: "0 auto 16px", maxWidth: 390 },
+  otpInputLarge: { width: "100%", maxWidth: 310, display: "block", margin: "0 auto 12px", minHeight: 56, border: "1px solid #3a321e", borderRadius: 14, background: "#111", color: "#fff", textAlign: "center", letterSpacing: 8, fontSize: 24, outline: 0 },
+  transactionHero: { textAlign: "center", padding: "8px 0 14px" },
+  successMark: { width: 52, height: 52, margin: "0 auto 8px", borderRadius: "50%", display: "grid", placeItems: "center", background: "#13251e", color: "#39d98a", fontSize: 28, fontWeight: 900 },
+  "transactionHero h3": { margin: "7px 0", fontSize: 18 },
+  "transactionHero span": { color: "#777", fontSize: 10, overflowWrap: "anywhere" },
+  transactionQr: { display: "flex", justifyContent: "center", marginBottom: 12 },
+  transactionCard: { background: "#111", borderRadius: 14, border: "1px solid #222", padding: "4px 13px" },
+  transactionCardRow: { display: "flex", justifyContent: "space-between", gap: 14, padding: "10px 0", borderBottom: "1px solid #1e1e1e", fontSize: 12 },
+  transactionCardLabel: { color: "#777" },
+  transactionCardValue: { color: "#eee", textAlign: "right", maxWidth: "68%", overflowWrap: "anywhere" },
+
   label: { display: "flex", flexDirection: "column", gap: 7, margin: "13px 0", color: "#aaa", fontSize: 12 },
   input: { width: "100%", minHeight: 46, border: "1px solid #302711", borderRadius: 12, outline: 0, background: "#101010", color: "#fff", padding: "10px 12px", colorScheme: "dark" },
   textarea: { width: "100%", minHeight: 110, resize: "vertical", border: "1px solid #302711", borderRadius: 12, outline: 0, background: "#101010", color: "#fff", padding: "10px 12px", lineHeight: 1.5 },
@@ -1363,25 +1634,6 @@ const styles: Record<string, React.CSSProperties> = {
   attachment: { color: GOLD_LIGHT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   history: { display: "flex", gap: 5, flexWrap: "wrap", margin: "10px 0" },
   otpRow: { display: "flex", gap: 8, alignItems: "center", marginTop: 12 },
-  backRow: { display: "inline-flex", alignItems: "center", gap: 6, border: 0, background: "transparent", color: "#aaa", padding: "2px 0 14px", cursor: "pointer", fontWeight: 700, fontSize: 13 },
-  methodList: { display: "flex", flexDirection: "column", gap: 8 },
-  methodRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #242424", borderRadius: 13, background: "#101010", color: "#fff", padding: "14px 14px", cursor: "pointer", textAlign: "left" },
-  "methodRow div": { display: "flex", flexDirection: "column", gap: 3 },
-  "methodRow small": { color: "#777", fontSize: 11 },
-  methodRowDisabled: { opacity: 0.5, cursor: "not-allowed" },
-  searchWrap: { display: "flex", alignItems: "center", gap: 8, border: "1px solid #302711", borderRadius: 12, background: "#101010", padding: "10px 12px", color: "#777", marginBottom: 12 },
-  searchInput: { flex: 1, border: 0, outline: 0, background: "transparent", color: "#fff", minHeight: "auto" },
-  subtleLabel: { color: "#777", fontSize: 11, margin: "2px 0 8px" },
-  chipRow: { display: "flex", gap: 8, flexWrap: "wrap", margin: "0 0 14px" },
-  chip: { border: "1px solid #302711", borderRadius: 99, background: "#151107", color: GOLD_LIGHT, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" },
-  coinList: { display: "flex", flexDirection: "column", gap: 2, maxHeight: 360, overflowY: "auto" },
-  coinRow: { display: "flex", alignItems: "center", justifyContent: "space-between", border: 0, borderBottom: "1px solid #1c1c1c", background: "transparent", color: "#fff", padding: "13px 2px", cursor: "pointer", textAlign: "left" },
-  coinRowDisabled: { opacity: 0.4, cursor: "not-allowed" },
-  coinName: { color: "#777", fontSize: 12 },
-  networkPill: { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #302711", borderRadius: 99, background: "#101010", color: GOLD_LIGHT, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", margin: "0 0 16px" },
-  toggleRow: { display: "flex", alignItems: "center", gap: 8, color: "#aaa", fontSize: 13, margin: "0 0 12px" },
-  receiptCard: { textAlign: "center", padding: "4px 2px 0" },
-  receiptRow: { display: "flex", justifyContent: "space-between", padding: "9px 2px", borderBottom: "1px solid #1c1c1c", fontSize: 12, color: "#aaa", overflowWrap: "anywhere", gap: 10 },
   warningBox: { display: "flex", gap: 9, alignItems: "flex-start", border: "1px solid #594314", background: "#171106", color: "#d7c58e", borderRadius: 12, padding: 11, fontSize: 12, lineHeight: 1.45, margin: "10px 0" },
   infoBox: { display: "flex", gap: 8, alignItems: "flex-start", border: "1px solid #3c321b", background: "#121108", color: "#c5b98d", borderRadius: 11, padding: 10, fontSize: 11, lineHeight: 1.4, margin: "8px 0 12px" },
   balanceMini: { color: "#8c8c8c", fontSize: 12, marginTop: -4 },
