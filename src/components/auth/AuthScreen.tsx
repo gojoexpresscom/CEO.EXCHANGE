@@ -983,7 +983,7 @@ const styles: Record<string, React.CSSProperties> = {
   goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 15, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", padding: "6px 0" },
   circleBack: { width: 40, height: 40, borderRadius: "50%", border: "1px solid #333", background: "#141414", color: "#eee", cursor: "pointer", fontSize: 20 },
   label: { display: "block", margin: "2px 0 7px", fontSize: 12, fontWeight: 700, color: "#9a9a9a" },
-  field: { minHeight: 58, marginBottom: 11, padding: "0 16px", display: "flex", alignItems: "center", borderRadius: 13, border: "1px solid #2c2c2c", background: "#17171b" },
+  field: { width: "100%", minHeight: 72, marginBottom: 11, padding: "0 16px", display: "flex", alignItems: "center", boxSizing: "border-box", borderRadius: 13, border: "1px solid #2c2c2c", background: "#17171b" },
   icon: { width: 29, height: 29, flexShrink: 0, color: GOLD_LIGHT, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 10 },
   input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 16, padding: "3px 0" },
   eyeButton: { border: 0, background: "transparent", color: "#6c6c70", cursor: "pointer", padding: 5, display: "inline-flex" },
