@@ -858,7 +858,7 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} result={depositResult} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} />}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
@@ -915,22 +915,31 @@ function ModalShell({ title, children, onClose, wide = false }: { title: string;
 
 function DepositModal({
   networks,
-  walletAddresses,
-  depositAddresses,
   deposits,
   onClose,
+  onDeposit,
 }: {
   networks: Network[];
-  walletAddresses: WalletAddress[];
-  depositAddresses: DepositAddress[];
   deposits: Deposit[];
   onClose: () => void;
+  onDeposit: (asset: string, network: string, amount: string) => Promise<any>;
 }) {
-  type Step = "methods" | "coins" | "networks" | "address";
+  type Step = "methods" | "coins" | "networks" | "amount" | "result";
   const [step, setStep] = useState<Step>("methods");
   const [search, setSearch] = useState("");
   const [asset, setAsset] = useState("");
   const [network, setNetwork] = useState<Network | null>(null);
+  const [amount, setAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{
+    payment_id?: string;
+    pay_address?: string;
+    pay_amount?: number;
+    pay_currency?: string;
+    invoice_url?: string;
+    order_id?: string;
+    error?: string;
+  } | null>(null);
 
   const depositNetworks = networks.filter((n) => n.is_active !== false && n.deposit_enabled === true);
   const assetMap = new Map<string, { symbol: string; name: string }>();
@@ -947,40 +956,47 @@ function DepositModal({
     (n) => String(n.assets?.symbol ?? "").toUpperCase() === asset.toUpperCase()
   );
 
-  const addressForNetwork = (n: Network | null) => {
-    if (!n) return "";
-    const walletAddress = walletAddresses.find((x) => x.network_id === n.id)?.address;
-    if (walletAddress) return walletAddress;
-    return depositAddresses.find(
-      (x) =>
-        String(x.coin ?? "").toUpperCase() === asset.toUpperCase() &&
-        String(x.network ?? "").toUpperCase() === n.network_name.toUpperCase()
-    )?.address ?? "";
-  };
-
-  const address = addressForNetwork(network);
   const minDeposit = network?.min_deposit ?? null;
-  const qrUrl = address
-    ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(address)}`
+  const qrUrl = result?.pay_address
+    ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(result.pay_address)}`
     : "";
 
   const goBack = () => {
     if (step === "methods") onClose();
     else if (step === "coins") setStep("methods");
     else if (step === "networks") setStep("coins");
-    else setStep("networks");
+    else if (step === "amount") setStep("networks");
+    else setStep("amount");
   };
 
   const chooseAsset = (symbol: string) => {
     setAsset(symbol);
     setNetwork(null);
+    setAmount("");
+    setResult(null);
     setSearch("");
     setStep("networks");
   };
 
   const chooseNetwork = (n: Network) => {
     setNetwork(n);
-    setStep("address");
+    setAmount("");
+    setResult(null);
+    setStep("amount");
+  };
+
+  const getAddress = async () => {
+    if (!network || !amount || Number(amount) <= 0) return;
+    setSubmitting(true);
+    try {
+      const data = await onDeposit(asset, network.network_name, amount);
+      if (data && !data.error) {
+        setResult(data);
+        setStep("result");
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const recentAssets = [...new Set(
@@ -989,7 +1005,7 @@ function DepositModal({
 
   return (
     <ModalShell
-      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : `${asset}-Deposit`}
+      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : step === "amount" ? `${asset}-Deposit` : "Deposit Address"}
       onClose={onClose}
       wide={step === "coins" || step === "networks"}
     >
@@ -1081,7 +1097,7 @@ function DepositModal({
         </>
       )}
 
-      {step === "address" && network && (
+      {step === "amount" && network && (
         <>
           <div style={styles.depositNetworkPicker}>
             <span>Network:</span>
@@ -1090,10 +1106,51 @@ function DepositModal({
             </button>
           </div>
 
-          {!address ? (
+          <label style={styles.cleanField}>
+            <span>Amount</span>
+            <div style={styles.amountInputWrap}>
+              <input
+                style={styles.cleanInput}
+                type="number"
+                min="0"
+                step="any"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder={minDeposit == null ? "Enter amount" : `Min. deposit: ${formatAmount(Number(minDeposit))}`}
+                aria-label="Deposit amount"
+              />
+              <b>{asset}</b>
+            </div>
+          </label>
+          {minDeposit != null && <div style={styles.minimumLine}>Minimum deposit: {formatAmount(Number(minDeposit))} {asset}</div>}
+
+          <div style={styles.infoBox}>
+            <Icon name="alert" size={16} />
+            <span>NOWPayments generates a one-time deposit address for this exact amount. Sending a different amount may delay or fail crediting.</span>
+          </div>
+
+          <button
+            type="button"
+            style={styles.primaryButtonFull}
+            disabled={!amount || Number(amount) <= 0 || submitting}
+            onClick={() => void getAddress()}
+          >
+            {submitting ? "Creating address…" : "Get Deposit Address"}
+          </button>
+        </>
+      )}
+
+      {step === "result" && network && (
+        <>
+          <div style={styles.depositNetworkPicker}>
+            <span>Network:</span>
+            <span>{network.network_name}</span>
+          </div>
+
+          {!result?.pay_address ? (
             <div style={styles.emptyPanel}>
               <b>Deposit address is not available yet.</b>
-              <p>There is no real user-specific address stored for this asset/network. The frontend will not display a fake address.</p>
+              <p>NOWPayments did not return an address for this request. No fake address is shown.</p>
             </div>
           ) : (
             <>
@@ -1102,30 +1159,43 @@ function DepositModal({
               </div>
 
               <div style={styles.addressCard}>
-                <div style={styles.addressLabel}>Wallet Address</div>
-                <div style={styles.addressValue}>{address}</div>
+                <div style={styles.addressLabel}>Send exactly</div>
+                <div style={styles.addressValue}>{formatAmount(Number(result.pay_amount ?? amount))} {String(result.pay_currency ?? asset).toUpperCase()}</div>
+              </div>
+
+              <div style={{ height: 10 }} />
+
+              <div style={styles.addressCard}>
+                <div style={styles.addressLabel}>Deposit Address</div>
+                <div style={styles.addressValue}>{result.pay_address}</div>
               </div>
 
               <div style={styles.depositDetails}>
                 <div>
-                  <span>Minimum Deposit Amount</span>
-                  <b>{minDeposit == null ? "Not configured" : `${formatAmount(Number(minDeposit))} ${asset}`}</b>
+                  <span>Payment ID</span>
+                  <b>{result.payment_id}</b>
                 </div>
               </div>
 
               <div style={styles.depositActions}>
-                <button type="button" style={styles.secondaryButtonFull} onClick={() => { void navigator.clipboard?.writeText(address); }}>
+                <button type="button" style={styles.secondaryButtonFull} onClick={() => { void navigator.clipboard?.writeText(result.pay_address ?? ""); }}>
                   <Icon name="copy" size={18} /> Copy Address
                 </button>
-                <button type="button" style={styles.primaryButtonFull} onClick={() => {
-                  const link = document.createElement("a");
-                  link.href = qrUrl;
-                  link.target = "_blank";
-                  link.rel = "noreferrer";
-                  link.click();
-                }}>
-                  Save Picture
-                </button>
+                {result.invoice_url ? (
+                  <button type="button" style={styles.primaryButtonFull} onClick={() => window.open(result.invoice_url, "_blank", "noreferrer")}>
+                    Open NOWPayments Invoice
+                  </button>
+                ) : (
+                  <button type="button" style={styles.primaryButtonFull} onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = qrUrl;
+                    link.target = "_blank";
+                    link.rel = "noreferrer";
+                    link.click();
+                  }}>
+                    Save Picture
+                  </button>
+                )}
               </div>
             </>
           )}
