@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
-import TradingPage from "./components/trading/TradingPage";
+import TradingPage from "./components/trade/TradingPage";
 import { supabase } from "./lib/supabase";
 
 type AppRoute =
