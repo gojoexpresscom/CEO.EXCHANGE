@@ -10,7 +10,8 @@ type Screen =
   | "create-signup-password"
   | "confirm-signup-password"
   | "forgot"
-  | "verify-recovery"
+  | "recovery-sent"
+  | "password-reset-success"
   | "create-recovery-password"
   | "confirm-recovery-password"
   | "oauth-password"
@@ -266,20 +267,13 @@ export default function AuthScreen({ onAuth }: Props) {
   };
 
   useEffect(() => {
-    if (screen !== "verify-signup" && screen !== "verify-recovery") return;
+    if (screen !== "verify-signup") return;
     setCountdown(60);
     const timer = window.setInterval(() => setCountdown((value) => Math.max(0, value - 1)), 1000);
     return () => window.clearInterval(timer);
   }, [screen]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const referralFromUrl = params.get("ref");
-    if (referralFromUrl) setReferral(referralFromUrl.trim().toUpperCase());
-
-    if (params.get("oauth") === "1") void handleOAuthReturn();
-    if (params.get("reset") === "1") void handleRecoveryLinkReturn();
-
     const { data } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
         clearNotice();
@@ -287,6 +281,13 @@ export default function AuthScreen({ onAuth }: Props) {
         setScreen("create-recovery-password");
       }
     });
+
+    const params = new URLSearchParams(window.location.search);
+    const referralFromUrl = params.get("ref");
+    if (referralFromUrl) setReferral(referralFromUrl.trim().toUpperCase());
+
+    if (params.get("oauth") === "1") void handleOAuthReturn();
+    if (params.get("reset") === "1") void handleRecoveryLinkReturn();
 
     return () => data.subscription.unsubscribe();
   }, []);
@@ -353,7 +354,7 @@ export default function AuthScreen({ onAuth }: Props) {
     setLoading(true);
     try {
       const result = method === "email"
-        ? await supabase.auth.verifyOtp({ email: saved, token: otp, type: "signup" })
+        ? await supabase.auth.verifyOtp({ email: saved, token: otp, type: "email" })
         : await supabase.auth.verifyOtp({ phone: saved, token: otp, type: "sms" });
 
       if (result.error) throw result.error;
@@ -444,15 +445,13 @@ export default function AuthScreen({ onAuth }: Props) {
     try {
       const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(emailValue, {
         redirectTo: `${window.location.origin}/?reset=1`,
-        captchaToken: turnstileToken || undefined,
       });
       if (recoveryError) throw recoveryError;
 
       setEmail(emailValue);
-      setOtp("");
-      setCountdown(60);
-      setMessage("If an account exists for this email, a 6-digit recovery code has been sent.");
-      setScreen("verify-recovery");
+      setTurnstileToken("");
+      setMessage("If an account exists for this email, a secure password-reset link has been sent.");
+      setScreen("recovery-sent");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start password recovery.");
     } finally {
@@ -461,31 +460,8 @@ export default function AuthScreen({ onAuth }: Props) {
     }
   }
 
-  async function verifyRecovery() {
-    clearNotice();
-    if (!/^\d{6}$/.test(otp)) return setError("Enter the 6-digit recovery code.");
-
-    setLoading(true);
-    try {
-      const { data, error: recoveryError } = await supabase.auth.verifyOtp({
-        email: email.trim().toLowerCase(),
-        token: otp,
-        type: "recovery",
-      });
-      if (recoveryError) throw recoveryError;
-      if (!data.session) throw new Error("Recovery verification did not create a session.");
-
-      resetPasswordFields();
-      setScreen("create-recovery-password");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Recovery verification failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function resendRecovery() {
-    if (countdown > 0 || loading) return;
+    if (countdown > 0 || loading || !email.trim()) return;
     clearNotice();
     setLoading(true);
     try {
@@ -494,19 +470,27 @@ export default function AuthScreen({ onAuth }: Props) {
       });
       if (recoveryError) throw recoveryError;
       setCountdown(60);
-      setMessage("A new 6-digit recovery code was requested.");
+      setMessage("A new password-reset link has been sent.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not resend recovery code.");
+      setError(err instanceof Error ? err.message : "Could not resend the password-reset link.");
     } finally {
       setLoading(false);
     }
   }
 
   async function handleRecoveryLinkReturn() {
-    const { data } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      setError(error.message);
+      return;
+    }
     if (data.session) {
+      clearNotice();
       resetPasswordFields();
       setScreen("create-recovery-password");
+    } else {
+      setError("This password-reset link is invalid or has expired. Please request a new one.");
+      setScreen("forgot");
     }
   }
 
@@ -597,6 +581,16 @@ export default function AuthScreen({ onAuth }: Props) {
         if (referralError) throw new Error(`Password saved, but referral code was not applied: ${referralError.message}`);
       }
 
+      if (kind === "recovery") {
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) throw new Error(`Password changed, but we could not finish the recovery session: ${signOutError.message}`);
+        resetPasswordFields();
+        setOtp("");
+        setLoading(false);
+        setScreen("password-reset-success");
+        return;
+      }
+
       sessionStorage.removeItem("ceo_exchange_signup_identifier");
       sessionStorage.removeItem("ceo_exchange_signup_method");
       resetPasswordFields();
@@ -609,33 +603,6 @@ export default function AuthScreen({ onAuth }: Props) {
     }
   }
 
-  function setOtpDigit(index: number, value: string) {
-    const digits = value.replace(/\D/g, "");
-    const current = otp.padEnd(6, " ").split("");
-
-    if (digits.length > 1) {
-      digits.slice(0, 6 - index).split("").forEach((digit, offset) => {
-        current[index + offset] = digit;
-      });
-    } else {
-      current[index] = digits || " ";
-    }
-
-    const next = current.join("").replace(/\s/g, "").slice(0, 6);
-    setOtp(next);
-
-    if (digits) {
-      const target = Math.min(5, index + Math.max(1, digits.length));
-      document.getElementById(`ceo-otp-${target}`)?.focus();
-    }
-  }
-
-  function handleOtpKey(index: number, key: string) {
-    if (key === "Backspace" && !otp[index] && index > 0) {
-      document.getElementById(`ceo-otp-${index - 1}`)?.focus();
-    }
-  }
-
   const title: Record<Screen, React.ReactNode> = {
     login: <>Welcome <span>Back</span></>,
     signup: <>Create your <span>account</span></>,
@@ -643,7 +610,7 @@ export default function AuthScreen({ onAuth }: Props) {
     "create-signup-password": <>Create <span>Password</span></>,
     "confirm-signup-password": <>Confirm <span>Password</span></>,
     forgot: <>Forgot <span>Password?</span></>,
-    "verify-recovery": <>Verify <span>Recovery</span></>,
+    "recovery-sent": <>Check Your <span>Email</span></>,
     "create-recovery-password": <>Create New <span>Password</span></>,
     "confirm-recovery-password": <>Confirm New <span>Password</span></>,
     "oauth-password": <>Create <span>Password</span></>,
@@ -823,41 +790,55 @@ export default function AuthScreen({ onAuth }: Props) {
           </>
         )}
 
-        {(screen === "verify-signup" || screen === "verify-recovery") && (
+        {screen === "verify-signup" && (
           <>
             <div style={styles.headerRow}>
-              <button type="button" style={styles.circleBack} onClick={() => setScreen(screen === "verify-signup" ? "signup" : "forgot")} aria-label="Back"><Arrow left /></button>
+              <button type="button" style={styles.circleBack} onClick={() => setScreen("signup")} aria-label="Back"><Arrow left /></button>
             </div>
-
-            <h1 style={styles.centerTitle}>{title[screen]}</h1>
-            <p style={styles.centerText}>A 6-digit code has been sent to:</p>
-            <p style={styles.emailText}>{screen === "verify-signup" ? (signupMethod === "phone" ? sessionStorage.getItem("ceo_exchange_signup_identifier") || identifier : email || identifier) : email}</p>
-            <p style={styles.centerText}>Your verification code is valid for five (5) minutes.</p>
-
+            <h1 style={styles.centerTitle}>{title["verify-signup"]}</h1>
+            <p style={styles.centerText}>A 6-digit verification code has been sent to:</p>
+            <p style={styles.emailText}>{signupMethod === "phone" ? sessionStorage.getItem("ceo_exchange_signup_identifier") || identifier : email || identifier}</p>
+            <p style={styles.centerText}>Enter the code from your email or SMS.</p>
             <div style={styles.otpRow}>
               {Array.from({ length: 6 }).map((_, index) => (
-                <input
-                  key={index}
-                  id={`ceo-otp-${index}`}
-                  value={otp[index] || ""}
-                  maxLength={1}
-                  inputMode="numeric"
-                  autoComplete={index === 0 ? "one-time-code" : "off"}
-                  style={styles.otpBox}
+                <input key={index} id={`ceo-otp-${index}`} value={otp[index] || ""} maxLength={1} inputMode="numeric"
+                  autoComplete={index === 0 ? "one-time-code" : "off"} style={styles.otpBox}
                   onChange={(e) => setOtpDigit(index, e.target.value)}
                   onKeyDown={(e) => handleOtpKey(index, e.key)}
-                  aria-label={`Verification digit ${index + 1}`}
-                />
+                  aria-label={`Verification digit ${index + 1}`} />
               ))}
             </div>
-
-            <button type="button" style={styles.resend} disabled={countdown > 0 || loading} onClick={() => void (screen === "verify-signup" ? resendSignup() : resendRecovery())}>
+            <button type="button" style={styles.resend} disabled={countdown > 0 || loading} onClick={() => void resendSignup()}>
               {countdown > 0 ? `00:${String(countdown).padStart(2, "0")} Resend` : "Resend code"}
             </button>
-
-            <button type="button" style={styles.primaryButton} disabled={loading} onClick={() => void (screen === "verify-signup" ? verifySignup() : verifyRecovery())}>
+            <button type="button" style={styles.primaryButton} disabled={loading} onClick={() => void verifySignup()}>
               {loading ? "Verifying…" : "Continue"} <Arrow />
             </button>
+          </>
+        )}
+
+        {screen === "recovery-sent" && (
+          <>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
+            </div>
+            <h1 style={styles.centerTitle}>{title["recovery-sent"]}</h1>
+            <p style={styles.centerText}>If an account exists for this email, we sent a secure password-reset link to:</p>
+            <p style={styles.emailText}>{email}</p>
+            <p style={styles.centerText}>Open the link on this device to create your new password. You do not need your old password.</p>
+            <button type="button" style={styles.resend} disabled={countdown > 0 || loading} onClick={() => void resendRecovery()}>
+              {countdown > 0 ? `00:${String(countdown).padStart(2, "0")} Resend` : "Send link again"}
+            </button>
+            <button type="button" style={styles.primaryButton} onClick={goLogin}>Back to Login <Arrow /></button>
+          </>
+        )}
+
+        {screen === "password-reset-success" && (
+          <>
+            <div style={styles.successIcon} aria-hidden="true">✓</div>
+            <h1 style={styles.centerTitle}>{title["password-reset-success"]}</h1>
+            <p style={styles.centerText}>Your password has been changed successfully. You can now log in with your new password.</p>
+            <button type="button" style={styles.primaryButton} onClick={goLogin}>Back to Login <Arrow /></button>
           </>
         )}
 
@@ -877,7 +858,7 @@ export default function AuthScreen({ onAuth }: Props) {
                     : passwordKind === "signup"
                       ? "verify-signup"
                       : passwordKind === "recovery"
-                        ? "verify-recovery"
+                        ? "recovery-sent"
                         : "login",
                 )}
                 aria-label="Back"
@@ -944,7 +925,7 @@ export default function AuthScreen({ onAuth }: Props) {
               <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
             </div>
             <h1 style={styles.centerTitle}>{title.forgot}</h1>
-            <p style={styles.centerText}>Enter your email and we’ll send a secure 6-digit recovery code.</p>
+            <p style={styles.centerText}>Enter your email and we’ll send a secure password-reset link.</p>
             <label style={styles.label}>Email</label>
             <div style={styles.field}>
               <span style={styles.icon}><MailIcon /></span>
@@ -952,7 +933,7 @@ export default function AuthScreen({ onAuth }: Props) {
             </div>
             <Turnstile siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
             <button type="submit" style={styles.primaryButton} disabled={loading}>
-              {loading ? "Sending…" : "Send Recovery Code"} <Arrow />
+              {loading ? "Sending…" : "Send Reset Link"} <Arrow />
             </button>
           </form>
         )}
