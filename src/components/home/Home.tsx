@@ -713,10 +713,10 @@ export default function Home({
     await loadSelectedTicket(selectedTicket);
   };
 
-  const createDeposit = async (asset: string, network: string, amount: string) => {
+  const createDeposit = async (network: Network, amount: string) => {
     if (!amount || Number(amount) <= 0) return notify("Enter a positive deposit amount.");
-    if (!network) return notify("Choose a supported network.");
-    const { data, error: e } = await supabase.functions.invoke("nowpayments-create-payment", { body: { asset, network, amount: Number(amount) } });
+    if (!network?.id) return notify("Choose a supported network.");
+    const { data, error: e } = await supabase.functions.invoke("nowpayments-create-payment", { body: { network_id: network.id, amount: Number(amount) } });
     if (e) return notify(e.message);
     if (data?.error) return notify(String(data.error));
     setDepositResult(data);
@@ -922,7 +922,7 @@ function DepositModal({
   networks: Network[];
   deposits: Deposit[];
   onClose: () => void;
-  onDeposit: (asset: string, network: string, amount: string) => Promise<any>;
+  onDeposit: (network: Network, amount: string) => Promise<any>;
 }) {
   type Step = "methods" | "coins" | "networks" | "amount" | "result";
   const [step, setStep] = useState<Step>("methods");
@@ -938,23 +938,27 @@ function DepositModal({
     pay_currency?: string;
     invoice_url?: string;
     order_id?: string;
-    error?: string;
   } | null>(null);
 
   const depositNetworks = networks.filter((n) => n.is_active !== false && n.deposit_enabled === true);
-  const assetMap = new Map<string, { symbol: string; name: string }>();
+  const assetMap = new Map<string, { symbol: string; name: string; count: number }>();
   depositNetworks.forEach((n) => {
     const symbol = String(n.assets?.symbol ?? "").toUpperCase();
-    if (symbol && !assetMap.has(symbol)) assetMap.set(symbol, { symbol, name: String(n.assets?.name ?? symbol) });
+    if (!symbol) return;
+    const existing = assetMap.get(symbol);
+    if (existing) existing.count += 1;
+    else assetMap.set(symbol, { symbol, name: String(n.assets?.name ?? symbol), count: 1 });
   });
+  const allAssets = [...assetMap.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-  const assets = [...assetMap.values()]
-    .filter((x) => `${x.symbol} ${x.name}`.toLowerCase().includes(search.trim().toLowerCase()))
-    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const PRIORITY = ["BTC", "ETH", "USDT", "USDC", "BNB", "SOL", "XRP", "TRX", "DOGE", "ADA"];
+  const recommend = PRIORITY.filter((s) => assetMap.has(s));
 
-  const assetNetworks = depositNetworks.filter(
-    (n) => String(n.assets?.symbol ?? "").toUpperCase() === asset.toUpperCase()
-  );
+  const filteredAssets = allAssets.filter((x) => `${x.symbol} ${x.name}`.toLowerCase().includes(search.trim().toLowerCase()));
+
+  const assetNetworks = depositNetworks
+    .filter((n) => String(n.assets?.symbol ?? "").toUpperCase() === asset.toUpperCase())
+    .sort((a, b) => a.network_name.localeCompare(b.network_name));
 
   const minDeposit = network?.min_deposit ?? null;
   const qrUrl = result?.pay_address
@@ -989,7 +993,7 @@ function DepositModal({
     if (!network || !amount || Number(amount) <= 0) return;
     setSubmitting(true);
     try {
-      const data = await onDeposit(asset, network.network_name, amount);
+      const data = await onDeposit(network, amount);
       if (data && !data.error) {
         setResult(data);
         setStep("result");
@@ -999,13 +1003,13 @@ function DepositModal({
     }
   };
 
-  const recentAssets = [...new Set(
-    deposits.map((d) => String(d.asset ?? "").toUpperCase()).filter(Boolean)
-  )].slice(0, 6);
+  const recentAssets = [...new Set(deposits.map((d) => String(d.asset ?? "").toUpperCase()).filter(Boolean))].slice(0, 6);
+
+  let lastLetter = "";
 
   return (
     <ModalShell
-      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : step === "amount" ? `${asset}-Deposit` : "Deposit Address"}
+      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : step === "amount" ? `${asset}-Deposit` : `${asset}-Deposit`}
       onClose={onClose}
       wide={step === "coins" || step === "networks"}
     >
@@ -1043,7 +1047,16 @@ function DepositModal({
             {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")}><Icon name="close" size={18} /></button>}
           </div>
 
-          {recentAssets.length > 0 && (
+          {!search && recommend.length > 0 && (
+            <div style={styles.recentBlock}>
+              <div style={styles.recentTitle}>Recommend</div>
+              <div style={styles.chipRow}>
+                {recommend.map((x) => <button type="button" key={x} style={styles.assetChip} onClick={() => chooseAsset(x)}>{x}</button>)}
+              </div>
+            </div>
+          )}
+
+          {!search && recentAssets.length > 0 && (
             <div style={styles.recentBlock}>
               <div style={styles.recentTitle}>Recent</div>
               <div style={styles.chipRow}>
@@ -1053,16 +1066,24 @@ function DepositModal({
           )}
 
           <div style={styles.assetList}>
-            {assets.map((x) => (
-              <button type="button" key={x.symbol} style={styles.assetRow} onClick={() => chooseAsset(x.symbol)}>
-                <span style={styles.assetIcon}>{x.symbol.slice(0, 1)}</span>
-                <span style={styles.assetInfo}><b>{x.symbol}</b><small>{x.name}</small></span>
-                <Icon name="arrow" size={19} />
-              </button>
-            ))}
-            {!assets.length && (
+            {filteredAssets.map((x) => {
+              const letter = x.symbol.slice(0, 1);
+              const showHeader = letter !== lastLetter;
+              lastLetter = letter;
+              return (
+                <React.Fragment key={x.symbol}>
+                  {showHeader && <div style={styles.letterHeader}>{letter}</div>}
+                  <button type="button" style={styles.assetRow} onClick={() => chooseAsset(x.symbol)}>
+                    <span style={styles.assetIcon}>{letter}</span>
+                    <span style={styles.assetInfo}><b>{x.symbol}</b><small>{x.name}</small></span>
+                    <Icon name="arrow" size={19} />
+                  </button>
+                </React.Fragment>
+              );
+            })}
+            {!filteredAssets.length && (
               <div style={styles.emptyPanel}>
-                <b>No crypto deposit currencies are enabled.</b>
+                <b>No crypto deposit currencies match "{search}".</b>
                 <p>Only active deposit networks configured in Supabase are shown. No fake currencies or networks are added.</p>
               </div>
             )}
@@ -1074,7 +1095,7 @@ function DepositModal({
         <>
           <div style={styles.networkNotice}>
             <Icon name="shield" size={18} />
-            <span>Make sure the network you deposit on is the same network used for the deposit address.</span>
+            <span>Make sure that the chain type you make deposits to is the one you make withdrawals from.</span>
           </div>
           <div style={styles.chainList}>
             {assetNetworks.map((n) => (
@@ -1082,7 +1103,11 @@ function DepositModal({
                 <span style={styles.chainIcon}>{n.network_name.slice(0, 1)}</span>
                 <span style={styles.chainInfo}>
                   <b>{n.network_name}</b>
-                  <small>Minimum deposit: {n.min_deposit == null ? "Not configured" : `${formatAmount(Number(n.min_deposit))} ${asset}`}</small>
+                  <small>
+                    {n.required_confirmations != null ? `Deposit Completion: ${n.required_confirmations} confirmation(s)` : "Deposit completion: not configured"}
+                    {" · "}
+                    {n.min_deposit != null ? `Min. Deposit: ${formatAmount(Number(n.min_deposit))} ${asset}` : "Min. deposit: not configured"}
+                  </small>
                 </span>
                 <Icon name="arrow" size={19} />
               </button>
@@ -1159,60 +1184,61 @@ function DepositModal({
               </div>
 
               <div style={styles.addressCard}>
-                <div style={styles.addressLabel}>Send exactly</div>
-                <div style={styles.addressValue}>{formatAmount(Number(result.pay_amount ?? amount))} {String(result.pay_currency ?? asset).toUpperCase()}</div>
-              </div>
-
-              <div style={{ height: 10 }} />
-
-              <div style={styles.addressCard}>
-                <div style={styles.addressLabel}>Deposit Address</div>
+                <div style={styles.addressLabel}>Wallet Address</div>
                 <div style={styles.addressValue}>{result.pay_address}</div>
               </div>
 
               <div style={styles.depositDetails}>
-                <div>
+                <div style={styles.depositDetailRow}>
+                  <span>Send exactly</span>
+                  <b>{formatAmount(Number(result.pay_amount ?? amount))} {String(result.pay_currency ?? asset).toUpperCase()}</b>
+                </div>
+                <div style={styles.depositDetailRow}>
+                  <span>Minimum Deposit Amount</span>
+                  <b>{minDeposit == null ? "Not configured" : `${formatAmount(Number(minDeposit))} ${asset}`}</b>
+                </div>
+                <div style={styles.depositDetailRow}>
+                  <span>Deposit Arrival</span>
+                  <b>{network.required_confirmations != null ? `${network.required_confirmations} confirmations` : "Not configured"}</b>
+                </div>
+                {network.token_contract_address && (
+                  <div style={styles.depositDetailRow}>
+                    <span>Contract Address</span>
+                    <b>Ending with {network.token_contract_address.slice(-6)}</b>
+                  </div>
+                )}
+                <div style={styles.depositDetailRow}>
                   <span>Payment ID</span>
                   <b>{result.payment_id}</b>
                 </div>
               </div>
 
               <div style={styles.depositActions}>
-                <button type="button" style={styles.secondaryButtonFull} onClick={() => { void navigator.clipboard?.writeText(result.pay_address ?? ""); }}>
-                  <Icon name="copy" size={18} /> Copy Address
-                </button>
-                {result.invoice_url ? (
-                  <button type="button" style={styles.primaryButtonFull} onClick={() => window.open(result.invoice_url, "_blank", "noreferrer")}>
-                    Open NOWPayments Invoice
-                  </button>
-                ) : (
-                  <button type="button" style={styles.primaryButtonFull} onClick={() => {
+                <button
+                  type="button"
+                  style={styles.secondaryButtonFull}
+                  onClick={() => {
                     const link = document.createElement("a");
                     link.href = qrUrl;
+                    link.download = `${asset}-${network.network_name}-deposit-qr.png`;
                     link.target = "_blank";
                     link.rel = "noreferrer";
                     link.click();
-                  }}>
-                    Save Picture
-                  </button>
-                )}
+                  }}
+                >
+                  Save Picture
+                </button>
+                <button type="button" style={styles.primaryButtonFull} onClick={() => { void navigator.clipboard?.writeText(result.pay_address ?? ""); }}>
+                  <Icon name="copy" size={18} /> Copy Address
+                </button>
               </div>
+              {result.invoice_url && (
+                <button type="button" style={styles.linkButton} onClick={() => window.open(result.invoice_url, "_blank", "noreferrer")}>
+                  Open NOWPayments Invoice
+                </button>
+              )}
             </>
           )}
-        </>
-      )}
-
-      {step !== "methods" && (
-        <>
-          <div style={styles.divider} />
-          <h3 style={styles.smallTitle}>Recent deposits</h3>
-          {deposits.slice(0, 8).map((d) => (
-            <div key={d.id} style={styles.listRow}>
-              <span><b>{d.asset}</b> {formatAmount(Number(d.amount))}</span>
-              <span style={styles.status}>{d.status || "PENDING"}</span>
-            </div>
-          ))}
-          {!deposits.length && <Empty text="No deposits yet." />}
         </>
       )}
     </ModalShell>
@@ -1236,7 +1262,7 @@ function WithdrawModal({
   onCalculateFee: (asset: string, network: string, amount: string) => Promise<any>;
   onWithdraw: (asset: string, network: string, destination: string, amount: string, otp: string) => Promise<string | null>;
 }) {
-  type Step = "coins" | "method" | "form" | "otp" | "done";
+  type Step = "coins" | "method" | "form" | "network" | "otp" | "done";
   const [step, setStep] = useState<Step>("coins");
   const [asset, setAsset] = useState("");
   const [network, setNetwork] = useState("");
@@ -1261,11 +1287,9 @@ function WithdrawModal({
     0
   );
 
-  const availableNetworks = networks.filter(
-    (n) =>
-      n.withdrawal_enabled === true &&
-      (n.assets?.symbol || "").toUpperCase() === asset.toUpperCase()
-  );
+  const availableNetworks = networks
+    .filter((n) => n.withdrawal_enabled === true && (n.assets?.symbol || "").toUpperCase() === asset.toUpperCase())
+    .sort((a, b) => a.network_name.localeCompare(b.network_name));
   const selectedNetwork = availableNetworks.find((n) => n.network_name === network) ?? null;
 
   useEffect(() => {
@@ -1287,6 +1311,20 @@ function WithdrawModal({
     setAmount("");
     setFee(null);
     setStep("method");
+  };
+
+  const chooseNetwork = (n: Network) => {
+    setNetwork(n.network_name);
+    setStep("form");
+  };
+
+  const pasteAddress = async () => {
+    try {
+      const text = await navigator.clipboard?.readText();
+      if (text) setDestination(text.trim());
+    } catch {
+      /* clipboard read denied — user can still type or paste manually */
+    }
   };
 
   const sendOtp = async () => {
@@ -1313,6 +1351,7 @@ function WithdrawModal({
     if (step === "coins") onClose();
     else if (step === "method") setStep("coins");
     else if (step === "form") setStep("method");
+    else if (step === "network") setStep("form");
     else if (step === "otp") setStep("form");
     else setStep("coins");
   };
@@ -1322,7 +1361,11 @@ function WithdrawModal({
     : "";
 
   return (
-    <ModalShell title={step === "coins" ? "Select Coin" : step === "method" ? "Withdraw" : step === "form" ? `${asset}-On-Chain` : step === "otp" ? "Confirm Withdrawal" : "Transaction Details"} onClose={onClose} wide={step === "coins"}>
+    <ModalShell
+      title={step === "coins" ? "Select Coin" : step === "method" ? "Withdraw" : step === "form" ? `${asset}-On-Chain` : step === "network" ? "Choose a Chain Type" : step === "otp" ? "Confirm Withdrawal" : "Transaction Details"}
+      onClose={onClose}
+      wide={step === "coins" || step === "network"}
+    >
       {step !== "coins" && step !== "done" && (
         <button type="button" style={styles.flowBack} onClick={goBack}>
           <Icon name="arrowLeft" size={19} /> Back
@@ -1369,21 +1412,20 @@ function WithdrawModal({
 
       {step === "form" && (
         <>
-          <div style={styles.balanceHero}>
-            <div><span>Available balance</span><strong>{formatAmount(balance)} {asset}</strong></div>
-          </div>
-
           <label style={styles.cleanField}>
             <span>Address</span>
-            <input style={styles.cleanInput} value={destination} onChange={(e) => setDestination(e.target.value.trimStart())} placeholder="Input or paste withdrawal address" autoCapitalize="none" autoCorrect="off" />
+            <div style={styles.addressInputWrap}>
+              <input style={styles.cleanInputInline} value={destination} onChange={(e) => setDestination(e.target.value.trimStart())} placeholder="Input or press and hold to paste the withdrawal address" autoCapitalize="none" autoCorrect="off" />
+              <button type="button" style={styles.iconButton} onClick={() => void pasteAddress()} aria-label="Paste address"><Icon name="copy" size={18} /></button>
+            </div>
           </label>
 
           <label style={styles.cleanField}>
             <span>Network</span>
-            <select style={styles.cleanInput} value={network} onChange={(e) => setNetwork(e.target.value)}>
-              <option value="">Please choose a chain type</option>
-              {availableNetworks.map((n) => <option key={n.id} value={n.network_name}>{n.network_name}</option>)}
-            </select>
+            <button type="button" style={styles.networkPickerButton} onClick={() => setStep("network")}>
+              <span>{network || "Please choose a chain type"}</span>
+              <Icon name="chevron" size={17} />
+            </button>
           </label>
 
           <label style={styles.cleanField}>
@@ -1394,6 +1436,10 @@ function WithdrawModal({
             </div>
           </label>
 
+          <div style={styles.balanceHero}>
+            <div><span>Available balance</span><strong>{formatAmount(balance)} {asset}</strong></div>
+          </div>
+
           {selectedNetwork?.min_withdrawal != null && <div style={styles.minimumLine}>Minimum withdrawal: {formatAmount(Number(selectedNetwork.min_withdrawal))} {asset}</div>}
 
           {fee?.success && (
@@ -1401,7 +1447,7 @@ function WithdrawModal({
               <span>Network fee</span><b>{formatAmount(Number(fee.network_fee))}</b>
               <span>Platform fee</span><b>{formatAmount(Number(fee.platform_fee))}</b>
               <span>Total fee</span><b>{formatAmount(Number(fee.total_fee))}</b>
-              <span>You receive</span><b>{formatAmount(Number(fee.net_amount))}</b>
+              <span>Amount Received</span><b>{formatAmount(Number(fee.net_amount))} {asset}</b>
             </div>
           )}
 
@@ -1413,6 +1459,33 @@ function WithdrawModal({
           >
             <Icon name="upload" size={19} /> Withdraw
           </button>
+        </>
+      )}
+
+      {step === "network" && (
+        <>
+          <div style={styles.networkNotice}>
+            <Icon name="shield" size={18} />
+            <span>Make sure that the chain type you make withdrawals from is the one you make deposits to.</span>
+          </div>
+          <div style={styles.chainList}>
+            {availableNetworks.map((n) => (
+              <button type="button" key={n.id} style={styles.chainRow} onClick={() => chooseNetwork(n)}>
+                <span style={styles.chainIcon}>{n.network_name.slice(0, 1)}</span>
+                <span style={styles.chainInfo}>
+                  <b>{n.network_name}</b>
+                  <small>Fee: {n.withdrawal_fee == null ? "Not configured" : `${formatAmount(Number(n.withdrawal_fee))} ${asset}`}</small>
+                </span>
+                <Icon name="arrow" size={19} />
+              </button>
+            ))}
+            {!availableNetworks.length && (
+              <div style={styles.emptyPanel}>
+                <b>No enabled withdrawal network for {asset}.</b>
+                <p>This page never invents a network or fee.</p>
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -1455,20 +1528,6 @@ function WithdrawModal({
             <div><span>Status</span><b>Pending</b></div>
           </div>
           <button type="button" style={styles.secondaryButtonFull} onClick={onClose}>Done</button>
-        </>
-      )}
-
-      {step !== "done" && step !== "coins" && (
-        <>
-          <div style={styles.divider} />
-          <h3 style={styles.smallTitle}>Recent withdrawals</h3>
-          {withdrawals.slice(0, 8).map((w) => (
-            <div key={w.id} style={styles.listRow}>
-              <span><b>{w.asset}</b> {formatAmount(Number(w.amount))}</span>
-              <span style={styles.status}>{w.status || "PENDING"}</span>
-            </div>
-          ))}
-          {!withdrawals.length && <Empty text="No withdrawals yet." />}
         </>
       )}
     </ModalShell>
@@ -1634,11 +1693,17 @@ const styles: Record<string, React.CSSProperties> = {
   addressCard: { background: "#151519", borderRadius: 15, padding: 13, border: "1px solid #232329" },
   addressLabel: { color: "#777", fontSize: 12, marginBottom: 7 },
   addressValue: { color: "#fff", fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere", fontWeight: 700 },
-  depositDetails: { marginTop: 12, padding: "0 2px", color: "#777", fontSize: 12 },
+  depositDetails: { marginTop: 12, padding: "0 2px", color: "#777", fontSize: 12, display: "flex", flexDirection: "column", gap: 9 },
+  depositDetailRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
   depositActions: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 },
+  letterHeader: { color: "#777", fontSize: 12, fontWeight: 700, padding: "10px 2px 4px" },
+  linkButton: { width: "100%", marginTop: 10, background: "none", border: "none", color: GOLD, fontSize: 13, fontWeight: 700, padding: 8, cursor: "pointer" },
   balanceHero: { padding: "12px 13px", borderRadius: 14, background: "#111113", border: "1px solid #202024", marginBottom: 12 },
   cleanField: { display: "flex", flexDirection: "column", gap: 7, margin: "13px 0", color: "#999", fontSize: 12 },
   cleanInput: { width: "100%", minHeight: 50, border: 0, borderRadius: 12, outline: 0, background: "#202126", color: "#fff", padding: "12px 14px", colorScheme: "dark" },
+  cleanInputInline: { flex: 1, minHeight: 50, border: 0, borderRadius: 12, outline: 0, background: "#202126", color: "#fff", padding: "12px 14px", colorScheme: "dark" },
+  addressInputWrap: { display: "flex", alignItems: "center", gap: 8, background: "#202126", borderRadius: 12, paddingRight: 6 },
+  networkPickerButton: { width: "100%", minHeight: 50, border: 0, borderRadius: 12, background: "#202126", color: "#fff", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, cursor: "pointer" },
   amountInputWrap: { position: "relative" },
   "amountInputWrap .cleanInput": { paddingRight: 68 },
   "amountInputWrap b": { position: "absolute", right: 13, top: 15, color: "#fff", pointerEvents: "none" },
