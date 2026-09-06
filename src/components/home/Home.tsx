@@ -725,6 +725,16 @@ export default function Home({
     return data;
   };
 
+  const createTransakSession = async (network: Network, fiatAmount: string) => {
+    if (!network?.id) return notify("Choose a supported network.");
+    if (!fiatAmount || Number(fiatAmount) <= 0) return notify("Enter a positive amount.");
+    const { data, error: e } = await supabase.functions.invoke("transak-create-session", { body: { network_id: network.id, fiatAmount: Number(fiatAmount) } });
+    if (e) return notify(e.message);
+    if (data?.error) return notify(String(data.error));
+    if (data?.warning) notify(String(data.warning));
+    return data;
+  };
+
   const requestWithdrawalOtp = async () => {
     const { data, error: e } = await supabase.functions.invoke("send-otp", { body: { purpose: "withdrawal" } });
     if (e) return notify(e.message);
@@ -858,7 +868,7 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} />}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
@@ -918,19 +928,25 @@ function DepositModal({
   deposits,
   onClose,
   onDeposit,
+  onBuyCrypto,
 }: {
   networks: Network[];
   deposits: Deposit[];
   onClose: () => void;
   onDeposit: (network: Network, amount: string) => Promise<any>;
+  onBuyCrypto: (network: Network, fiatAmount: string) => Promise<any>;
 }) {
   type Step = "methods" | "coins" | "networks" | "amount" | "result";
+  type Flow = "crypto" | "buy";
   const [step, setStep] = useState<Step>("methods");
+  const [flow, setFlow] = useState<Flow>("crypto");
   const [search, setSearch] = useState("");
   const [asset, setAsset] = useState("");
   const [network, setNetwork] = useState<Network | null>(null);
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [buyAmount, setBuyAmount] = useState("");
+  const [buySubmitting, setBuySubmitting] = useState(false);
   const [result, setResult] = useState<{
     payment_id?: string;
     pay_address?: string;
@@ -1003,6 +1019,20 @@ function DepositModal({
     }
   };
 
+  const startBuy = async () => {
+    if (!network || !buyAmount || Number(buyAmount) <= 0) return;
+    setBuySubmitting(true);
+    try {
+      const data = await onBuyCrypto(network, buyAmount);
+      if (data?.widgetUrl) {
+        window.open(data.widgetUrl, "_blank", "noopener,noreferrer");
+        onClose();
+      }
+    } finally {
+      setBuySubmitting(false);
+    }
+  };
+
   const recentAssets = [...new Set(deposits.map((d) => String(d.asset ?? "").toUpperCase()).filter(Boolean))].slice(0, 6);
 
   let lastLetter = "";
@@ -1021,9 +1051,14 @@ function DepositModal({
 
       {step === "methods" && (
         <>
-          <button type="button" style={styles.methodLarge} onClick={() => setStep("coins")}>
+          <button type="button" style={styles.methodLarge} onClick={() => { setFlow("crypto"); setStep("coins"); }}>
             <span style={styles.methodLargeIcon}><Icon name="download" size={23} /></span>
             <span style={styles.methodLargeText}><b>Deposit Crypto</b><small>Transfer crypto from your on-chain wallet or another exchange.</small></span>
+            <Icon name="arrow" size={21} />
+          </button>
+          <button type="button" style={styles.methodLarge} onClick={() => { setFlow("buy"); setStep("coins"); }}>
+            <span style={styles.methodLargeIcon}><Icon name="wallet" size={23} /></span>
+            <span style={styles.methodLargeText}><b>Buy Crypto with Card</b><small>Buy crypto instantly with a debit or credit card via Transak.</small></span>
             <Icon name="arrow" size={21} />
           </button>
           <button type="button" style={styles.methodLargeDisabled} disabled>
@@ -1122,7 +1157,7 @@ function DepositModal({
         </>
       )}
 
-      {step === "amount" && network && (
+      {step === "amount" && network && flow === "crypto" && (
         <>
           <div style={styles.depositNetworkPicker}>
             <span>Network:</span>
@@ -1161,6 +1196,47 @@ function DepositModal({
             onClick={() => void getAddress()}
           >
             {submitting ? "Creating address…" : "Get Deposit Address"}
+          </button>
+        </>
+      )}
+
+      {step === "amount" && network && flow === "buy" && (
+        <>
+          <div style={styles.depositNetworkPicker}>
+            <span>Network:</span>
+            <button type="button" onClick={() => setStep("networks")}>
+              {network.network_name}<Icon name="chevron" size={17} />
+            </button>
+          </div>
+
+          <label style={styles.cleanField}>
+            <span>Amount to spend</span>
+            <div style={styles.amountInputWrap}>
+              <input
+                style={styles.cleanInput}
+                type="number"
+                min="0"
+                step="any"
+                value={buyAmount}
+                onChange={(e) => setBuyAmount(e.target.value)}
+                placeholder="Enter amount"
+                aria-label="Buy crypto amount"
+              />
+            </div>
+          </label>
+
+          <div style={styles.infoBox}>
+            <Icon name="alert" size={16} />
+            <span>You'll complete this purchase on Transak's secure payment page, which opens in a new tab. This is a staging test session.</span>
+          </div>
+
+          <button
+            type="button"
+            style={styles.primaryButtonFull}
+            disabled={!buyAmount || Number(buyAmount) <= 0 || buySubmitting}
+            onClick={() => void startBuy()}
+          >
+            {buySubmitting ? "Opening secure payment…" : "Continue to Card Payment"}
           </button>
         </>
       )}
