@@ -13,7 +13,6 @@ type Screen =
   | "recovery-sent"
   | "password-reset-success"
   | "create-recovery-password"
-  | "confirm-recovery-password"
   | "oauth-password"
   | "oauth-confirm";
 
@@ -257,6 +256,24 @@ export default function AuthScreen({ onAuth }: Props) {
     return true;
   };
 
+  const setOtpDigit = (index: number, value: string) => {
+    const digit = value.replace(/\D/g, "").slice(-1);
+    setOtp((prev) => {
+      const chars = prev.padEnd(6, " ").split("");
+      chars[index] = digit || " ";
+      return chars.join("").replace(/\s+$/, "");
+    });
+    if (digit && index < 5) {
+      document.getElementById(`ceo-otp-${index + 1}`)?.focus();
+    }
+  };
+
+  const handleOtpKey = (index: number, key: string) => {
+    if (key === "Backspace" && !otp[index] && index > 0) {
+      document.getElementById(`ceo-otp-${index - 1}`)?.focus();
+    }
+  };
+
   useEffect(() => {
     if (screen !== "verify-signup") return;
     setCountdown(60);
@@ -435,9 +452,9 @@ export default function AuthScreen({ onAuth }: Props) {
     setLoading(true);
     try {
       const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(emailValue, {
-  redirectTo: `${window.location.origin}/?reset=1`,
-  captchaToken: turnstileSiteKey ? turnstileToken : undefined,
-});
+        redirectTo: `${window.location.origin}/?reset=1`,
+        captchaToken: turnstileSiteKey ? turnstileToken : undefined,
+      });
       if (recoveryError) throw recoveryError;
 
       setEmail(emailValue);
@@ -534,7 +551,6 @@ export default function AuthScreen({ onAuth }: Props) {
 
     setConfirmPassword("");
     if (screen === "create-signup-password") setScreen("confirm-signup-password");
-    else if (screen === "create-recovery-password") setScreen("confirm-recovery-password");
     else setScreen("oauth-confirm");
   }
 
@@ -595,6 +611,19 @@ export default function AuthScreen({ onAuth }: Props) {
     }
   }
 
+  async function submitRecoveryPassword() {
+    clearNotice();
+    if (!validPassword(password)) {
+      setError("Password must be 8–30 characters and include lowercase, uppercase, a number, and #, $ or @.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    await savePassword("recovery");
+  }
+
   const title: Record<Screen, React.ReactNode> = {
     login: <>Welcome <span>Back</span></>,
     signup: <>Create your <span>account</span></>,
@@ -604,13 +633,12 @@ export default function AuthScreen({ onAuth }: Props) {
     forgot: <>Forgot <span>Password?</span></>,
     "recovery-sent": <>Check Your <span>Email</span></>,
     "create-recovery-password": <>Create New <span>Password</span></>,
-    "confirm-recovery-password": <>Confirm New <span>Password</span></>,
     "oauth-password": <>Create <span>Password</span></>,
     "oauth-confirm": <>Confirm <span>Password</span></>,
   };
 
-  const passwordCreateScreen = ["create-signup-password", "create-recovery-password", "oauth-password"].includes(screen);
-  const passwordConfirmScreen = ["confirm-signup-password", "confirm-recovery-password", "oauth-confirm"].includes(screen);
+  const passwordCreateScreen = ["create-signup-password", "oauth-password"].includes(screen);
+  const passwordConfirmScreen = ["confirm-signup-password", "oauth-confirm"].includes(screen);
   const passwordScreen = passwordCreateScreen || passwordConfirmScreen;
   const passwordKind: PasswordKind = screen.includes("signup") ? "signup" : screen.includes("recovery") ? "recovery" : "oauth";
 
@@ -635,7 +663,7 @@ export default function AuthScreen({ onAuth }: Props) {
         <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.logo} />
       </div>
 
-      <section style={{ ...styles.card, ...(passwordScreen ? styles.passwordCard : {}) }}>
+      <section style={{ ...styles.card, ...(passwordScreen || screen === "create-recovery-password" ? styles.passwordCard : {}) }}>
         {screen === "login" && (
           <form onSubmit={login}>
             <div style={styles.headerRow}>
@@ -811,6 +839,63 @@ export default function AuthScreen({ onAuth }: Props) {
           </>
         )}
 
+        {screen === "create-recovery-password" && (
+          <>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login">
+                <Arrow left />
+              </button>
+            </div>
+
+            <h1 style={styles.centerTitle}>{title["create-recovery-password"]}</h1>
+            <p style={styles.centerText}>Create a strong new password. This replaces your old password completely.</p>
+
+            <label style={styles.label}>New Password</label>
+            <div style={styles.field}>
+              <span style={styles.icon}><LockIcon /></span>
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                placeholder="Enter new password"
+                style={styles.input}
+              />
+              <button type="button" style={styles.eyeButton} onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? "Hide password" : "Show password"}>
+                <Eye open={showPassword} />
+              </button>
+            </div>
+
+            <div style={styles.rules}>
+              {PASSWORD_RULES.map(([label, test]) => <Rule key={label} ok={test(password)}>{label}</Rule>)}
+            </div>
+
+            <label style={styles.label}>Confirm Password</label>
+            <div style={styles.field}>
+              <span style={styles.icon}><LockIcon /></span>
+              <input
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                type={showConfirm ? "text" : "password"}
+                autoComplete="new-password"
+                placeholder="Confirm new password"
+                style={styles.input}
+              />
+              <button type="button" style={styles.eyeButton} onClick={() => setShowConfirm((v) => !v)} aria-label={showConfirm ? "Hide password" : "Show password"}>
+                <Eye open={showConfirm} />
+              </button>
+            </div>
+
+            <div style={{ ...styles.confirmHint, color: password === confirmPassword && confirmPassword ? "#7bd58f" : "#aaa" }}>
+              {password === confirmPassword && confirmPassword ? "✓ Passwords match" : "Passwords must match"}
+            </div>
+
+            <button type="button" style={styles.primaryButton} disabled={loading} onClick={() => void submitRecoveryPassword()}>
+              {loading ? "Saving…" : "Save Password & Continue"} <Arrow />
+            </button>
+          </>
+        )}
+
         {passwordScreen && (
           <>
             <div style={styles.headerRow}>
@@ -821,14 +906,10 @@ export default function AuthScreen({ onAuth }: Props) {
                   passwordConfirmScreen
                     ? screen === "confirm-signup-password"
                       ? "create-signup-password"
-                      : screen === "confirm-recovery-password"
-                        ? "create-recovery-password"
-                        : "oauth-password"
+                      : "oauth-password"
                     : passwordKind === "signup"
                       ? "verify-signup"
-                      : passwordKind === "recovery"
-                        ? "recovery-sent"
-                        : "login",
+                      : "login",
                 )}
                 aria-label="Back"
               >
