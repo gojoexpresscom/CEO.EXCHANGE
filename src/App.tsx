@@ -39,13 +39,20 @@ export default function App() {
     });
 
     const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!alive) return;
+  data: { subscription },
+} = supabase.auth.onAuthStateChange((event, session) => {
+  if (!alive) return;
 
-      setAuthenticated(Boolean(session));
-      setReady(true);
-    });
+  if (event === "PASSWORD_RECOVERY") {
+    // A recovery session was just created. Don't treat this as a normal
+    // login — let AuthScreen take over and show the new-password screen.
+    setReady(true);
+    return;
+  }
+
+  setAuthenticated(Boolean(session));
+  setReady(true);
+});
 
     return () => {
       alive = false;
