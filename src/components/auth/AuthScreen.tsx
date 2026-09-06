@@ -435,8 +435,9 @@ export default function AuthScreen({ onAuth }: Props) {
     setLoading(true);
     try {
       const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(emailValue, {
-        redirectTo: `${window.location.origin}/?reset=1`,
-      });
+  redirectTo: `${window.location.origin}/?reset=1`,
+  captchaToken: turnstileSiteKey ? turnstileToken : undefined,
+});
       if (recoveryError) throw recoveryError;
 
       setEmail(emailValue);
