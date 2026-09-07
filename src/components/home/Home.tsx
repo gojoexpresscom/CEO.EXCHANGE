@@ -216,6 +216,14 @@ const BG = "#050505";
 const CARD = "#101010";
 const BORDER = "#2a2110";
 
+// Active provider for NEW "Deposit Crypto" transactions.
+// Transak is now the active provider (via the existing deployed
+// "transak-create-session" function and its verified network/currency resolver).
+// NOWPayments code (types, edge-function call, UI states, historical records) is
+// intentionally left in place and is NOT deleted, so rollback only requires
+// switching this flag back to "nowpayments" — no code needs to be restored.
+const DEPOSIT_CRYPTO_PROVIDER: "transak" | "nowpayments" = "transak";
+
 function Icon({ name, size = 24 }: { name: string; size?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   const paths: Record<string, React.ReactNode> = {
@@ -993,6 +1001,7 @@ function DepositModal({
     setAsset(symbol);
     setNetwork(null);
     setAmount("");
+    setBuyAmount("");
     setResult(null);
     setSearch("");
     setStep("networks");
@@ -1001,6 +1010,7 @@ function DepositModal({
   const chooseNetwork = (n: Network) => {
     setNetwork(n);
     setAmount("");
+    setBuyAmount("");
     setResult(null);
     setStep("amount");
   };
@@ -1053,7 +1063,7 @@ function DepositModal({
         <>
           <button type="button" style={styles.methodLarge} onClick={() => { setFlow("crypto"); setStep("coins"); }}>
             <span style={styles.methodLargeIcon}><Icon name="download" size={23} /></span>
-            <span style={styles.methodLargeText}><b>Deposit Crypto</b><small>Transfer crypto from your on-chain wallet or another exchange.</small></span>
+            <span style={styles.methodLargeText}><b>Deposit Crypto</b><small>{DEPOSIT_CRYPTO_PROVIDER === "transak" ? "Deposit crypto securely via Transak." : "Transfer crypto from your on-chain wallet or another exchange."}</small></span>
             <Icon name="arrow" size={21} />
           </button>
           <button type="button" style={styles.methodLarge} onClick={() => { setFlow("buy"); setStep("coins"); }}>
@@ -1157,7 +1167,50 @@ function DepositModal({
         </>
       )}
 
-      {step === "amount" && network && flow === "crypto" && (
+      {step === "amount" && network && flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "transak" && (
+        <>
+          <div style={styles.depositNetworkPicker}>
+            <span>Network:</span>
+            <button type="button" onClick={() => setStep("networks")}>
+              {network.network_name}<Icon name="chevron" size={17} />
+            </button>
+          </div>
+
+          <label style={styles.cleanField}>
+            <span>Amount</span>
+            <div style={styles.amountInputWrap}>
+              <input
+                style={styles.cleanInput}
+                type="number"
+                min="0"
+                step="any"
+                value={buyAmount}
+                onChange={(e) => setBuyAmount(e.target.value)}
+                placeholder={minDeposit == null ? "Enter amount" : `Min. deposit: ${formatAmount(Number(minDeposit))}`}
+                aria-label="Deposit amount"
+              />
+              <b>{asset}</b>
+            </div>
+          </label>
+          {minDeposit != null && <div style={styles.minimumLine}>Minimum deposit: {formatAmount(Number(minDeposit))} {asset}</div>}
+
+          <div style={styles.infoBox}>
+            <Icon name="alert" size={16} />
+            <span>Deposit Crypto is processed through Transak's secure payment page, which opens in a new tab. This is a staging test session, and Transak's staging webhook registration with our Integration Team is still pending — crediting of completed orders is confirmed by Transak's webhook and is not yet fully verified end-to-end.</span>
+          </div>
+
+          <button
+            type="button"
+            style={styles.primaryButtonFull}
+            disabled={!buyAmount || Number(buyAmount) <= 0 || buySubmitting}
+            onClick={() => void startBuy()}
+          >
+            {buySubmitting ? "Opening secure payment…" : "Continue to Secure Payment"}
+          </button>
+        </>
+      )}
+
+      {step === "amount" && network && flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "nowpayments" && (
         <>
           <div style={styles.depositNetworkPicker}>
             <span>Network:</span>
