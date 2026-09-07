@@ -217,12 +217,15 @@ const CARD = "#101010";
 const BORDER = "#2a2110";
 
 // Active provider for NEW "Deposit Crypto" transactions.
-// Transak is now the active provider (via the existing deployed
-// "transak-create-session" function and its verified network/currency resolver).
-// NOWPayments code (types, edge-function call, UI states, historical records) is
-// intentionally left in place and is NOT deleted, so rollback only requires
-// switching this flag back to "nowpayments" — no code needs to be restored.
-const DEPOSIT_CRYPTO_PROVIDER: "transak" | "nowpayments" = "transak";
+// "wallet_address" shows the user's real, backend-provisioned deposit address for the
+// selected asset/network (sourced from the `deposit_addresses` table via the
+// `depositAddresses` prop) — no amount entry, no Transak, no NOWPayments-style
+// one-time invoice/code. This is the active default: a standard exchange
+// (Binance/Bybit-style) deposit UX using only real addresses from the backend.
+// The "transak" and "nowpayments" code paths (types, edge-function calls, UI states)
+// are intentionally left in place and NOT deleted, purely for rollback — switching
+// this flag is the only change needed to reactivate either of them.
+const DEPOSIT_CRYPTO_PROVIDER: "wallet_address" | "transak" | "nowpayments" = "wallet_address";
 
 function Icon({ name, size = 24 }: { name: string; size?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -876,7 +879,7 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} />}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} depositAddresses={depositAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
@@ -934,12 +937,14 @@ function ModalShell({ title, children, onClose, wide = false }: { title: string;
 function DepositModal({
   networks,
   deposits,
+  depositAddresses,
   onClose,
   onDeposit,
   onBuyCrypto,
 }: {
   networks: Network[];
   deposits: Deposit[];
+  depositAddresses: DepositAddress[];
   onClose: () => void;
   onDeposit: (network: Network, amount: string) => Promise<any>;
   onBuyCrypto: (network: Network, fiatAmount: string) => Promise<any>;
@@ -989,11 +994,24 @@ function DepositModal({
     ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(result.pay_address)}`
     : "";
 
+  // Real, backend-provisioned deposit address for the selected asset/network.
+  // Sourced only from the `deposit_addresses` table (via the depositAddresses prop) —
+  // never generated or invented client-side.
+  const walletDepositAddress = depositAddresses.find(
+    (d) =>
+      String(d.coin ?? "").trim().toUpperCase() === asset.toUpperCase() &&
+      String(d.network ?? "").trim().toLowerCase() === String(network?.network_name ?? "").trim().toLowerCase()
+  ) ?? null;
+  const walletQrUrl = walletDepositAddress?.address
+    ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(walletDepositAddress.address)}`
+    : "";
+
   const goBack = () => {
     if (step === "methods") onClose();
     else if (step === "coins") setStep("methods");
     else if (step === "networks") setStep("coins");
     else if (step === "amount") setStep("networks");
+    else if (flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address") setStep("networks");
     else setStep("amount");
   };
 
@@ -1012,7 +1030,8 @@ function DepositModal({
     setAmount("");
     setBuyAmount("");
     setResult(null);
-    setStep("amount");
+    // wallet_address deposits need no amount — go straight to the address/QR screen.
+    setStep(flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address" ? "result" : "amount");
   };
 
   const getAddress = async () => {
@@ -1294,10 +1313,81 @@ function DepositModal({
         </>
       )}
 
-      {/* NOWPayments-only result screen: shows the generated address/QR/payment ID.
-          Only reachable via getAddress() in the nowpayments branch above; explicitly
-          scoped here too so it can never render for the Transak flow. */}
-      {step === "result" && network && !(flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "transak") && (
+      {/* Active Deposit Crypto result screen: real backend-provisioned address + QR + Copy.
+          No amount was collected, no Transak/NOWPayments call is made here — this only
+          reads the existing deposit_addresses record for the chosen asset/network. */}
+      {step === "result" && network && flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address" && (
+        <>
+          <div style={styles.depositNetworkPicker}>
+            <span>Network:</span>
+            <span>{network.network_name}</span>
+          </div>
+
+          {!walletDepositAddress?.address ? (
+            <div style={styles.emptyPanel}>
+              <b>Deposit address is not available yet.</b>
+              <p>No wallet address has been provisioned for {asset} on {network.network_name}. No fake address is shown.</p>
+            </div>
+          ) : (
+            <>
+              <div style={styles.depositQrWrap}>
+                <img src={walletQrUrl} alt={`${asset} ${network.network_name} deposit QR code`} style={styles.depositQrLarge} />
+              </div>
+
+              <div style={styles.addressCard}>
+                <div style={styles.addressLabel}>Wallet Address</div>
+                <div style={styles.addressValue}>{walletDepositAddress.address}</div>
+              </div>
+
+              <div style={styles.depositDetails}>
+                <div style={styles.depositDetailRow}>
+                  <span>Minimum Deposit Amount</span>
+                  <b>{minDeposit == null ? "Not configured" : `${formatAmount(Number(minDeposit))} ${asset}`}</b>
+                </div>
+                <div style={styles.depositDetailRow}>
+                  <span>Deposit Arrival</span>
+                  <b>{network.required_confirmations != null ? `${network.required_confirmations} confirmations` : "Not configured"}</b>
+                </div>
+                {network.token_contract_address && (
+                  <div style={styles.depositDetailRow}>
+                    <span>Contract Address</span>
+                    <b>Ending with {network.token_contract_address.slice(-6)}</b>
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.infoBox}>
+                <Icon name="alert" size={16} />
+                <span>Only send {asset} on the {network.network_name} network to this address. Sending a different asset or using a different network may result in permanent loss of funds.</span>
+              </div>
+
+              <div style={styles.depositActions}>
+                <button
+                  type="button"
+                  style={styles.secondaryButtonFull}
+                  onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = walletQrUrl;
+                    link.download = `${asset}-${network.network_name}-deposit-qr.png`;
+                    link.target = "_blank";
+                    link.rel = "noreferrer";
+                    link.click();
+                  }}
+                >
+                  Save Picture
+                </button>
+                <button type="button" style={styles.primaryButtonFull} onClick={() => { void navigator.clipboard?.writeText(walletDepositAddress.address ?? ""); }}>
+                  <Icon name="copy" size={18} /> Copy Address
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* NOWPayments-only result screen: shows the generated one-time address/QR/payment ID.
+          Kept for rollback only; unreachable while DEPOSIT_CRYPTO_PROVIDER !== "nowpayments". */}
+      {step === "result" && network && flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "nowpayments" && (
         <>
           <div style={styles.depositNetworkPicker}>
             <span>Network:</span>
