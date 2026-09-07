@@ -219,6 +219,15 @@ const BORDER = "#2a2110";
 // this flag is the only change needed to reactivate either of them.
 const DEPOSIT_CRYPTO_PROVIDER: "wallet_address" | "transak" | "nowpayments" = "wallet_address";
 
+// Chains the get-deposit-address Edge Function can actually provision a real custodial
+// address for today (mirrors SUPPORTED_PRIVY_CHAIN_TYPES in that function, verified live
+// against the Privy API). Networks whose privy_chain_type isn't in this set have no wallet
+// provider wired up yet, so the Deposit Crypto flow hides them entirely instead of letting
+// the user pick a coin/network that can only ever show an error.
+const SUPPORTED_DEPOSIT_CHAIN_TYPES = new Set([
+  "ethereum", "solana", "tron", "ton", "aptos", "cosmos", "near", "stellar", "sui", "starknet", "bitcoin-segwit", "xrpl",
+]);
+
 function Icon({ name, size = 24 }: { name: string; size?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   const paths: Record<string, React.ReactNode> = {
@@ -982,7 +991,11 @@ function DepositModal({
     order_id?: string;
   } | null>(null);
 
-  const depositNetworks = networks.filter((n) => n.is_active !== false && n.deposit_enabled === true);
+  const depositNetworks = networks.filter((n) =>
+    n.is_active !== false &&
+    n.deposit_enabled === true &&
+    (DEPOSIT_CRYPTO_PROVIDER !== "wallet_address" || (!!n.privy_chain_type && SUPPORTED_DEPOSIT_CHAIN_TYPES.has(n.privy_chain_type)))
+  );
   const assetMap = new Map<string, { symbol: string; name: string; count: number }>();
   depositNetworks.forEach((n) => {
     const symbol = String(n.assets?.symbol ?? "").toUpperCase();
