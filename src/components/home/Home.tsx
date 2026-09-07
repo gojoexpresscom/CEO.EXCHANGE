@@ -1294,7 +1294,10 @@ function DepositModal({
         </>
       )}
 
-      {step === "result" && network && (
+      {/* NOWPayments-only result screen: shows the generated address/QR/payment ID.
+          Only reachable via getAddress() in the nowpayments branch above; explicitly
+          scoped here too so it can never render for the Transak flow. */}
+      {step === "result" && network && !(flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "transak") && (
         <>
           <div style={styles.depositNetworkPicker}>
             <span>Network:</span>
