@@ -150,6 +150,7 @@ type Network = {
   min_deposit: number | null;
   required_confirmations: number | null;
   privy_network_identifier: string | null;
+  token_contract_address: string | null;
   assets?: { symbol: string; name: string } | null;
 };
 
@@ -160,15 +161,6 @@ type WalletAddress = {
   address: string;
   privy_wallet_id: string | null;
   chain_type: string | null;
-};
-
-type DepositAddress = {
-  id: string;
-  user_id: string | null;
-  coin: string | null;
-  network: string | null;
-  address: string | null;
-  created_at: string | null;
 };
 
 type Deposit = {
@@ -218,10 +210,10 @@ const BORDER = "#2a2110";
 
 // Active provider for NEW "Deposit Crypto" transactions.
 // "wallet_address" shows the user's real, backend-provisioned deposit address for the
-// selected asset/network (sourced from the `deposit_addresses` table via the
-// `depositAddresses` prop) — no amount entry, no Transak, no NOWPayments-style
-// one-time invoice/code. This is the active default: a standard exchange
-// (Binance/Bybit-style) deposit UX using only real addresses from the backend.
+// selected asset/network (sourced from the `wallet_addresses` table, populated via the
+// authenticated `get-deposit-address` Edge Function) — no amount entry, no Transak, no
+// NOWPayments-style one-time invoice/code. This is the active default: a standard
+// exchange (Binance/Bybit-style) deposit UX using only real addresses from the backend.
 // The "transak" and "nowpayments" code paths (types, edge-function calls, UI states)
 // are intentionally left in place and NOT deleted, purely for rollback — switching
 // this flag is the only change needed to reactivate either of them.
@@ -336,7 +328,6 @@ export default function Home({
   const [referral, setReferral] = useState<Referral | null>(null);
   const [networks, setNetworks] = useState<Network[]>([]);
   const [walletAddresses, setWalletAddresses] = useState<WalletAddress[]>([]);
-  const [depositAddresses, setDepositAddresses] = useState<DepositAddress[]>([]);
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -485,20 +476,20 @@ export default function Home({
   const loadNetworks = useCallback(async () => {
     const { data, error: e } = await supabase
       .from("asset_networks")
-      .select("id,asset_id,network_name,payout_provider,privy_chain_type,min_withdrawal,withdrawal_fee,is_active,deposit_enabled,withdrawal_enabled,min_deposit,required_confirmations,privy_network_identifier,assets(symbol,name)")
+      .select("id,asset_id,network_name,payout_provider,privy_chain_type,min_withdrawal,withdrawal_fee,is_active,deposit_enabled,withdrawal_enabled,min_deposit,required_confirmations,privy_network_identifier,token_contract_address,assets(symbol,name)")
       .eq("is_active", true)
       .order("network_name");
     if (e) throw e;
     setNetworks((data ?? []) as unknown as Network[]);
   }, []);
 
-  const loadDepositAddresses = useCallback(async (id: string) => {
-    const [{ data: wa }, { data: da }] = await Promise.all([
-      supabase.from("wallet_addresses").select("id,user_id,network_id,address,privy_wallet_id,chain_type").eq("user_id", id),
-      supabase.from("deposit_addresses").select("id,user_id,coin,network,address,created_at").eq("user_id", id),
-    ]);
+  // Preloads any wallet_addresses the user already has, so the deposit modal can skip the
+  // get-deposit-address round trip when an address for the selected network is already known.
+  // The Deposit Crypto flow never reads from `deposit_addresses` — real addresses only ever
+  // come from `wallet_addresses`, populated here or on-demand via provisionDepositAddress.
+  const loadWalletAddresses = useCallback(async (id: string) => {
+    const { data: wa } = await supabase.from("wallet_addresses").select("id,user_id,network_id,address,privy_wallet_id,chain_type").eq("user_id", id);
     setWalletAddresses((wa ?? []) as WalletAddress[]);
-    setDepositAddresses((da ?? []) as DepositAddress[]);
   }, []);
 
   const loadTransactions = useCallback(async (id: string) => {
@@ -516,14 +507,14 @@ export default function Home({
     try {
       await Promise.all([
         loadProfileAndWallets(id), loadMarkets(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
-        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadDepositAddresses(id), loadTransactions(id),
+        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id),
       ]);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load the Home Page.");
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadDepositAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements]);
+  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements]);
 
   useEffect(() => {
     let alive = true;
@@ -736,6 +727,24 @@ export default function Home({
     return data;
   };
 
+  // Real deposit-address provisioning for the active "wallet_address" Deposit Crypto flow.
+  // Calls the secure get-deposit-address Edge Function, which returns an existing
+  // custodial address for this user+network or provisions a new one via Privy — it never
+  // generates or guesses an address client-side. On success, merges the result into
+  // walletAddresses so the modal re-renders with the real address immediately.
+  const provisionDepositAddress = async (network: Network) => {
+    if (!network?.id) return { error: "Choose a supported network." };
+    const { data, error: e } = await supabase.functions.invoke("get-deposit-address", { body: { network_id: network.id } });
+    if (e) return { error: e.message };
+    if (data?.address && userId) {
+      setWalletAddresses((prev) => [
+        ...prev.filter((w) => w.network_id !== network.id),
+        { id: `${userId}:${network.id}`, user_id: userId, network_id: network.id, address: data.address, privy_wallet_id: null, chain_type: data.chain_type ?? null },
+      ]);
+    }
+    return data;
+  };
+
   const createTransakSession = async (network: Network, fiatAmount: string) => {
     if (!network?.id) return notify("Choose a supported network.");
     if (!fiatAmount || Number(fiatAmount) <= 0) return notify("Enter a positive amount.");
@@ -879,7 +888,7 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} depositAddresses={depositAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} />}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
@@ -937,17 +946,19 @@ function ModalShell({ title, children, onClose, wide = false }: { title: string;
 function DepositModal({
   networks,
   deposits,
-  depositAddresses,
+  walletAddresses,
   onClose,
   onDeposit,
   onBuyCrypto,
+  onProvisionAddress,
 }: {
   networks: Network[];
   deposits: Deposit[];
-  depositAddresses: DepositAddress[];
+  walletAddresses: WalletAddress[];
   onClose: () => void;
   onDeposit: (network: Network, amount: string) => Promise<any>;
   onBuyCrypto: (network: Network, fiatAmount: string) => Promise<any>;
+  onProvisionAddress: (network: Network) => Promise<any>;
 }) {
   type Step = "methods" | "coins" | "networks" | "amount" | "result";
   type Flow = "crypto" | "buy";
@@ -960,6 +971,8 @@ function DepositModal({
   const [submitting, setSubmitting] = useState(false);
   const [buyAmount, setBuyAmount] = useState("");
   const [buySubmitting, setBuySubmitting] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionError, setProvisionError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     payment_id?: string;
     pay_address?: string;
@@ -995,16 +1008,35 @@ function DepositModal({
     : "";
 
   // Real, backend-provisioned deposit address for the selected asset/network.
-  // Sourced only from the `deposit_addresses` table (via the depositAddresses prop) —
-  // never generated or invented client-side.
-  const walletDepositAddress = depositAddresses.find(
-    (d) =>
-      String(d.coin ?? "").trim().toUpperCase() === asset.toUpperCase() &&
-      String(d.network ?? "").trim().toLowerCase() === String(network?.network_name ?? "").trim().toLowerCase()
-  ) ?? null;
+  // Sourced only from the `wallet_addresses` table (via the walletAddresses prop),
+  // matched by network_id — never generated or invented client-side. If it isn't
+  // here yet, the effect below asks the backend to provision it.
+  const walletDepositAddress = network
+    ? walletAddresses.find((w) => w.network_id === network.id) ?? null
+    : null;
   const walletQrUrl = walletDepositAddress?.address
     ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(walletDepositAddress.address)}`
     : "";
+
+  // On-demand provisioning: once the user lands on the address screen for a network that
+  // has no address yet, ask the secure backend to retrieve-or-provision one. Never invents
+  // an address client-side; if the backend can't provision one (e.g. no wallet provider
+  // wired up for that network), the error is shown as-is instead of a fake address.
+  useEffect(() => {
+    if (step !== "result" || flow !== "crypto" || DEPOSIT_CRYPTO_PROVIDER !== "wallet_address") return;
+    if (!network || walletDepositAddress || provisioning) return;
+    let alive = true;
+    setProvisioning(true);
+    setProvisionError(null);
+    void onProvisionAddress(network).then((data) => {
+      if (!alive) return;
+      if (data?.error) setProvisionError(String(data.error));
+    }).finally(() => {
+      if (alive) setProvisioning(false);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, flow, network?.id, walletDepositAddress]);
 
   const goBack = () => {
     if (step === "methods") onClose();
@@ -1314,8 +1346,9 @@ function DepositModal({
       )}
 
       {/* Active Deposit Crypto result screen: real backend-provisioned address + QR + Copy.
-          No amount was collected, no Transak/NOWPayments call is made here — this only
-          reads the existing deposit_addresses record for the chosen asset/network. */}
+          No amount was collected, no Transak/NOWPayments call is made here — the address
+          comes only from `wallet_addresses`, fetched via the get-deposit-address Edge
+          Function (see the provisioning effect above), never invented client-side. */}
       {step === "result" && network && flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address" && (
         <>
           <div style={styles.depositNetworkPicker}>
@@ -1325,8 +1358,19 @@ function DepositModal({
 
           {!walletDepositAddress?.address ? (
             <div style={styles.emptyPanel}>
-              <b>Deposit address is not available yet.</b>
-              <p>No wallet address has been provisioned for {asset} on {network.network_name}. No fake address is shown.</p>
+              {provisioning ? (
+                <b>Getting your {asset} deposit address…</b>
+              ) : provisionError ? (
+                <>
+                  <b>Deposit address is not available.</b>
+                  <p>{provisionError}</p>
+                </>
+              ) : (
+                <>
+                  <b>Deposit address is not available yet.</b>
+                  <p>No wallet address has been provisioned for {asset} on {network.network_name}. No fake address is shown.</p>
+                </>
+              )}
             </div>
           ) : (
             <>
