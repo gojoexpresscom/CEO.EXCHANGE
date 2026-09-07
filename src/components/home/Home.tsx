@@ -1621,15 +1621,6 @@ function WithdrawModal({
     setStep("form");
   };
 
-  const pasteAddress = async () => {
-    try {
-      const text = await navigator.clipboard?.readText();
-      if (text) setDestination(text.trim());
-    } catch {
-      /* clipboard read denied — user can still type or paste manually */
-    }
-  };
-
   const sendOtp = async () => {
     if (!destination.trim() || !amount || Number(amount) <= 0 || !networkCode || Number(amount) > balance) return;
     setOtpSending(true);
@@ -1727,10 +1718,7 @@ function WithdrawModal({
         <>
           <label style={styles.cleanField}>
             <span>Address</span>
-            <div style={styles.addressInputWrap}>
-              <input style={styles.cleanInputInline} value={destination} onChange={(e) => setDestination(e.target.value.trimStart())} placeholder="Input or press and hold to paste the withdrawal address" autoCapitalize="none" autoCorrect="off" />
-              <button type="button" style={styles.iconButton} onClick={() => void pasteAddress()} aria-label="Paste address"><Icon name="copy" size={18} /></button>
-            </div>
+            <input style={styles.cleanInput} value={destination} onChange={(e) => setDestination(e.target.value.trimStart())} placeholder="Enter withdrawal address" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           </label>
 
           <label style={styles.cleanField}>
@@ -1764,8 +1752,8 @@ function WithdrawModal({
 
           {fee?.success && (
             <div style={styles.feeBox}>
-              <span>Network fee</span><b>{formatAmount(Number(fee.network_fee))}</b>
-              {Number(fee.platform_fee) > 0 && <><span>CEO Exchange fee</span><b>{formatAmount(Number(fee.platform_fee))}</b></>}
+              <span>Gas fee</span><b>{formatAmount(Number(fee.network_fee))}</b>
+              {Number(fee.platform_fee) > 0 && <><span>Platform fee</span><b>{formatAmount(Number(fee.platform_fee))}</b></>}
               <span>Total fee</span><b>{formatAmount(Number(fee.total_fee))}</b>
               <span>Amount Received</span><b>{formatAmount(Number(fee.net_amount))} {asset}</b>
             </div>
@@ -1796,9 +1784,9 @@ function WithdrawModal({
             {fee?.success && (
               <>
                 <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Minimum withdrawal requirement</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.minimum_amount))} {asset}</b></div>
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Network fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.network_fee))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Gas fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.network_fee))} {asset}</b></div>
                 {Number(fee.platform_fee) > 0 && (
-                  <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>CEO Exchange fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.platform_fee))} {asset}</b></div>
+                  <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Platform fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.platform_fee))} {asset}</b></div>
                 )}
                 <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Total fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.total_fee))} {asset}</b></div>
                 <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Amount received</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.net_amount))} {asset}</b></div>
