@@ -192,22 +192,6 @@ type Withdrawal = {
   created_at: string | null;
 };
 
-// Real per-network withdrawal fee/limit configuration from `fee_schedules_networks`.
-// `currency` + `network` (the short withdrawal_network_code) together are the same
-// composite key the calculate_withdrawal_fee / process_crypto_withdrawal RPCs use, so a
-// row's presence here is exactly what determines whether a currency/network is genuinely
-// withdrawable end-to-end — not just "enabled" in asset_networks.
-type FeeSchedule = {
-  id: string;
-  currency: string;
-  network: string;
-  min_deposit: number | null;
-  min_withdrawal: number | null;
-  platform_fee_percent: number | null;
-  platform_fee_flat: number | null;
-  default_network_fee: number | null;
-};
-
 type Comment = {
   id: string;
   post_id: string | null;
@@ -356,7 +340,6 @@ export default function Home({
   const [giveaways, setGiveaways] = useState<Giveaway[]>([]);
   const [referral, setReferral] = useState<Referral | null>(null);
   const [networks, setNetworks] = useState<Network[]>([]);
-  const [feeSchedules, setFeeSchedules] = useState<FeeSchedule[]>([]);
   const [walletAddresses, setWalletAddresses] = useState<WalletAddress[]>([]);
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
@@ -513,17 +496,6 @@ export default function Home({
     setNetworks((data ?? []) as unknown as Network[]);
   }, []);
 
-  // Real fee/limit configuration for withdrawals, keyed by (currency, withdrawal_network_code).
-  // A currency/network only becomes selectable in the Withdraw flow once a row exists here
-  // AND the matching asset_networks row is active + withdrawal_enabled — see WithdrawModal.
-  const loadFeeSchedules = useCallback(async () => {
-    const { data, error: e } = await supabase
-      .from("fee_schedules_networks")
-      .select("id,currency,network,min_deposit,min_withdrawal,platform_fee_percent,platform_fee_flat,default_network_fee");
-    if (e) throw e;
-    setFeeSchedules((data ?? []) as FeeSchedule[]);
-  }, []);
-
   // Preloads any wallet_addresses the user already has, so the deposit modal can skip the
   // get-deposit-address round trip when an address for the selected network is already known.
   // The Deposit Crypto flow never reads from `deposit_addresses` — real addresses only ever
@@ -548,14 +520,14 @@ export default function Home({
     try {
       await Promise.all([
         loadProfileAndWallets(id), loadMarkets(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
-        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadFeeSchedules(), loadWalletAddresses(id), loadTransactions(id),
+        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id),
       ]);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load the Home Page.");
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadFeeSchedules, loadPlatformAnnouncements]);
+  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements]);
 
   useEffect(() => {
     let alive = true;
@@ -930,7 +902,7 @@ export default function Home({
 
       {toast && <div style={styles.toast}>{toast}</div>}
       {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
-      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} feeSchedules={feeSchedules} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
+      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
@@ -1538,7 +1510,6 @@ function DepositModal({
 function WithdrawModal({
   wallets,
   networks,
-  feeSchedules,
   withdrawals,
   onClose,
   onRequestOtp,
@@ -1547,7 +1518,6 @@ function WithdrawModal({
 }: {
   wallets: Wallet[];
   networks: Network[];
-  feeSchedules: FeeSchedule[];
   withdrawals: Withdrawal[];
   onClose: () => void;
   onRequestOtp: () => Promise<void>;
@@ -1571,39 +1541,32 @@ function WithdrawModal({
   const [otpSending, setOtpSending] = useState(false);
   const [search, setSearch] = useState("");
 
-  // A currency/network is only a genuine, end-to-end-supported withdrawal route when ALL of
-  // these are true:
-  //   1. asset_networks.is_active + withdrawal_enabled (the payout path is switched on), and
-  //   2. asset_networks.withdrawal_network_code is set (there's a real short code to route on), and
-  //   3. a matching fee_schedules_networks row exists for (symbol, withdrawal_network_code) —
-  //      the same composite key calculate_withdrawal_fee / process_crypto_withdrawal use.
-  // Missing any one of these means Supabase has no real, configured payout route, so the
-  // combination is hidden rather than shown with fabricated fees. This list — and everything
-  // derived from it below — tracks whatever an admin enables/disables in Supabase; nothing
-  // here is hardcoded to a fixed count of currencies.
-  const hasFeeSchedule = (symbol: string, code: string) =>
-    feeSchedules.some((f) => f.currency.toUpperCase() === symbol.toUpperCase() && f.network.toUpperCase() === code.toUpperCase());
+  // A currency/network is only a genuine, end-to-end-supported withdrawal route when:
+  //   1. asset_networks.is_active + withdrawal_enabled (the payout path is switched on
+  //      only after real NOWPayments min/fee data has been verified — see
+  //      refresh-asset-network-limits), and
+  //   2. asset_networks.withdrawal_network_code is set (there's a real short code to route on).
+  // asset_networks is now the single source of truth end-to-end — fee_schedules_networks
+  // is no longer consulted here, so the picker, the fee preview, and calculate_withdrawal_fee
+  // / process_crypto_withdrawal on the backend can never disagree. Missing either condition
+  // means Supabase has no real, configured payout route, so the combination is hidden rather
+  // than shown with fabricated fees. This list tracks whatever real data an admin/refresh job
+  // enables in Supabase; nothing here is hardcoded to a fixed count of currencies.
+  const withdrawableNetworks = networks.filter(
+    (n) => n.is_active !== false && n.withdrawal_enabled === true && !!n.withdrawal_network_code
+  );
 
-  // Real per-network minimum withdrawal, read from the same fee_schedules_networks row
-  // calculate_withdrawal_fee / process_crypto_withdrawal enforce server-side — not from
-  // asset_networks.min_withdrawal, which is a separate (currently mirrored, but not
-  // guaranteed to stay in sync) column. This keeps the UI hint and the backend's actual
-  // enforcement reading from a single source of truth.
+  // Real per-network minimum withdrawal, read directly from asset_networks.min_withdrawal —
+  // the same column calculate_withdrawal_fee / process_crypto_withdrawal enforce
+  // server-side. No second table is consulted, so this can never drift from what the
+  // backend actually enforces.
   const minWithdrawalFor = (n: Network | null): number | null => {
-    if (!n?.withdrawal_network_code) return null;
-    const symbol = String(n.assets?.symbol ?? "").toUpperCase();
-    const code = n.withdrawal_network_code.toUpperCase();
-    const row = feeSchedules.find((f) => f.currency.toUpperCase() === symbol && f.network.toUpperCase() === code);
-    return row?.min_withdrawal ?? null;
+    const raw = n?.min_withdrawal;
+    if (raw == null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : null;
   };
 
-  const withdrawableNetworks = networks.filter(
-    (n) =>
-      n.is_active !== false &&
-      n.withdrawal_enabled === true &&
-      !!n.withdrawal_network_code &&
-      hasFeeSchedule(String(n.assets?.symbol ?? ""), n.withdrawal_network_code)
-  );
 
   const withdrawableAssetMap = new Map<string, { symbol: string; name: string }>();
   withdrawableNetworks.forEach((n) => {
