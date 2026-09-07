@@ -1031,12 +1031,18 @@ function DepositModal({
     ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(walletDepositAddress.address)}`
     : "";
 
+  // Buy Crypto is the same real backend-provisioned wallet-address flow as Deposit
+  // Crypto (get-deposit-address / wallet_addresses) — no amount, no Transak checkout,
+  // no NOWPayments. It is intentionally NOT gated behind DEPOSIT_CRYPTO_PROVIDER: that
+  // flag is only a rollback switch for the separate Deposit Crypto UX.
+  const usesWalletAddressResult = flow === "buy" || (flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address");
+
   // On-demand provisioning: once the user lands on the address screen for a network that
   // has no address yet, ask the secure backend to retrieve-or-provision one. Never invents
   // an address client-side; if the backend can't provision one (e.g. no wallet provider
   // wired up for that network), the error is shown as-is instead of a fake address.
   useEffect(() => {
-    if (step !== "result" || flow !== "crypto" || DEPOSIT_CRYPTO_PROVIDER !== "wallet_address") return;
+    if (step !== "result" || !usesWalletAddressResult) return;
     if (!network || walletDepositAddress || provisioning) return;
     let alive = true;
     setProvisioning(true);
@@ -1049,14 +1055,14 @@ function DepositModal({
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, flow, network?.id, walletDepositAddress]);
+  }, [step, usesWalletAddressResult, network?.id, walletDepositAddress]);
 
   const goBack = () => {
     if (step === "methods") onClose();
     else if (step === "coins") setStep("methods");
     else if (step === "networks") setStep("coins");
     else if (step === "amount") setStep("networks");
-    else if (flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address") setStep("networks");
+    else if (usesWalletAddressResult) setStep("networks");
     else setStep("amount");
   };
 
@@ -1075,8 +1081,9 @@ function DepositModal({
     setAmount("");
     setBuyAmount("");
     setResult(null);
-    // wallet_address deposits need no amount — go straight to the address/QR screen.
-    setStep(flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address" ? "result" : "amount");
+    // Wallet-address deposits (and Buy Crypto, always) need no amount — go straight to
+    // the real address/QR screen instead of an amount step.
+    setStep(usesWalletAddressResult ? "result" : "amount");
   };
 
   const getAddress = async () => {
@@ -1113,7 +1120,7 @@ function DepositModal({
 
   return (
     <ModalShell
-      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : step === "amount" ? `${asset}-Deposit` : `${asset}-Deposit`}
+      title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : step === "amount" ? `${asset}-Deposit` : `${asset}-${flow === "buy" ? "Buy" : "Deposit"}`}
       onClose={onClose}
       wide={step === "coins" || step === "networks"}
     >
@@ -1132,7 +1139,7 @@ function DepositModal({
           </button>
           <button type="button" style={styles.methodLarge} onClick={() => { setFlow("buy"); setStep("coins"); }}>
             <span style={styles.methodLargeIcon}><Icon name="wallet" size={23} /></span>
-            <span style={styles.methodLargeText}><b>Buy Crypto with Card</b><small>Buy crypto instantly with a debit or credit card via Transak.</small></span>
+            <span style={styles.methodLargeText}><b>Buy Crypto</b><small>Get your real wallet address to buy crypto on this network.</small></span>
             <Icon name="arrow" size={21} />
           </button>
           <button type="button" style={styles.methodLargeDisabled} disabled>
@@ -1317,52 +1324,12 @@ function DepositModal({
         </>
       )}
 
-      {step === "amount" && network && flow === "buy" && (
-        <>
-          <div style={styles.depositNetworkPicker}>
-            <span>Network:</span>
-            <button type="button" onClick={() => setStep("networks")}>
-              {network.network_name}<Icon name="chevron" size={17} />
-            </button>
-          </div>
-
-          <label style={styles.cleanField}>
-            <span>Amount to spend</span>
-            <div style={styles.amountInputWrap}>
-              <input
-                style={styles.cleanInput}
-                type="number"
-                min="0"
-                step="any"
-                value={buyAmount}
-                onChange={(e) => setBuyAmount(e.target.value)}
-                placeholder="Enter amount"
-                aria-label="Buy crypto amount"
-              />
-            </div>
-          </label>
-
-          <div style={styles.infoBox}>
-            <Icon name="alert" size={16} />
-            <span>You'll complete this purchase on Transak's secure payment page, which opens in a new tab. This is a staging test session.</span>
-          </div>
-
-          <button
-            type="button"
-            style={styles.primaryButtonFull}
-            disabled={!buyAmount || Number(buyAmount) <= 0 || buySubmitting}
-            onClick={() => void startBuy()}
-          >
-            {buySubmitting ? "Opening secure payment…" : "Continue to Card Payment"}
-          </button>
-        </>
-      )}
-
-      {/* Active Deposit Crypto result screen: real backend-provisioned address + QR + Copy.
-          No amount was collected, no Transak/NOWPayments call is made here — the address
+      {/* Real backend-provisioned address + QR + Copy — shared by Deposit Crypto (when
+          DEPOSIT_CRYPTO_PROVIDER === "wallet_address") and by Buy Crypto (always). No
+          amount is collected and no Transak/NOWPayments call is made here — the address
           comes only from `wallet_addresses`, fetched via the get-deposit-address Edge
           Function (see the provisioning effect above), never invented client-side. */}
-      {step === "result" && network && flow === "crypto" && DEPOSIT_CRYPTO_PROVIDER === "wallet_address" && (
+      {step === "result" && network && usesWalletAddressResult && (
         <>
           <div style={styles.depositNetworkPicker}>
             <span>Network:</span>
