@@ -929,7 +929,7 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} feeSchedules={feeSchedules} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} feeSchedules={feeSchedules} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
@@ -986,7 +986,6 @@ function ModalShell({ title, children, onClose, wide = false }: { title: string;
 
 function DepositModal({
   networks,
-  feeSchedules,
   deposits,
   walletAddresses,
   onClose,
@@ -995,7 +994,6 @@ function DepositModal({
   onProvisionAddress,
 }: {
   networks: Network[];
-  feeSchedules: FeeSchedule[];
   deposits: Deposit[];
   walletAddresses: WalletAddress[];
   onClose: () => void;
@@ -1049,17 +1047,17 @@ function DepositModal({
     .filter((n) => String(n.assets?.symbol ?? "").toUpperCase() === asset.toUpperCase())
     .sort((a, b) => a.network_name.localeCompare(b.network_name));
 
-  // asset_networks.min_deposit is not populated for any row in this project — the real,
-  // network-appropriate minimums live in fee_schedules_networks (currency + the short
-  // withdrawal_network_code), the same table calculate_withdrawal_fee reads from. A
-  // currency/network with no row there has no known-safe minimum yet, so this returns
-  // null and the UI honestly shows "Not configured" instead of a fabricated number.
+  // Deposit minimum comes directly from asset_networks.min_deposit — the real,
+  // refreshable per-network value maintained on that table. fee_schedules_networks is
+  // withdrawal-fee/limit data and is stale for deposit minimums, so it is never
+  // consulted here. If min_deposit is NULL, missing, or not a valid positive number,
+  // there is no verified minimum yet, so this returns null and the UI shows
+  // "Not specified" instead of a guessed or fabricated number.
   const minDepositFor = (n: Network | null): number | null => {
-    if (!n?.withdrawal_network_code) return null;
-    const symbol = String(n.assets?.symbol ?? "").toUpperCase();
-    const code = n.withdrawal_network_code.toUpperCase();
-    const row = feeSchedules.find((f) => f.currency.toUpperCase() === symbol && f.network.toUpperCase() === code);
-    return row?.min_deposit ?? null;
+    const raw = n?.min_deposit;
+    if (raw == null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : null;
   };
   const minDeposit = minDepositFor(network);
   const qrUrl = result?.pay_address
@@ -1268,7 +1266,7 @@ function DepositModal({
                   <small>
                     {n.required_confirmations != null ? `Deposit Completion: ${n.required_confirmations} confirmation(s)` : "Deposit completion: not configured"}
                     {" · "}
-                    {n.min_deposit != null ? `Min. Deposit: ${formatAmount(Number(n.min_deposit))} ${asset}` : minDepositFor(n) != null ? `Min. Deposit: ${formatAmount(Number(minDepositFor(n)))} ${asset}` : "Min. deposit: not configured"}
+                    {minDepositFor(n) != null ? `Min. Deposit: ${formatAmount(Number(minDepositFor(n)))} ${asset}` : "Min. deposit: Not specified"}
                   </small>
                 </span>
                 <Icon name="arrow" size={19} />
@@ -1412,11 +1410,11 @@ function DepositModal({
               <div style={styles.depositDetails}>
                 <div style={styles.depositDetailRow}>
                   <span>Minimum Deposit Amount</span>
-                  <b>{minDeposit == null ? "Not configured" : `${formatAmount(Number(minDeposit))} ${asset}`}</b>
+                  <b>{minDeposit == null ? "Not specified" : `${formatAmount(Number(minDeposit))} ${asset}`}</b>
                 </div>
                 <div style={styles.depositDetailRow}>
                   <span>Deposit Arrival</span>
-                  <b>{network.required_confirmations != null ? `${network.required_confirmations} confirmations` : "Not configured"}</b>
+                  <b>{network.required_confirmations != null ? `${network.required_confirmations} confirmations` : "Arrival depends on blockchain confirmations."}</b>
                 </div>
                 {network.token_contract_address && (
                   <div style={styles.depositDetailRow}>
@@ -1428,7 +1426,7 @@ function DepositModal({
 
               <div style={styles.infoBox}>
                 <Icon name="alert" size={16} />
-                <span>Only send {asset} on the {network.network_name} network to this address. Sending a different asset or using a different network may result in permanent loss of funds.</span>
+                <span>Only send {asset} on the {network.network_name} network to this address. Sending a different asset or using a different network may result in permanent loss of funds. This deposit has no fee — the amount you send arrives in full.</span>
               </div>
 
               <div style={styles.depositActions}>
