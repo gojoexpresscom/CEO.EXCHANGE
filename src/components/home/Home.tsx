@@ -151,6 +151,10 @@ type Network = {
   required_confirmations: number | null;
   privy_network_identifier: string | null;
   token_contract_address: string | null;
+  // Short payout-routing code (e.g. "BEP20", "ERC20", "TRC20", "Polygon", "BTC", "SOL").
+  // This is the value the backend RPCs (calculate_withdrawal_fee / process_crypto_withdrawal)
+  // actually key on — never the human-readable network_name.
+  withdrawal_network_code: string | null;
   assets?: { symbol: string; name: string } | null;
 };
 
@@ -186,6 +190,22 @@ type Withdrawal = {
   provider_reference: string | null;
   tx_hash: string | null;
   created_at: string | null;
+};
+
+// Real per-network withdrawal fee/limit configuration from `fee_schedules_networks`.
+// `currency` + `network` (the short withdrawal_network_code) together are the same
+// composite key the calculate_withdrawal_fee / process_crypto_withdrawal RPCs use, so a
+// row's presence here is exactly what determines whether a currency/network is genuinely
+// withdrawable end-to-end — not just "enabled" in asset_networks.
+type FeeSchedule = {
+  id: string;
+  currency: string;
+  network: string;
+  min_deposit: number | null;
+  min_withdrawal: number | null;
+  platform_fee_percent: number | null;
+  platform_fee_flat: number | null;
+  default_network_fee: number | null;
 };
 
 type Comment = {
@@ -336,6 +356,7 @@ export default function Home({
   const [giveaways, setGiveaways] = useState<Giveaway[]>([]);
   const [referral, setReferral] = useState<Referral | null>(null);
   const [networks, setNetworks] = useState<Network[]>([]);
+  const [feeSchedules, setFeeSchedules] = useState<FeeSchedule[]>([]);
   const [walletAddresses, setWalletAddresses] = useState<WalletAddress[]>([]);
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
@@ -485,11 +506,22 @@ export default function Home({
   const loadNetworks = useCallback(async () => {
     const { data, error: e } = await supabase
       .from("asset_networks")
-      .select("id,asset_id,network_name,payout_provider,privy_chain_type,min_withdrawal,withdrawal_fee,is_active,deposit_enabled,withdrawal_enabled,min_deposit,required_confirmations,privy_network_identifier,token_contract_address,assets(symbol,name)")
+      .select("id,asset_id,network_name,payout_provider,privy_chain_type,min_withdrawal,withdrawal_fee,is_active,deposit_enabled,withdrawal_enabled,min_deposit,required_confirmations,privy_network_identifier,token_contract_address,withdrawal_network_code,assets(symbol,name)")
       .eq("is_active", true)
       .order("network_name");
     if (e) throw e;
     setNetworks((data ?? []) as unknown as Network[]);
+  }, []);
+
+  // Real fee/limit configuration for withdrawals, keyed by (currency, withdrawal_network_code).
+  // A currency/network only becomes selectable in the Withdraw flow once a row exists here
+  // AND the matching asset_networks row is active + withdrawal_enabled — see WithdrawModal.
+  const loadFeeSchedules = useCallback(async () => {
+    const { data, error: e } = await supabase
+      .from("fee_schedules_networks")
+      .select("id,currency,network,min_deposit,min_withdrawal,platform_fee_percent,platform_fee_flat,default_network_fee");
+    if (e) throw e;
+    setFeeSchedules((data ?? []) as FeeSchedule[]);
   }, []);
 
   // Preloads any wallet_addresses the user already has, so the deposit modal can skip the
@@ -516,14 +548,14 @@ export default function Home({
     try {
       await Promise.all([
         loadProfileAndWallets(id), loadMarkets(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
-        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id),
+        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadFeeSchedules(), loadWalletAddresses(id), loadTransactions(id),
       ]);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load the Home Page.");
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements]);
+  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadFeeSchedules, loadPlatformAnnouncements]);
 
   useEffect(() => {
     let alive = true;
@@ -897,8 +929,8 @@ export default function Home({
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
-      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
+      {modal === "deposit" && <DepositModal networks={networks} feeSchedules={feeSchedules} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
+      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} feeSchedules={feeSchedules} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
@@ -954,6 +986,7 @@ function ModalShell({ title, children, onClose, wide = false }: { title: string;
 
 function DepositModal({
   networks,
+  feeSchedules,
   deposits,
   walletAddresses,
   onClose,
@@ -962,6 +995,7 @@ function DepositModal({
   onProvisionAddress,
 }: {
   networks: Network[];
+  feeSchedules: FeeSchedule[];
   deposits: Deposit[];
   walletAddresses: WalletAddress[];
   onClose: () => void;
@@ -1015,7 +1049,19 @@ function DepositModal({
     .filter((n) => String(n.assets?.symbol ?? "").toUpperCase() === asset.toUpperCase())
     .sort((a, b) => a.network_name.localeCompare(b.network_name));
 
-  const minDeposit = network?.min_deposit ?? null;
+  // asset_networks.min_deposit is not populated for any row in this project — the real,
+  // network-appropriate minimums live in fee_schedules_networks (currency + the short
+  // withdrawal_network_code), the same table calculate_withdrawal_fee reads from. A
+  // currency/network with no row there has no known-safe minimum yet, so this returns
+  // null and the UI honestly shows "Not configured" instead of a fabricated number.
+  const minDepositFor = (n: Network | null): number | null => {
+    if (!n?.withdrawal_network_code) return null;
+    const symbol = String(n.assets?.symbol ?? "").toUpperCase();
+    const code = n.withdrawal_network_code.toUpperCase();
+    const row = feeSchedules.find((f) => f.currency.toUpperCase() === symbol && f.network.toUpperCase() === code);
+    return row?.min_deposit ?? null;
+  };
+  const minDeposit = minDepositFor(network);
   const qrUrl = result?.pay_address
     ? `https://quickchart.io/qr?size=280&margin=2&text=${encodeURIComponent(result.pay_address)}`
     : "";
@@ -1222,7 +1268,7 @@ function DepositModal({
                   <small>
                     {n.required_confirmations != null ? `Deposit Completion: ${n.required_confirmations} confirmation(s)` : "Deposit completion: not configured"}
                     {" · "}
-                    {n.min_deposit != null ? `Min. Deposit: ${formatAmount(Number(n.min_deposit))} ${asset}` : "Min. deposit: not configured"}
+                    {n.min_deposit != null ? `Min. Deposit: ${formatAmount(Number(n.min_deposit))} ${asset}` : minDepositFor(n) != null ? `Min. Deposit: ${formatAmount(Number(minDepositFor(n)))} ${asset}` : "Min. deposit: not configured"}
                   </small>
                 </span>
                 <Icon name="arrow" size={19} />
@@ -1273,7 +1319,7 @@ function DepositModal({
           <button
             type="button"
             style={styles.primaryButtonFull}
-            disabled={!buyAmount || Number(buyAmount) <= 0 || buySubmitting}
+            disabled={!buyAmount || Number(buyAmount) <= 0 || (minDeposit != null && Number(buyAmount) < minDeposit) || buySubmitting}
             onClick={() => void startBuy()}
           >
             {buySubmitting ? "Opening secure payment…" : "Continue to Secure Payment"}
@@ -1316,7 +1362,7 @@ function DepositModal({
           <button
             type="button"
             style={styles.primaryButtonFull}
-            disabled={!amount || Number(amount) <= 0 || submitting}
+            disabled={!amount || Number(amount) <= 0 || (minDeposit != null && Number(amount) < minDeposit) || submitting}
             onClick={() => void getAddress()}
           >
             {submitting ? "Creating address…" : "Get Deposit Address"}
@@ -1494,6 +1540,7 @@ function DepositModal({
 function WithdrawModal({
   wallets,
   networks,
+  feeSchedules,
   withdrawals,
   onClose,
   onRequestOtp,
@@ -1502,16 +1549,22 @@ function WithdrawModal({
 }: {
   wallets: Wallet[];
   networks: Network[];
+  feeSchedules: FeeSchedule[];
   withdrawals: Withdrawal[];
   onClose: () => void;
   onRequestOtp: () => Promise<void>;
-  onCalculateFee: (asset: string, network: string, amount: string) => Promise<any>;
-  onWithdraw: (asset: string, network: string, destination: string, amount: string, otp: string) => Promise<string | null>;
+  onCalculateFee: (asset: string, networkCode: string, amount: string) => Promise<any>;
+  onWithdraw: (asset: string, networkCode: string, destination: string, amount: string, otp: string) => Promise<string | null>;
 }) {
   type Step = "coins" | "method" | "network" | "form" | "review" | "otp" | "done";
   const [step, setStep] = useState<Step>("coins");
   const [asset, setAsset] = useState("");
+  // `network` is the friendly display name (e.g. "TRON (TRC20)") shown to the user on every
+  // screen. `networkCode` is the short payout-routing code (e.g. "TRC20") that actually goes
+  // to calculate_withdrawal_fee / process_crypto_withdrawal — the two are tracked separately
+  // so the UI never sends a human-readable label somewhere the backend expects a code.
   const [network, setNetwork] = useState("");
+  const [networkCode, setNetworkCode] = useState("");
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
   const [otp, setOtp] = useState("");
@@ -1520,15 +1573,39 @@ function WithdrawModal({
   const [otpSending, setOtpSending] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Genuinely-supported withdrawal currencies: sourced only from `asset_networks` rows
-  // that are both active and withdrawal-enabled — the same two columns the backend
-  // payout path (calculate_withdrawal_fee / process_crypto_withdrawal RPCs) is keyed on.
-  // A currency is never shown here just because the user happens to hold a balance of it,
-  // and never hidden just because they don't — mirroring how Deposit Crypto derives its
-  // coin list from `deposit_enabled` networks rather than from existing balances. This
-  // list, and the per-asset network list below, will automatically track whatever an
-  // admin enables/disables in Supabase; nothing here is hardcoded.
-  const withdrawableNetworks = networks.filter((n) => n.is_active !== false && n.withdrawal_enabled === true);
+  // A currency/network is only a genuine, end-to-end-supported withdrawal route when ALL of
+  // these are true:
+  //   1. asset_networks.is_active + withdrawal_enabled (the payout path is switched on), and
+  //   2. asset_networks.withdrawal_network_code is set (there's a real short code to route on), and
+  //   3. a matching fee_schedules_networks row exists for (symbol, withdrawal_network_code) —
+  //      the same composite key calculate_withdrawal_fee / process_crypto_withdrawal use.
+  // Missing any one of these means Supabase has no real, configured payout route, so the
+  // combination is hidden rather than shown with fabricated fees. This list — and everything
+  // derived from it below — tracks whatever an admin enables/disables in Supabase; nothing
+  // here is hardcoded to a fixed count of currencies.
+  const hasFeeSchedule = (symbol: string, code: string) =>
+    feeSchedules.some((f) => f.currency.toUpperCase() === symbol.toUpperCase() && f.network.toUpperCase() === code.toUpperCase());
+
+  // Real per-network minimum withdrawal, read from the same fee_schedules_networks row
+  // calculate_withdrawal_fee / process_crypto_withdrawal enforce server-side — not from
+  // asset_networks.min_withdrawal, which is a separate (currently mirrored, but not
+  // guaranteed to stay in sync) column. This keeps the UI hint and the backend's actual
+  // enforcement reading from a single source of truth.
+  const minWithdrawalFor = (n: Network | null): number | null => {
+    if (!n?.withdrawal_network_code) return null;
+    const symbol = String(n.assets?.symbol ?? "").toUpperCase();
+    const code = n.withdrawal_network_code.toUpperCase();
+    const row = feeSchedules.find((f) => f.currency.toUpperCase() === symbol && f.network.toUpperCase() === code);
+    return row?.min_withdrawal ?? null;
+  };
+
+  const withdrawableNetworks = networks.filter(
+    (n) =>
+      n.is_active !== false &&
+      n.withdrawal_enabled === true &&
+      !!n.withdrawal_network_code &&
+      hasFeeSchedule(String(n.assets?.symbol ?? ""), n.withdrawal_network_code)
+  );
 
   const withdrawableAssetMap = new Map<string, { symbol: string; name: string }>();
   withdrawableNetworks.forEach((n) => {
@@ -1551,23 +1628,26 @@ function WithdrawModal({
   const availableNetworks = withdrawableNetworks
     .filter((n) => (n.assets?.symbol || "").toUpperCase() === asset.toUpperCase())
     .sort((a, b) => a.network_name.localeCompare(b.network_name));
-  const selectedNetwork = availableNetworks.find((n) => n.network_name === network) ?? null;
+  // Matched on the short code, which is unique per asset — the friendly network_name is
+  // display-only and is never used to key backend calls or lookups.
+  const selectedNetwork = availableNetworks.find((n) => n.withdrawal_network_code === networkCode) ?? null;
 
   useEffect(() => {
-    if (!amount || !network || !asset) {
+    if (!amount || !networkCode || !asset) {
       setFee(null);
       return;
     }
     let cancelled = false;
-    void onCalculateFee(asset, network, amount).then((x) => {
+    void onCalculateFee(asset, networkCode, amount).then((x) => {
       if (!cancelled) setFee(x);
     });
     return () => { cancelled = true; };
-  }, [amount, asset, network, onCalculateFee]);
+  }, [amount, asset, networkCode, onCalculateFee]);
 
   const chooseAsset = (value: string) => {
     setAsset(value);
     setNetwork("");
+    setNetworkCode("");
     setDestination("");
     setAmount("");
     setFee(null);
@@ -1576,6 +1656,7 @@ function WithdrawModal({
 
   const chooseNetwork = (n: Network) => {
     setNetwork(n.network_name);
+    setNetworkCode(n.withdrawal_network_code ?? "");
     setStep("form");
   };
 
@@ -1589,7 +1670,7 @@ function WithdrawModal({
   };
 
   const sendOtp = async () => {
-    if (!destination.trim() || !amount || Number(amount) <= 0 || !network || Number(amount) > balance) return;
+    if (!destination.trim() || !amount || Number(amount) <= 0 || !networkCode || Number(amount) > balance) return;
     setOtpSending(true);
     try {
       await onRequestOtp();
@@ -1601,7 +1682,8 @@ function WithdrawModal({
 
   const confirmWithdrawal = async () => {
     if (!/^\d{6}$/.test(otp)) return;
-    const id = await onWithdraw(asset, network, destination, amount, otp);
+    // The RPC receives the short networkCode (e.g. "TRC20"), never the friendly network_name.
+    const id = await onWithdraw(asset, networkCode, destination, amount, otp);
     if (id) {
       setRequestId(id);
       setStep("done");
@@ -1619,7 +1701,10 @@ function WithdrawModal({
   };
 
   const continueToReview = () => {
-    if (!destination.trim() || !amount || Number(amount) <= 0 || !network || Number(amount) > balance) return;
+    // Requires a valid networkCode (the real routing key) and a successful fee-schedule
+    // calculation — i.e. Supabase actually has a configured fee/limit row for this exact
+    // currency + network — before the user can proceed past the form.
+    if (!destination.trim() || !amount || Number(amount) <= 0 || !networkCode || Number(amount) > balance || !fee?.success) return;
     setStep("review");
   };
 
@@ -1698,7 +1783,7 @@ function WithdrawModal({
           <label style={styles.cleanField}>
             <span>Amount</span>
             <div style={styles.amountInputWrap}>
-              <input style={styles.cleanInput} type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Min. withdrawal: ${selectedNetwork?.min_withdrawal == null ? "Not configured" : formatAmount(Number(selectedNetwork.min_withdrawal))}`} />
+              <input style={styles.cleanInput} type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Min. withdrawal: ${minWithdrawalFor(selectedNetwork) == null ? "Not configured" : formatAmount(Number(minWithdrawalFor(selectedNetwork)))}`} />
               <b>{asset}</b>
             </div>
           </label>
@@ -1707,12 +1792,19 @@ function WithdrawModal({
             <div><span>Available balance</span><strong>{formatAmount(balance)} {asset}</strong></div>
           </div>
 
-          {selectedNetwork?.min_withdrawal != null && <div style={styles.minimumLine}>Minimum withdrawal: {formatAmount(Number(selectedNetwork.min_withdrawal))} {asset}</div>}
+          {minWithdrawalFor(selectedNetwork) != null && <div style={styles.minimumLine}>Minimum withdrawal: {formatAmount(Number(minWithdrawalFor(selectedNetwork)))} {asset}</div>}
+
+          {fee && fee.success === false && amount && Number(amount) > 0 && (
+            <div style={styles.warningBox}>
+              <Icon name="alert" size={18} />
+              <span>{fee.error_message || "This amount can't be withdrawn on this network."}</span>
+            </div>
+          )}
 
           {fee?.success && (
             <div style={styles.feeBox}>
               <span>Network fee</span><b>{formatAmount(Number(fee.network_fee))}</b>
-              <span>Platform fee</span><b>{formatAmount(Number(fee.platform_fee))}</b>
+              {Number(fee.platform_fee) > 0 && <><span>CEO Exchange fee</span><b>{formatAmount(Number(fee.platform_fee))}</b></>}
               <span>Total fee</span><b>{formatAmount(Number(fee.total_fee))}</b>
               <span>Amount Received</span><b>{formatAmount(Number(fee.net_amount))} {asset}</b>
             </div>
@@ -1721,7 +1813,7 @@ function WithdrawModal({
           <button
             type="button"
             style={styles.primaryButtonFull}
-            disabled={!destination.trim() || !network || !amount || Number(amount) <= 0 || Number(amount) > balance}
+            disabled={!destination.trim() || !networkCode || !amount || Number(amount) <= 0 || Number(amount) > balance || !fee?.success}
             onClick={continueToReview}
           >
             Review Withdrawal <Icon name="arrow" size={19} />
@@ -1739,12 +1831,16 @@ function WithdrawModal({
             <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Currency</span><b style={styles.transactionCardValue}>{asset}</b></div>
             <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Network</span><b style={styles.transactionCardValue}>{network}</b></div>
             <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Address</span><b style={styles.transactionCardValue}>{destination}</b></div>
-            <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Amount</span><b style={styles.transactionCardValue}>{formatAmount(Number(amount))} {asset}</b></div>
+            <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Withdrawal amount</span><b style={styles.transactionCardValue}>{formatAmount(Number(amount))} {asset}</b></div>
             {fee?.success && (
               <>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Minimum withdrawal requirement</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.minimum_amount))} {asset}</b></div>
                 <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Network fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.network_fee))} {asset}</b></div>
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Platform fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.platform_fee))} {asset}</b></div>
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>You will receive</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.net_amount))} {asset}</b></div>
+                {Number(fee.platform_fee) > 0 && (
+                  <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>CEO Exchange fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.platform_fee))} {asset}</b></div>
+                )}
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Total fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.total_fee))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Amount received</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.net_amount))} {asset}</b></div>
               </>
             )}
           </div>
