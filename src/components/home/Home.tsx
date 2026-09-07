@@ -1508,7 +1508,7 @@ function WithdrawModal({
   onCalculateFee: (asset: string, network: string, amount: string) => Promise<any>;
   onWithdraw: (asset: string, network: string, destination: string, amount: string, otp: string) => Promise<string | null>;
 }) {
-  type Step = "coins" | "method" | "form" | "network" | "otp" | "done";
+  type Step = "coins" | "method" | "network" | "form" | "review" | "otp" | "done";
   const [step, setStep] = useState<Step>("coins");
   const [asset, setAsset] = useState("");
   const [network, setNetwork] = useState("");
@@ -1520,21 +1520,36 @@ function WithdrawModal({
   const [otpSending, setOtpSending] = useState(false);
   const [search, setSearch] = useState("");
 
-  const withdrawableWallets = wallets
-    .filter((w) => Number(w.balance ?? 0) > 0)
-    .filter((w) => w.wallet_type.toLowerCase() !== "savings");
+  // Genuinely-supported withdrawal currencies: sourced only from `asset_networks` rows
+  // that are both active and withdrawal-enabled — the same two columns the backend
+  // payout path (calculate_withdrawal_fee / process_crypto_withdrawal RPCs) is keyed on.
+  // A currency is never shown here just because the user happens to hold a balance of it,
+  // and never hidden just because they don't — mirroring how Deposit Crypto derives its
+  // coin list from `deposit_enabled` networks rather than from existing balances. This
+  // list, and the per-asset network list below, will automatically track whatever an
+  // admin enables/disables in Supabase; nothing here is hardcoded.
+  const withdrawableNetworks = networks.filter((n) => n.is_active !== false && n.withdrawal_enabled === true);
 
-  const uniqueWallets = [...new Map(withdrawableWallets.map((w) => [w.asset.toUpperCase(), w])).values()]
-    .filter((w) => w.asset.toLowerCase().includes(search.trim().toLowerCase()));
+  const withdrawableAssetMap = new Map<string, { symbol: string; name: string }>();
+  withdrawableNetworks.forEach((n) => {
+    const symbol = String(n.assets?.symbol ?? "").toUpperCase();
+    if (!symbol) return;
+    if (!withdrawableAssetMap.has(symbol)) withdrawableAssetMap.set(symbol, { symbol, name: String(n.assets?.name ?? symbol) });
+  });
+  const withdrawableAssets = [...withdrawableAssetMap.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const filteredAssets = withdrawableAssets.filter((x) => `${x.symbol} ${x.name}`.toLowerCase().includes(search.trim().toLowerCase()));
 
-  const balance = Number(
-    wallets.find((w) => w.asset.toUpperCase() === asset.toUpperCase() && w.wallet_type.toLowerCase() !== "savings")?.balance ??
-    wallets.find((w) => w.asset.toUpperCase() === asset.toUpperCase())?.balance ??
-    0
-  );
+  const balanceForAsset = (symbol: string) =>
+    Number(
+      wallets.find((w) => w.asset.toUpperCase() === symbol && w.wallet_type.toLowerCase() !== "savings")?.balance ??
+      wallets.find((w) => w.asset.toUpperCase() === symbol)?.balance ??
+      0
+    );
 
-  const availableNetworks = networks
-    .filter((n) => n.withdrawal_enabled === true && (n.assets?.symbol || "").toUpperCase() === asset.toUpperCase())
+  const balance = balanceForAsset(asset.toUpperCase());
+
+  const availableNetworks = withdrawableNetworks
+    .filter((n) => (n.assets?.symbol || "").toUpperCase() === asset.toUpperCase())
     .sort((a, b) => a.network_name.localeCompare(b.network_name));
   const selectedNetwork = availableNetworks.find((n) => n.network_name === network) ?? null;
 
@@ -1596,10 +1611,16 @@ function WithdrawModal({
   const goBack = () => {
     if (step === "coins") onClose();
     else if (step === "method") setStep("coins");
-    else if (step === "form") setStep("method");
-    else if (step === "network") setStep("form");
-    else if (step === "otp") setStep("form");
+    else if (step === "network") setStep("method");
+    else if (step === "form") setStep("network");
+    else if (step === "review") setStep("form");
+    else if (step === "otp") setStep("review");
     else setStep("coins");
+  };
+
+  const continueToReview = () => {
+    if (!destination.trim() || !amount || Number(amount) <= 0 || !network || Number(amount) > balance) return;
+    setStep("review");
   };
 
   const qrUrl = destination
@@ -1608,7 +1629,7 @@ function WithdrawModal({
 
   return (
     <ModalShell
-      title={step === "coins" ? "Select Coin" : step === "method" ? "Withdraw" : step === "form" ? `${asset}-On-Chain` : step === "network" ? "Choose a Chain Type" : step === "otp" ? "Confirm Withdrawal" : "Transaction Details"}
+      title={step === "coins" ? "Select Coin" : step === "method" ? "Withdraw" : step === "network" ? "Select Network" : step === "form" ? `${asset}-On-Chain` : step === "review" ? "Review Withdrawal" : step === "otp" ? "Confirm Withdrawal" : "Transaction Details"}
       onClose={onClose}
       wide={step === "coins" || step === "network"}
     >
@@ -1626,14 +1647,14 @@ function WithdrawModal({
             {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")}><Icon name="close" size={18} /></button>}
           </div>
           <div style={styles.assetList}>
-            {uniqueWallets.map((w) => (
-              <button type="button" key={w.asset} style={styles.assetRow} onClick={() => chooseAsset(w.asset)}>
-                <span style={styles.assetIcon}>{w.asset.slice(0, 1)}</span>
-                <span style={styles.assetInfo}><b>{w.asset.toUpperCase()}</b><small>Available balance</small></span>
-                <span style={styles.assetBalance}>{formatAmount(Number(w.balance ?? 0))}</span>
+            {filteredAssets.map((x) => (
+              <button type="button" key={x.symbol} style={styles.assetRow} onClick={() => chooseAsset(x.symbol)}>
+                <span style={styles.assetIcon}>{x.symbol.slice(0, 1)}</span>
+                <span style={styles.assetInfo}><b>{x.symbol}</b><small>{x.name}</small></span>
+                <span style={styles.assetBalance}>{formatAmount(balanceForAsset(x.symbol))}</span>
               </button>
             ))}
-            {!uniqueWallets.length && <div style={styles.emptyPanel}><b>No currency with an available balance.</b><p>Only balances currently present in your Supabase wallet are shown.</p></div>}
+            {!filteredAssets.length && <div style={styles.emptyPanel}><b>No withdrawal currency matches.</b><p>Only currencies with an active, withdrawal-enabled network in Supabase are shown. No fake currencies are added.</p></div>}
           </div>
         </>
       )}
@@ -1643,7 +1664,7 @@ function WithdrawModal({
           <div style={styles.balanceHero}>
             <div><span>Available balance</span><strong>{formatAmount(balance)} {asset}</strong></div>
           </div>
-          <button type="button" style={styles.methodLarge} onClick={() => setStep("form")}>
+          <button type="button" style={styles.methodLarge} onClick={() => setStep("network")}>
             <span style={styles.methodLargeIcon}><Icon name="upload" size={23} /></span>
             <span style={styles.methodLargeText}><b>On-Chain</b><small>Withdrawal to an on-chain address</small></span>
             <Icon name="arrow" size={21} />
@@ -1700,10 +1721,40 @@ function WithdrawModal({
           <button
             type="button"
             style={styles.primaryButtonFull}
-            disabled={!destination.trim() || !network || !amount || Number(amount) <= 0 || Number(amount) > balance || otpSending}
+            disabled={!destination.trim() || !network || !amount || Number(amount) <= 0 || Number(amount) > balance}
+            onClick={continueToReview}
+          >
+            Review Withdrawal <Icon name="arrow" size={19} />
+          </button>
+        </>
+      )}
+
+      {step === "review" && (
+        <>
+          <div style={styles.warningBox}>
+            <Icon name="alert" size={18} />
+            <span>Double-check the address and network. Crypto withdrawals sent to the wrong network or address can't be reversed.</span>
+          </div>
+          <div style={styles.transactionCard}>
+            <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Currency</span><b style={styles.transactionCardValue}>{asset}</b></div>
+            <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Network</span><b style={styles.transactionCardValue}>{network}</b></div>
+            <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Address</span><b style={styles.transactionCardValue}>{destination}</b></div>
+            <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Amount</span><b style={styles.transactionCardValue}>{formatAmount(Number(amount))} {asset}</b></div>
+            {fee?.success && (
+              <>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Network fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.network_fee))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Platform fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.platform_fee))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>You will receive</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.net_amount))} {asset}</b></div>
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            style={styles.primaryButtonFull}
+            disabled={otpSending}
             onClick={() => void sendOtp()}
           >
-            <Icon name="upload" size={19} /> Withdraw
+            <Icon name="upload" size={19} /> Confirm Withdrawal
           </button>
         </>
       )}
