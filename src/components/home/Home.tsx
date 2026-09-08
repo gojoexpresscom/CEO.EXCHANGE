@@ -782,9 +782,23 @@ export default function Home({
     return data as any;
   };
 
-  const submitWithdrawal = async (asset: string, network: string, destination: string, amount: string, otp: string): Promise<string | null> => {
-    if (!destination.trim() || !amount || Number(amount) <= 0 || !/^\d{6}$/.test(otp)) {
-      notify("Asset, network, destination, amount and a 6-digit OTP are required.");
+  // Live, single-use, provider-priced quote for the EXACT amount the user is about to
+  // withdraw — this calls get-withdrawal-fee-quote, which hits NOWPayments' real payout/fee
+  // endpoint at request time. calculate_withdrawal_fee (above) is only a cheap live preview
+  // while the user is still typing; this is what actually gets charged, and its quote_id is
+  // required by process_crypto_withdrawal so the fee shown here and the fee deducted can
+  // never disagree.
+  const getWithdrawalQuote = async (asset: string, network: string, amount: string) => {
+    if (!amount || Number(amount) <= 0) return null;
+    const { data, error: e } = await supabase.functions.invoke("get-withdrawal-fee-quote", { body: { asset, network, amount: Number(amount) } });
+    if (e) { notify(e.message); return null; }
+    if (data?.success === false) { notify(String(data.error_message || "Could not get a withdrawal quote.")); return null; }
+    return data;
+  };
+
+  const submitWithdrawal = async (asset: string, network: string, destination: string, amount: string, otp: string, quoteId: string): Promise<string | null> => {
+    if (!destination.trim() || !amount || Number(amount) <= 0 || !/^\d{6}$/.test(otp) || !quoteId) {
+      notify("Asset, network, destination, amount, a live fee quote and a 6-digit OTP are required.");
       return null;
     }
     const { data: verification, error: verifyError } = await supabase.functions.invoke("verify-otp", { body: { code: otp, purpose: "withdrawal" } });
@@ -796,6 +810,7 @@ export default function Home({
       p_destination_address: destination.trim(),
       p_amount: Number(amount),
       p_otp_code: otp,
+      p_quote_id: quoteId,
     });
     if (e) { notify(e.message); return null; }
     await loadTransactions(userId ?? "");
@@ -902,7 +917,7 @@ export default function Home({
 
       {toast && <div style={styles.toast}>{toast}</div>}
       {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
-      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onWithdraw={submitWithdrawal} />}
+      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onGetQuote={getWithdrawalQuote} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
@@ -1514,6 +1529,7 @@ function WithdrawModal({
   onClose,
   onRequestOtp,
   onCalculateFee,
+  onGetQuote,
   onWithdraw,
 }: {
   wallets: Wallet[];
@@ -1522,7 +1538,8 @@ function WithdrawModal({
   onClose: () => void;
   onRequestOtp: () => Promise<void>;
   onCalculateFee: (asset: string, networkCode: string, amount: string) => Promise<any>;
-  onWithdraw: (asset: string, networkCode: string, destination: string, amount: string, otp: string) => Promise<string | null>;
+  onGetQuote: (asset: string, networkCode: string, amount: string) => Promise<any>;
+  onWithdraw: (asset: string, networkCode: string, destination: string, amount: string, otp: string, quoteId: string) => Promise<string | null>;
 }) {
   type Step = "coins" | "method" | "network" | "form" | "review" | "otp" | "done";
   const [step, setStep] = useState<Step>("coins");
@@ -1537,6 +1554,12 @@ function WithdrawModal({
   const [amount, setAmount] = useState("");
   const [otp, setOtp] = useState("");
   const [fee, setFee] = useState<any>(null);
+  // The live, single-use, provider-priced quote generated right before Review — this (not
+  // the cheap `fee` preview above) is what's actually shown on the Review/OTP screens and
+  // whose quote_id is sent to process_crypto_withdrawal, so what the user is shown is
+  // exactly what gets deducted.
+  const [quote, setQuote] = useState<any>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [requestId, setRequestId] = useState("");
   const [otpSending, setOtpSending] = useState(false);
   const [search, setSearch] = useState("");
@@ -1612,6 +1635,7 @@ function WithdrawModal({
     setDestination("");
     setAmount("");
     setFee(null);
+    setQuote(null);
     setStep("method");
   };
 
@@ -1633,9 +1657,11 @@ function WithdrawModal({
   };
 
   const confirmWithdrawal = async () => {
-    if (!/^\d{6}$/.test(otp)) return;
-    // The RPC receives the short networkCode (e.g. "TRC20"), never the friendly network_name.
-    const id = await onWithdraw(asset, networkCode, destination, amount, otp);
+    if (!/^\d{6}$/.test(otp) || !quote?.quote_id) return;
+    // The RPC receives the short networkCode (e.g. "TRC20"), never the friendly network_name,
+    // plus the live quote_id — process_crypto_withdrawal will reject a missing/expired/
+    // mismatched quote rather than falling back to any other fee number.
+    const id = await onWithdraw(asset, networkCode, destination, amount, otp, quote.quote_id);
     if (id) {
       setRequestId(id);
       setStep("done");
@@ -1647,17 +1673,27 @@ function WithdrawModal({
     else if (step === "method") setStep("coins");
     else if (step === "network") setStep("method");
     else if (step === "form") setStep("network");
-    else if (step === "review") setStep("form");
+    else if (step === "review") { setQuote(null); setStep("form"); }
     else if (step === "otp") setStep("review");
     else setStep("coins");
   };
 
-  const continueToReview = () => {
+  const continueToReview = async () => {
     // Requires a valid networkCode (the real routing key) and a successful fee-schedule
     // calculation — i.e. Supabase actually has a configured fee/limit row for this exact
     // currency + network — before the user can proceed past the form.
     if (!destination.trim() || !amount || Number(amount) <= 0 || !networkCode || Number(amount) > balance || !fee?.success) return;
-    setStep("review");
+    setQuoteLoading(true);
+    try {
+      // Lock in a live, single-use NOWPayments quote for this exact amount right before
+      // Review — this is the number that will actually be charged, not the cheap preview.
+      const q = await onGetQuote(asset, networkCode, amount);
+      if (!q?.success) return;
+      setQuote(q);
+      setStep("review");
+    } finally {
+      setQuoteLoading(false);
+    }
   };
 
   const qrUrl = destination
@@ -1762,10 +1798,10 @@ function WithdrawModal({
           <button
             type="button"
             style={styles.primaryButtonFull}
-            disabled={!destination.trim() || !networkCode || !amount || Number(amount) <= 0 || Number(amount) > balance || !fee?.success}
-            onClick={continueToReview}
+            disabled={!destination.trim() || !networkCode || !amount || Number(amount) <= 0 || Number(amount) > balance || !fee?.success || quoteLoading}
+            onClick={() => void continueToReview()}
           >
-            Review Withdrawal <Icon name="arrow" size={19} />
+            {quoteLoading ? "Getting live quote…" : "Review Withdrawal"} <Icon name="arrow" size={19} />
           </button>
         </>
       )}
@@ -1781,22 +1817,26 @@ function WithdrawModal({
             <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Network</span><b style={styles.transactionCardValue}>{network}</b></div>
             <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Address</span><b style={styles.transactionCardValue}>{destination}</b></div>
             <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Withdrawal amount</span><b style={styles.transactionCardValue}>{formatAmount(Number(amount))} {asset}</b></div>
-            {fee?.success && (
+            {quote && (
               <>
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Minimum withdrawal requirement</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.minimum_amount))} {asset}</b></div>
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Gas fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.network_fee))} {asset}</b></div>
-                {Number(fee.platform_fee) > 0 && (
-                  <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Platform fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.platform_fee))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Minimum withdrawal requirement</span><b style={styles.transactionCardValue}>{formatAmount(Number(quote.minimum_amount))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Gas/Network fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(quote.network_fee))} {asset}</b></div>
+                {Number(quote.platform_fee) > 0 && (
+                  <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Platform fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(quote.platform_fee))} {asset}</b></div>
                 )}
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Total fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.total_fee))} {asset}</b></div>
-                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Amount received</span><b style={styles.transactionCardValue}>{formatAmount(Number(fee.net_amount))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Total fee</span><b style={styles.transactionCardValue}>{formatAmount(Number(quote.total_fee))} {asset}</b></div>
+                <div style={styles.transactionCardRow}><span style={styles.transactionCardLabel}>Amount received</span><b style={styles.transactionCardValue}>{formatAmount(Number(quote.net_amount))} {asset}</b></div>
               </>
             )}
+          </div>
+          <div style={styles.infoBox}>
+            <Icon name="alert" size={16} />
+            <span>This quote is locked for a few minutes. If it expires before you confirm, go back and request a new one.</span>
           </div>
           <button
             type="button"
             style={styles.primaryButtonFull}
-            disabled={otpSending}
+            disabled={otpSending || !quote?.quote_id}
             onClick={() => void sendOtp()}
           >
             <Icon name="upload" size={19} /> Confirm Withdrawal
