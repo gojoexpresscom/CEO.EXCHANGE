@@ -110,15 +110,38 @@ export default function App() {
       <div
         style={{
           minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          background: "#050505",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 16,
+          background: "radial-gradient(ellipse at 50% 30%, rgba(245,181,27,.08), transparent 50%), #050505",
           color: "#f5b51b",
           fontFamily:
             "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
         }}
       >
-        Loading CEO Exchange…
+        <img
+          src="/ceo-auth-reference-transparent.png"
+          alt="CEO Exchange"
+          style={{
+            width: 72,
+            height: 72,
+            objectFit: "contain",
+            filter: "drop-shadow(0 8px 24px rgba(245,181,27,.25))",
+          }}
+        />
+        <div
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: "50%",
+            border: "2.5px solid #2a2110",
+            borderTopColor: "#f5b51b",
+            animation: "spin 0.85s linear infinite",
+          }}
+        />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
