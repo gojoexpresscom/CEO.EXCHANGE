@@ -735,7 +735,7 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {screen === "login" && (
           <>
-            <div style={styles.divider}><span>Or continue with</span></div>
+            <div style={styles.divider}><span style={styles.dividerLine} /><span style={styles.dividerText}>Or continue with</span><span style={styles.dividerLine} /></div>
 
             <div style={styles.socialGrid}>
               <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}>
@@ -797,7 +797,7 @@ export default function AuthScreen({ onAuth }: Props) {
               {loading ? "Creating…" : "Create Account"} <Arrow />
             </button>
 
-            <div style={styles.divider}><span>OR</span></div>
+            <div style={styles.divider}><span style={styles.dividerLine} /><span style={styles.dividerText}>OR</span><span style={styles.dividerLine} /></div>
             <div style={styles.socialGrid}>
               <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}><GoogleIcon /> Google</button>
               <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}><XIcon /> X (Twitter)</button>
@@ -1103,15 +1103,15 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     maxWidth: 440,
     height: "auto",
-    margin: "0 auto 14px",
+    margin: "0 auto 18px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   logo: {
-    width: "min(52vw, 200px)",
-    maxHeight: 168,
+    width: "min(62vw, 250px)",
+    maxHeight: 210,
     objectFit: "contain",
     display: "block",
     margin: "0 auto",
@@ -1168,15 +1168,17 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 68,
     display: "flex",
     alignItems: "center",
-    justifyContent: "stretch",
-    margin: "4px 0 8px",
+    justifyContent: "center",
+    margin: "6px 0 10px",
     overflow: "hidden",
   },
   turnstileMissing: { minHeight: 52, display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0 8px", padding: "10px 12px", borderRadius: 12, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
   forgot: { display: "block", margin: "0 2px 12px auto", border: 0, background: "transparent", color: "#b77c27", fontSize: 13, cursor: "pointer", fontWeight: 500 },
   primaryButton: { width: "100%", minHeight: 54, marginTop: 4, border: 0, borderRadius: 14, background: "linear-gradient(180deg, #ffc12e 0%, #e89a00 100%)", color: "#111", fontSize: 16, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 8px 24px rgba(232,154,0,.3)" },
   outlineButton: { width: "100%", minHeight: 50, marginTop: 8, border: "1px solid #3a3a3d", borderRadius: 14, background: "#0c0c0c", color: "#eee", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
-  divider: { display: "flex", alignItems: "center", gap: 10, margin: "16px 0 10px", color: "#626266", fontSize: 12 },
+  divider: { display: "flex", alignItems: "center", gap: 12, margin: "18px 0 12px", width: "100%" },
+  dividerLine: { flex: 1, height: 1, background: "#2a2a2a", borderRadius: 1 },
+  dividerText: { color: "#7a7a7a", fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 },
   socialButton: { width: "100%", minHeight: 48, marginTop: 0, border: "1px solid #27272b", borderRadius: 14, background: "#1a1a1f", color: "#eee", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 600 },
   socialGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 },
   globalRow: { display: "flex", alignItems: "center", gap: 8, color: "#8c8c8f", fontSize: 12, marginBottom: 12 },
@@ -1223,6 +1225,13 @@ if (typeof document !== "undefined") {
     }
     .ceo-auth-card iframe {
       max-width: 100% !important;
+      width: 100% !important;
+    }
+    .ceo-auth-card [id^="cf-turnstile"],
+    .ceo-auth-card .cf-turnstile {
+      width: 100% !important;
+      display: flex !important;
+      justify-content: center !important;
     }
     @media (max-width: 420px) {
       body { overflow-x: hidden; }
