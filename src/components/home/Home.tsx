@@ -358,6 +358,10 @@ export default function Home({
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [admin, setAdmin] = useState(false);
+  const [pullY, setPullY] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const pullStartY = React.useRef<number | null>(null);
+  const contentRef = React.useRef<HTMLElement | null>(null);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -831,6 +835,35 @@ export default function Home({
 
   const referralLink = referral?.referral_code ? `${window.location.origin}/?ref=${encodeURIComponent(referral.referral_code)}` : "";
 
+  const runRefresh = useCallback(async () => {
+    if (!userId || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadAll(userId);
+    } finally {
+      window.setTimeout(() => {
+        setIsRefreshing(false);
+        setPullY(0);
+      }, 700);
+    }
+  }, [userId, isRefreshing, loadAll]);
+
+  const onPullStart = (e: React.TouchEvent) => {
+    const el = contentRef.current;
+    if (!el || el.scrollTop > 2 || isRefreshing) return;
+    pullStartY.current = e.touches[0].clientY;
+  };
+  const onPullMove = (e: React.TouchEvent) => {
+    if (pullStartY.current == null || isRefreshing) return;
+    const dy = e.touches[0].clientY - pullStartY.current;
+    if (dy > 0) setPullY(Math.min(dy * 0.45, 96));
+  };
+  const onPullEnd = () => {
+    if (pullY > 64) void runRefresh();
+    else setPullY(0);
+    pullStartY.current = null;
+  };
+
   if (!userId && loading) {
     return (
       <div style={styles.brandedLoader}>
@@ -847,6 +880,12 @@ export default function Home({
 
   return (
     <div style={styles.page}>
+      {(isRefreshing || pullY > 8) && (
+        <div style={{ ...styles.pullRefresh, height: isRefreshing ? 72 : Math.max(pullY, 0), opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1) }}>
+          <img src="/ceo-auth-reference-transparent.png" alt="" style={{ ...styles.pullLogo, transform: isRefreshing ? "scale(1)" : `scale(${0.7 + Math.min(pullY / 64, 1) * 0.3})` }} />
+          {isRefreshing && <div style={styles.brandedSpinner} />}
+        </div>
+      )}
       <header style={styles.header}>
         <div style={styles.brand}>
           <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.logo} />
@@ -866,7 +905,13 @@ export default function Home({
 
       {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
 
-      <main style={styles.content}>
+      <main
+        ref={contentRef as React.RefObject<HTMLElement>}
+        style={styles.content}
+        onTouchStart={onPullStart}
+        onTouchMove={onPullMove}
+        onTouchEnd={onPullEnd}
+      >
         <section style={styles.balanceCard}>
           <div style={styles.balanceInfo}>
             <div style={styles.muted}>Estimated Balance</div>
@@ -978,18 +1023,46 @@ function NavItem({ icon, label, active, onClick }: { icon: string; label: string
 
 function Empty({ text }: { text: string }) { return <div style={styles.empty}>{text}</div>; }
 
-function ModalShell({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+function ModalShell({
+  title,
+  children,
+  onClose,
+  wide = false,
+  fullscreen = false,
+  showHandle = true,
+  onBack,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+  fullscreen?: boolean;
+  showHandle?: boolean;
+  onBack?: () => void;
+}) {
   return (
-    <div className="ceo-overlay" style={styles.overlay} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="ceo-sheet" style={{ ...styles.modal, ...(wide ? styles.modalWide : {}) }}>
-        <div style={styles.sheetHandle} />
-        <div style={styles.modalHeader}>
-          <h2>{title}</h2>
+    <div
+      className={fullscreen ? "ceo-overlay ceo-fullscreen-overlay" : "ceo-overlay"}
+      style={fullscreen ? styles.overlayFullscreen : styles.overlay}
+      onClick={(e) => { if (!fullscreen && e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className={fullscreen ? "ceo-fullscreen" : "ceo-sheet"}
+        style={fullscreen ? styles.modalFullscreen : { ...styles.modal, ...(wide ? styles.modalWide : {}) }}
+      >
+        {!fullscreen && showHandle && <div style={styles.sheetHandle} />}
+        <div style={fullscreen ? styles.fullscreenHeader : styles.modalHeader}>
+          {fullscreen && onBack ? (
+            <button type="button" style={styles.fullscreenBack} onClick={onBack} aria-label="Back">
+              <Icon name="arrowLeft" size={22} />
+            </button>
+          ) : <span style={{ width: fullscreen ? 40 : 0 }} />}
+          <h2 style={fullscreen ? styles.fullscreenTitle : undefined}>{title}</h2>
           <button style={styles.iconButton} onClick={onClose} aria-label="Close">
             <Icon name="close" size={22} />
           </button>
         </div>
-        {children}
+        <div style={fullscreen ? styles.fullscreenBody : undefined}>{children}</div>
       </div>
     </div>
   );
@@ -1025,6 +1098,7 @@ function DepositModal({
   const [buySubmitting, setBuySubmitting] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [provisionError, setProvisionError] = useState<string | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
   const [result, setResult] = useState<{
     payment_id?: string;
     pay_address?: string;
@@ -1121,25 +1195,46 @@ function DepositModal({
     else setStep("amount");
   };
 
+  const withTransition = (next: () => void) => {
+    setTransitioning(true);
+    window.setTimeout(() => {
+      next();
+      window.setTimeout(() => setTransitioning(false), 280);
+    }, 420);
+  };
+
   const chooseAsset = (symbol: string) => {
-    setAsset(symbol);
-    setNetwork(null);
-    setAmount("");
-    setBuyAmount("");
-    setResult(null);
-    setSearch("");
-    setStep("networks");
+    withTransition(() => {
+      setAsset(symbol);
+      setNetwork(null);
+      setAmount("");
+      setBuyAmount("");
+      setResult(null);
+      setSearch("");
+      setStep("networks");
+    });
   };
 
   const chooseNetwork = (n: Network) => {
-    setNetwork(n);
-    setAmount("");
-    setBuyAmount("");
-    setResult(null);
-    // Wallet-address deposits (and Buy Crypto, always) need no amount — go straight to
-    // the real address/QR screen instead of an amount step.
-    setStep(usesWalletAddressResult ? "result" : "amount");
+    withTransition(() => {
+      setNetwork(n);
+      setAmount("");
+      setBuyAmount("");
+      setResult(null);
+      // Wallet-address deposits (and Buy Crypto, always) need no amount — go straight to
+      // the real address/QR screen instead of an amount step.
+      setStep(usesWalletAddressResult ? "result" : "amount");
+    });
   };
+
+  const openCoins = (nextFlow: Flow) => {
+    withTransition(() => {
+      setFlow(nextFlow);
+      setStep("coins");
+    });
+  };
+
+  const isFullscreen = step !== "methods";
 
   const getAddress = async () => {
     if (!network || !amount || Number(amount) <= 0) return;
@@ -1178,21 +1273,28 @@ function DepositModal({
       title={step === "methods" ? "Select Payment Method" : step === "coins" ? "Select Coin" : step === "networks" ? "Choose a Chain Type" : step === "amount" ? `${asset}-Deposit` : `${asset}-${flow === "buy" ? "Buy" : "Deposit"}`}
       onClose={onClose}
       wide={step === "coins" || step === "networks"}
+      fullscreen={isFullscreen}
+      showHandle={!isFullscreen}
+      onBack={isFullscreen ? goBack : undefined}
     >
-      {step !== "methods" && (
-        <button type="button" style={styles.flowBack} onClick={goBack}>
-          <Icon name="arrowLeft" size={19} /> Back
-        </button>
+      {transitioning && (
+        <div style={styles.stepLoader}>
+          <div style={styles.brandedLogoWrap}>
+            <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.brandedLogo} />
+            <div style={styles.brandedPulse} />
+          </div>
+          <div style={styles.brandedSpinner} />
+        </div>
       )}
 
       {step === "methods" && (
         <>
-          <button type="button" style={styles.methodLarge} onClick={() => { setFlow("crypto"); setStep("coins"); }}>
+          <button type="button" style={styles.methodLarge} onClick={() => openCoins("crypto")}>
             <span style={styles.methodLargeIcon}><Icon name="download" size={23} /></span>
             <span style={styles.methodLargeText}><b>Deposit Crypto</b><small>{DEPOSIT_CRYPTO_PROVIDER === "transak" ? "Deposit crypto securely via Transak." : "Transfer crypto from your on-chain wallet or another exchange."}</small></span>
             <Icon name="arrow" size={21} />
           </button>
-          <button type="button" style={styles.methodLarge} onClick={() => { setFlow("buy"); setStep("coins"); }}>
+          <button type="button" style={styles.methodLarge} onClick={() => openCoins("buy")}>
             <span style={styles.methodLargeIcon}><Icon name="wallet" size={23} /></span>
             <span style={styles.methodLargeText}><b>Buy Crypto</b><small>Get your real wallet address to buy crypto on this network.</small></span>
             <Icon name="arrow" size={21} />
@@ -2251,6 +2353,92 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#3a3220",
     margin: "2px auto 12px",
   },
+  overlayFullscreen: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 60,
+    background: "#050505",
+    display: "flex",
+    flexDirection: "column",
+  },
+  modalFullscreen: {
+    width: "100%",
+    height: "100%",
+    maxHeight: "100%",
+    overflow: "hidden",
+    background: "#050505",
+    border: 0,
+    borderRadius: 0,
+    padding: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+  fullscreenHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: "12px 14px",
+    paddingTop: "calc(12px + env(safe-area-inset-top))",
+    borderBottom: "1px solid #1a1a1a",
+    flexShrink: 0,
+  },
+  fullscreenTitle: {
+    margin: 0,
+    fontSize: 17,
+    fontWeight: 700,
+    color: "#f5f5f5",
+    textAlign: "center",
+    flex: 1,
+  },
+  fullscreenBack: {
+    width: 40,
+    height: 40,
+    border: 0,
+    borderRadius: 12,
+    background: "transparent",
+    color: "#eee",
+    display: "grid",
+    placeItems: "center",
+    cursor: "pointer",
+  },
+  fullscreenBody: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "14px 14px calc(20px + env(safe-area-inset-bottom))",
+    WebkitOverflowScrolling: "touch",
+  },
+  stepLoader: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 20,
+    background: "rgba(5,5,5,0.96)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+  },
+  pullRefresh: {
+    position: "sticky",
+    top: 0,
+    zIndex: 30,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    overflow: "hidden",
+    transition: "height 0.15s ease-out",
+    background: "transparent",
+    pointerEvents: "none",
+  },
+  pullLogo: {
+    width: 36,
+    height: 36,
+    objectFit: "contain",
+    borderRadius: 10,
+  },
 };
 
 if (typeof document !== "undefined") {
@@ -2281,11 +2469,22 @@ if (typeof document !== "undefined") {
         from { transform: translateY(100%); opacity: 0.6; }
         to { transform: translateY(0); opacity: 1; }
       }
+      @keyframes ceoSlideIn {
+        from { transform: translateX(18%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
       .ceo-overlay {
         animation: ceoFadeIn 0.22s ease-out forwards;
       }
       .ceo-sheet {
         animation: ceoSheetUp 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      }
+      .ceo-fullscreen-overlay {
+        animation: ceoFadeIn 0.18s ease-out forwards;
+      }
+      .ceo-fullscreen {
+        animation: ceoSlideIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        position: relative;
       }
       @media (max-width: 420px) {
         body { overflow-x: hidden; }
