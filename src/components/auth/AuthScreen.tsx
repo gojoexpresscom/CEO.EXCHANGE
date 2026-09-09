@@ -27,6 +27,7 @@ type TurnstileAPI = {
     options: {
       sitekey: string;
       theme: "dark";
+      size?: "normal" | "compact" | "flexible";
       callback?: (token: string) => void;
       "expired-callback"?: () => void;
       "error-callback"?: () => void;
@@ -156,6 +157,7 @@ function Turnstile({ siteKey, onToken }: { siteKey?: string; onToken: (token: st
       widget.current = window.turnstile.render(host.current, {
         sitekey: siteKey,
         theme: "dark",
+        size: "compact",
         callback: onToken,
         "expired-callback": () => onToken(""),
         "error-callback": () => onToken(""),
@@ -659,12 +661,27 @@ export default function AuthScreen({ onAuth }: Props) {
   return (
     <main style={styles.page}>
       <div style={styles.glow} />
+      <div style={styles.bgBlur} />
+
+      {loading && (
+        <div style={styles.bootOverlay} aria-live="polite" aria-busy="true">
+          <div style={styles.bootLogoWrap}>
+            <img src="/ceo-auth-reference-transparent.png" alt="" style={styles.bootLogo} />
+            <div style={styles.bootPulse} />
+          </div>
+          <div style={styles.bootSpinner} />
+        </div>
+      )}
 
       <div style={styles.logoWrap}>
         <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.logo} />
       </div>
 
-      <section style={{ ...styles.card, ...(passwordScreen || screen === "create-recovery-password" ? styles.passwordCard : {}) }}>
+      <section
+        key={screen}
+        className="ceo-auth-card"
+        style={{ ...styles.card, ...(passwordScreen || screen === "create-recovery-password" ? styles.passwordCard : {}) }}
+      >
         {screen === "login" && (
           <form onSubmit={login}>
             <div style={styles.headerRow}>
@@ -1009,8 +1026,9 @@ export default function AuthScreen({ onAuth }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
-    padding: "22px 18px 34px",
-    background: "radial-gradient(circle at 50% 20%, rgba(245,181,27,.055), transparent 30%), #111111",
+    padding: "12px 14px calc(24px + env(safe-area-inset-bottom))",
+    paddingTop: "calc(12px + env(safe-area-inset-top))",
+    background: "radial-gradient(ellipse at 50% 0%, rgba(245,181,27,.08) 0%, transparent 42%), #0a0a0a",
     color: "#f5f5f5",
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     position: "relative",
@@ -1020,106 +1038,185 @@ const styles: Record<string, React.CSSProperties> = {
     position: "fixed",
     inset: 0,
     pointerEvents: "none",
-    background: "linear-gradient(180deg, rgba(255,255,255,.012), transparent 28%)",
+    background: "linear-gradient(180deg, rgba(255,255,255,.02), transparent 32%)",
+  },
+  bgBlur: {
+    position: "fixed",
+    top: "-10%",
+    left: "50%",
+    transform: "translateX(-50%)",
+    width: "120%",
+    height: "42%",
+    pointerEvents: "none",
+    background: "radial-gradient(circle, rgba(245,181,27,.12) 0%, transparent 70%)",
+    filter: "blur(40px)",
+    opacity: 0.7,
+  },
+  bootOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 80,
+    background: "rgba(8,8,8,.92)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+  },
+  bootLogoWrap: {
+    position: "relative",
+    width: 72,
+    height: 72,
+    display: "grid",
+    placeItems: "center",
+  },
+  bootLogo: {
+    width: 58,
+    height: 58,
+    objectFit: "contain",
+    position: "relative",
+    zIndex: 2,
+  },
+  bootPulse: {
+    position: "absolute",
+    inset: 0,
+    borderRadius: 20,
+    background: "radial-gradient(circle, rgba(245,181,27,.4) 0%, transparent 70%)",
+    animation: "ceoAuthPulse 1.5s ease-in-out infinite",
+  },
+  bootSpinner: {
+    width: 22,
+    height: 22,
+    borderRadius: "50%",
+    border: "2px solid #2a2110",
+    borderTopColor: GOLD,
+    animation: "ceoAuthSpin .85s linear infinite",
   },
   logoWrap: {
     width: "100%",
-    maxWidth: 500,
-    height: 300,
-    margin: "0 auto 0",
+    maxWidth: 420,
+    height: "auto",
+    margin: "4px auto 6px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
   },
   logo: {
-    width: "min(68vw, 330px)",
-    maxHeight: 300,
+    width: "min(46vw, 168px)",
+    maxHeight: 140,
     objectFit: "contain",
     display: "block",
     margin: "0 auto",
+    filter: "drop-shadow(0 8px 24px rgba(245,181,27,.18))",
   },
   card: {
     position: "relative",
     width: "100%",
-    maxWidth: 680,
+    maxWidth: 400,
     margin: "0 auto",
-    padding: "28px 28px 30px",
-    borderRadius: 26,
-    border: "1px solid rgba(245,181,27,.36)",
-    background: "#0c0c0c",
-    boxShadow: "0 -10px 45px rgba(0,0,0,.24)",
+    padding: "18px 16px 20px",
+    borderRadius: 22,
+    border: "1px solid rgba(245,181,27,.28)",
+    background: "rgba(12,12,12,.88)",
+    backdropFilter: "blur(18px)",
+    WebkitBackdropFilter: "blur(18px)",
+    boxShadow: "0 16px 48px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03)",
   },
-  passwordCard: { maxWidth: 620 },
+  passwordCard: { maxWidth: 400 },
   headerRow: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 16,
-    marginBottom: 18,
+    gap: 12,
+    marginBottom: 12,
   },
   title: {
     margin: 0,
-    fontSize: "clamp(28px, 6vw, 38px)",
-    lineHeight: 1.05,
+    fontSize: "clamp(22px, 5.5vw, 28px)",
+    lineHeight: 1.1,
     fontWeight: 800,
-    letterSpacing: "-.7px",
+    letterSpacing: "-.4px",
   },
   signupTitle: {
-    margin: "0 0 16px",
-    fontSize: "clamp(28px, 6vw, 36px)",
+    margin: "0 0 12px",
+    fontSize: "clamp(22px, 5.5vw, 28px)",
     lineHeight: 1.1,
     fontWeight: 800,
   },
-  subtitle: { margin: "7px 0 0", color: "#707070", fontSize: 14 },
-  centerTitle: { margin: "4px 0 10px", textAlign: "center", fontSize: "clamp(26px, 6vw, 34px)", fontWeight: 800 },
-  centerText: { margin: "7px 0", color: "#858585", fontSize: 14, lineHeight: 1.5, textAlign: "center" },
-  emailText: { margin: "9px 0", textAlign: "center", color: "#f5f5f5", fontSize: 15, overflowWrap: "anywhere" },
-  goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 15, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", padding: "6px 0" },
-  circleBack: { width: 40, height: 40, borderRadius: "50%", border: "1px solid #333", background: "#141414", color: "#eee", cursor: "pointer", fontSize: 20 },
-  label: { display: "block", margin: "2px 0 7px", fontSize: 12, fontWeight: 700, color: "#9a9a9a" },
-  field: { width: "100%", minHeight: 72, marginBottom: 11, padding: "0 16px", display: "flex", alignItems: "center", boxSizing: "border-box", borderRadius: 13, border: "1px solid #2c2c2c", background: "#17171b" },
-  icon: { width: 29, height: 29, flexShrink: 0, color: GOLD_LIGHT, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 10 },
-  input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 16, padding: "3px 0" },
-  eyeButton: { border: 0, background: "transparent", color: "#6c6c70", cursor: "pointer", padding: 5, display: "inline-flex" },
-  turnstile: { minHeight: 72, display: "flex", alignItems: "center", justifyContent: "center", margin: "3px 0 5px", overflow: "hidden" },
-  turnstileMissing: { minHeight: 56, display: "flex", alignItems: "center", justifyContent: "center", margin: "3px 0 9px", padding: "9px 12px", borderRadius: 12, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
-  forgot: { display: "block", margin: "0 2px 11px auto", border: 0, background: "transparent", color: "#b77c27", fontSize: 13, cursor: "pointer" },
-  primaryButton: { width: "100%", minHeight: 58, marginTop: 8, border: 0, borderRadius: 13, background: "linear-gradient(135deg, #ffbd22, #e99a00)", color: "#111", fontSize: 16, fontWeight: 850, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 9 },
-  outlineButton: { width: "100%", minHeight: 54, marginTop: 10, border: "1px solid #3a3a3d", borderRadius: 13, background: "#0c0c0c", color: "#eee", fontSize: 15, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
-  divider: { display: "flex", alignItems: "center", gap: 12, margin: "18px 0 8px", color: "#626266", fontSize: 12 },
-  socialButton: { width: "100%", minHeight: 50, marginTop: 9, border: "1px solid #27272b", borderRadius: 13, background: "#1b1b20", color: "#eee", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, fontWeight: 600 },
-  socialGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 },
-  globalRow: { display: "flex", alignItems: "center", gap: 9, color: "#8c8c8f", fontSize: 13, marginBottom: 17 },
-  referral: { width: "100%", padding: "5px 2px 11px", border: 0, background: "transparent", color: "#d8d8d8", fontSize: 13, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between" },
-  agreeRow: { display: "flex", alignItems: "flex-start", gap: 8, margin: "7px 0 11px", color: "#7f7f83", fontSize: 11, lineHeight: 1.5 },
-  checkbox: { width: 18, height: 18, marginTop: 1, accentColor: GOLD_LIGHT, flexShrink: 0 },
+  subtitle: { margin: "6px 0 0", color: "#707070", fontSize: 13 },
+  centerTitle: { margin: "4px 0 8px", textAlign: "center", fontSize: "clamp(22px, 5.5vw, 28px)", fontWeight: 800 },
+  centerText: { margin: "6px 0", color: "#858585", fontSize: 13, lineHeight: 1.45, textAlign: "center" },
+  emailText: { margin: "8px 0", textAlign: "center", color: "#f5f5f5", fontSize: 14, overflowWrap: "anywhere" },
+  goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", padding: "4px 0", fontWeight: 600 },
+  circleBack: { width: 36, height: 36, borderRadius: "50%", border: "1px solid #2e2e2e", background: "#141414", color: "#eee", cursor: "pointer", fontSize: 18, display: "grid", placeItems: "center", flexShrink: 0 },
+  label: { display: "block", margin: "2px 0 6px", fontSize: 12, fontWeight: 600, color: "#9a9a9a" },
+  field: { width: "100%", minHeight: 48, marginBottom: 10, padding: "0 12px", display: "flex", alignItems: "center", boxSizing: "border-box", borderRadius: 12, border: "1px solid #2a2a2a", background: "#16161a" },
+  icon: { width: 22, height: 22, flexShrink: 0, color: GOLD_LIGHT, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 8 },
+  input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 15, padding: "2px 0" },
+  eyeButton: { border: 0, background: "transparent", color: "#6c6c70", cursor: "pointer", padding: 4, display: "inline-flex" },
+  turnstile: {
+    minHeight: 65,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    margin: "4px 0 6px",
+    overflow: "hidden",
+    transform: "scale(0.92)",
+    transformOrigin: "center center",
+  },
+  turnstileMissing: { minHeight: 48, display: "flex", alignItems: "center", justifyContent: "center", margin: "4px 0 8px", padding: "8px 10px", borderRadius: 10, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
+  forgot: { display: "block", margin: "0 2px 10px auto", border: 0, background: "transparent", color: "#b77c27", fontSize: 13, cursor: "pointer", fontWeight: 500 },
+  primaryButton: { width: "100%", minHeight: 50, marginTop: 6, border: 0, borderRadius: 12, background: "linear-gradient(180deg, #ffc12e 0%, #e89a00 100%)", color: "#111", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 6px 18px rgba(232,154,0,.22)" },
+  outlineButton: { width: "100%", minHeight: 48, marginTop: 8, border: "1px solid #3a3a3d", borderRadius: 12, background: "#0c0c0c", color: "#eee", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
+  divider: { display: "flex", alignItems: "center", gap: 10, margin: "14px 0 6px", color: "#626266", fontSize: 12 },
+  socialButton: { width: "100%", minHeight: 44, marginTop: 0, border: "1px solid #27272b", borderRadius: 12, background: "#1a1a1f", color: "#eee", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 600 },
+  socialGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 8 },
+  globalRow: { display: "flex", alignItems: "center", gap: 8, color: "#8c8c8f", fontSize: 12, marginBottom: 12 },
+  referral: { width: "100%", padding: "4px 2px 10px", border: 0, background: "transparent", color: "#d8d8d8", fontSize: 13, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between" },
+  agreeRow: { display: "flex", alignItems: "flex-start", gap: 8, margin: "6px 0 10px", color: "#7f7f83", fontSize: 11, lineHeight: 1.45 },
+  checkbox: { width: 16, height: 16, marginTop: 1, accentColor: GOLD_LIGHT, flexShrink: 0 },
   inlineLink: { padding: 0, border: 0, background: "transparent", color: GOLD_LIGHT, cursor: "pointer", fontSize: "inherit", textDecoration: "underline" },
-  otpRow: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 7, margin: "20px 0 13px" },
-  otpBox: { width: "100%", minWidth: 0, height: 56, border: "1px solid #343438", borderRadius: 11, background: "#17171b", color: "#fff", textAlign: "center", fontSize: 22, fontWeight: 800, outline: "none" },
+  otpRow: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, margin: "16px 0 12px" },
+  otpBox: { width: "100%", minWidth: 0, height: 48, border: "1px solid #343438", borderRadius: 10, background: "#17171b", color: "#fff", textAlign: "center", fontSize: 18, fontWeight: 800, outline: "none" },
   resend: { display: "block", margin: "0 auto 8px", border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 12, fontWeight: 700, cursor: "pointer" },
-  rules: { display: "grid", gap: 6, margin: "6px 0 14px", padding: "10px 12px", borderRadius: 12, background: "#111113", border: "1px solid #27272a" },
+  rules: { display: "grid", gap: 5, margin: "6px 0 12px", padding: "10px 12px", borderRadius: 12, background: "#111113", border: "1px solid #27272a" },
   rule: { display: "flex", alignItems: "center", gap: 8, color: "#99999d", fontSize: 11 },
   confirmHint: { fontSize: 11, margin: "5px 0 8px", textAlign: "center" },
-  error: { marginTop: 11, padding: "10px 12px", borderRadius: 11, background: "rgba(255,70,70,.08)", border: "1px solid rgba(255,70,70,.26)", color: "#ff9d9d", fontSize: 11, lineHeight: 1.4 },
-  message: { marginTop: 11, padding: "10px 12px", borderRadius: 11, background: "rgba(245,181,27,.06)", border: "1px solid rgba(245,181,27,.22)", color: "#e7bd58", fontSize: 11, lineHeight: 1.4 },
-  legalWrap: { width: "100%", maxWidth: 900, margin: "0 auto" },
+  error: { marginTop: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(255,70,70,.08)", border: "1px solid rgba(255,70,70,.26)", color: "#ff9d9d", fontSize: 12, lineHeight: 1.4 },
+  message: { marginTop: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(245,181,27,.06)", border: "1px solid rgba(245,181,27,.22)", color: "#e7bd58", fontSize: 12, lineHeight: 1.4 },
+  legalWrap: { width: "100%", maxWidth: 520, margin: "0 auto", padding: "8px 4px" },
 };
 
 if (typeof document !== "undefined") {
   const id = "ceo-auth-inline-style";
-  if (!document.getElementById(id)) {
-    const style = document.createElement("style");
+  let style = document.getElementById(id) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement("style");
     style.id = id;
-    style.textContent = `
-      * { box-sizing: border-box; }
-      button { touch-action: manipulation; }
-      button:disabled { opacity: .48; cursor: not-allowed; }
-      input::placeholder { color: #68686d; }
-      input, button { -webkit-tap-highlight-color: transparent; }
-      @media (max-width: 520px) {
-        body { overflow-x: hidden; }
-      }
-    `;
     document.head.appendChild(style);
   }
+  style.textContent = `
+    * { box-sizing: border-box; }
+    button { touch-action: manipulation; }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    input::placeholder { color: #68686d; }
+    input, button { -webkit-tap-highlight-color: transparent; }
+    @keyframes ceoAuthSpin { to { transform: rotate(360deg); } }
+    @keyframes ceoAuthPulse {
+      0%, 100% { transform: scale(0.9); opacity: 0.5; }
+      50% { transform: scale(1.15); opacity: 1; }
+    }
+    @keyframes ceoAuthCardIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .ceo-auth-card {
+      animation: ceoAuthCardIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    @media (max-width: 420px) {
+      body { overflow-x: hidden; }
+    }
+  `;
 }
