@@ -684,12 +684,9 @@ export default function AuthScreen({ onAuth }: Props) {
       >
         {screen === "login" && (
           <form onSubmit={login}>
-            <div style={styles.headerRow}>
-              <div>
-                <h1 style={styles.title}>{title.login}</h1>
-                <p style={styles.subtitle}>Sign in to continue to CEO Exchange</p>
-              </div>
-              <button type="button" style={styles.goldLink} onClick={goSignup}>Sign Up <Arrow /></button>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title.login}</h1>
+              <p style={styles.subtitle}>Sign in to continue to CEO Exchange</p>
             </div>
 
             <label style={styles.label}>Email / Mobile Number</label>
@@ -723,19 +720,15 @@ export default function AuthScreen({ onAuth }: Props) {
 
             <Turnstile siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
 
-            <button type="button" style={styles.forgot} onClick={() => { clearNotice(); setScreen("forgot"); }}>
-              Forgot Password?
-            </button>
-
             <button type="submit" style={styles.primaryButton} disabled={loading}>
               {loading ? "Signing in…" : "Login Now"} <Arrow />
             </button>
-          </form>
-        )}
 
-        {screen === "login" && (
-          <>
-            <div style={styles.divider}><span style={styles.dividerLine} /><span style={styles.dividerText}>Or continue with</span><span style={styles.dividerLine} /></div>
+            <div style={styles.divider}>
+              <span style={styles.dividerLine} />
+              <span style={styles.dividerText}>Or continue with</span>
+              <span style={styles.dividerLine} />
+            </div>
 
             <div style={styles.socialGrid}>
               <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}>
@@ -745,18 +738,23 @@ export default function AuthScreen({ onAuth }: Props) {
                 <XIcon /> X
               </button>
             </div>
-          </>
+
+            <button type="button" style={styles.forgotBottom} onClick={() => { clearNotice(); setScreen("forgot"); }}>
+              Forgot Password? <Arrow />
+            </button>
+
+            <button type="button" style={styles.signupHint} onClick={goSignup}>
+              Don&apos;t have an account? <span style={styles.goldInline}>Sign Up</span>
+            </button>
+          </form>
         )}
 
         {screen === "signup" && (
           <>
-            <div style={styles.headerRow}>
-              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
-              <button type="button" style={styles.goldLink} onClick={goLogin}>Login Now</button>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title.signup}</h1>
+              <p style={styles.subtitle}>Create your CEO Exchange account</p>
             </div>
-
-            <h1 style={styles.signupTitle}>{title.signup}</h1>
-            <div style={styles.globalRow}><span style={{ fontSize: 22 }}>◎</span><span>CEO Exchange Global</span><span style={{ marginLeft: "auto" }}>↔</span></div>
 
             <label style={styles.label}>Email / Mobile Number</label>
             <div style={styles.field}>
@@ -797,23 +795,32 @@ export default function AuthScreen({ onAuth }: Props) {
               {loading ? "Creating…" : "Create Account"} <Arrow />
             </button>
 
-            <div style={styles.divider}><span style={styles.dividerLine} /><span style={styles.dividerText}>OR</span><span style={styles.dividerLine} /></div>
+            <div style={styles.divider}>
+              <span style={styles.dividerLine} />
+              <span style={styles.dividerText}>Or continue with</span>
+              <span style={styles.dividerLine} />
+            </div>
             <div style={styles.socialGrid}>
               <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}><GoogleIcon /> Google</button>
-              <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}><XIcon /> X (Twitter)</button>
+              <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}><XIcon /> X</button>
             </div>
+
+            <button type="button" style={styles.forgotBottom} onClick={goLogin}>
+              Already have an account? <span style={styles.goldInline}>Login Now</span>
+            </button>
           </>
         )}
 
         {screen === "verify-signup" && (
           <>
-            <div style={styles.headerRow}>
-              <button type="button" style={styles.circleBack} onClick={() => setScreen("signup")} aria-label="Back"><Arrow left /></button>
+            <button type="button" style={styles.backText} onClick={() => setScreen("signup")} aria-label="Back">
+              <Arrow left /> Back
+            </button>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title["verify-signup"]}</h1>
+              <p style={styles.subtitle}>A 6-digit code was sent to</p>
+              <p style={styles.emailText}>{signupMethod === "phone" ? sessionStorage.getItem("ceo_exchange_signup_identifier") || identifier : email || identifier}</p>
             </div>
-            <h1 style={styles.centerTitle}>{title["verify-signup"]}</h1>
-            <p style={styles.centerText}>A 6-digit verification code has been sent to:</p>
-            <p style={styles.emailText}>{signupMethod === "phone" ? sessionStorage.getItem("ceo_exchange_signup_identifier") || identifier : email || identifier}</p>
-            <p style={styles.centerText}>Enter the code from your email or SMS.</p>
             <div style={styles.otpRow}>
               {Array.from({ length: 6 }).map((_, index) => (
                 <input key={index} id={`ceo-otp-${index}`} value={otp[index] || ""} maxLength={1} inputMode="numeric"
@@ -834,13 +841,14 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {screen === "recovery-verify" && (
           <>
-            <div style={styles.headerRow}>
-              <button type="button" style={styles.circleBack} onClick={() => setScreen("forgot")} aria-label="Back"><Arrow left /></button>
+            <button type="button" style={styles.backText} onClick={() => setScreen("forgot")} aria-label="Back">
+              <Arrow left /> Back
+            </button>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title["recovery-verify"]}</h1>
+              <p style={styles.subtitle}>A 6-digit code was sent to</p>
+              <p style={styles.emailText}>{email}</p>
             </div>
-            <h1 style={styles.centerTitle}>{title["recovery-verify"]}</h1>
-            <p style={styles.centerText}>A 6-digit verification code has been sent to:</p>
-            <p style={styles.emailText}>{email}</p>
-            <p style={styles.centerText}>Enter the code to continue resetting your password.</p>
             <div style={styles.otpRow}>
               {Array.from({ length: 6 }).map((_, index) => (
                 <input key={index} id={`ceo-otp-${index}`} value={otp[index] || ""} maxLength={1} inputMode="numeric"
@@ -862,22 +870,23 @@ export default function AuthScreen({ onAuth }: Props) {
         {screen === "password-reset-success" && (
           <>
             <div style={styles.successIcon} aria-hidden="true">✓</div>
-            <h1 style={styles.centerTitle}>{title["password-reset-success"]}</h1>
-            <p style={styles.centerText}>Your password has been changed successfully. You can now log in with your new password.</p>
+            <div style={styles.loginHead}>
+              <h1 style={{ ...styles.title, textAlign: "center" }}>{title["password-reset-success"]}</h1>
+              <p style={{ ...styles.subtitle, textAlign: "center" }}>Your password has been changed. You can log in with your new password.</p>
+            </div>
             <button type="button" style={styles.primaryButton} onClick={goLogin}>Back to Login <Arrow /></button>
           </>
         )}
 
         {screen === "create-recovery-password" && (
           <>
-            <div style={styles.headerRow}>
-              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login">
-                <Arrow left />
-              </button>
+            <button type="button" style={styles.backText} onClick={goLogin} aria-label="Back to login">
+              <Arrow left /> Back
+            </button>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title["create-recovery-password"]}</h1>
+              <p style={styles.subtitle}>Create a strong new password. This replaces your old password.</p>
             </div>
-
-            <h1 style={styles.centerTitle}>{title["create-recovery-password"]}</h1>
-            <p style={styles.centerText}>Create a strong new password. This replaces your old password completely.</p>
 
             <label style={styles.label}>New Password</label>
             <div style={styles.field}>
@@ -927,31 +936,31 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {passwordScreen && (
           <>
-            <div style={styles.headerRow}>
-              <button
-                type="button"
-                style={styles.circleBack}
-                onClick={() => setScreen(
-                  passwordConfirmScreen
-                    ? screen === "confirm-signup-password"
-                      ? "create-signup-password"
-                      : "oauth-password"
-                    : passwordKind === "signup"
-                      ? "verify-signup"
-                      : "login",
-                )}
-                aria-label="Back"
-              >
-                <Arrow left />
-              </button>
-            </div>
+            <button
+              type="button"
+              style={styles.backText}
+              onClick={() => setScreen(
+                passwordConfirmScreen
+                  ? screen === "confirm-signup-password"
+                    ? "create-signup-password"
+                    : "oauth-password"
+                  : passwordKind === "signup"
+                    ? "verify-signup"
+                    : "login",
+              )}
+              aria-label="Back"
+            >
+              <Arrow left /> Back
+            </button>
 
-            <h1 style={styles.centerTitle}>{title[screen]}</h1>
-            <p style={styles.centerText}>
-              {passwordCreateScreen
-                ? "Create a strong password. Your password is stored securely by Supabase Auth."
-                : "Enter the same password again to confirm it."}
-            </p>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title[screen]}</h1>
+              <p style={styles.subtitle}>
+                {passwordCreateScreen
+                  ? "Create a strong password. Stored securely by Supabase Auth."
+                  : "Enter the same password again to confirm."}
+              </p>
+            </div>
 
             <div style={styles.field}>
               <span style={styles.icon}><LockIcon /></span>
@@ -1000,11 +1009,13 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {screen === "forgot" && (
           <form onSubmit={forgotStart}>
-            <div style={styles.headerRow}>
-              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
+            <button type="button" style={styles.backText} onClick={goLogin} aria-label="Back to login">
+              <Arrow left /> Back
+            </button>
+            <div style={styles.loginHead}>
+              <h1 style={styles.title}>{title.forgot}</h1>
+              <p style={styles.subtitle}>Enter your email and we’ll send a 6-digit code to reset your password.</p>
             </div>
-            <h1 style={styles.centerTitle}>{title.forgot}</h1>
-            <p style={styles.centerText}>Enter your email and we’ll send a 6-digit code to reset your password.</p>
             <label style={styles.label}>Email</label>
             <div style={styles.field}>
               <span style={styles.icon}><MailIcon /></span>
@@ -1103,35 +1114,36 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     maxWidth: 440,
     height: "auto",
-    margin: "0 auto 18px",
+    margin: "0 auto 28px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   logo: {
-    width: "min(62vw, 250px)",
-    maxHeight: 210,
+    width: "min(58vw, 240px)",
+    maxHeight: 200,
     objectFit: "contain",
     display: "block",
     margin: "0 auto",
-    filter: "drop-shadow(0 12px 32px rgba(245,181,27,.25))",
+    filter: "drop-shadow(0 16px 40px rgba(245,181,27,.28))",
   },
   card: {
     position: "relative",
     width: "100%",
     maxWidth: 400,
     margin: "0 auto",
-    padding: "22px 18px 24px",
-    borderRadius: 22,
-    border: "1px solid rgba(245,181,27,.34)",
-    background: "rgba(10,10,10,.94)",
-    backdropFilter: "blur(22px)",
-    WebkitBackdropFilter: "blur(22px)",
-    boxShadow: "0 20px 56px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04)",
+    padding: "4px 4px 8px",
+    borderRadius: 0,
+    border: "none",
+    background: "transparent",
+    boxShadow: "none",
     flexShrink: 0,
   },
   passwordCard: { maxWidth: 400 },
+  loginHead: {
+    marginBottom: 22,
+  },
   headerRow: {
     display: "flex",
     alignItems: "flex-start",
@@ -1141,46 +1153,130 @@ const styles: Record<string, React.CSSProperties> = {
   },
   title: {
     margin: 0,
-    fontSize: "clamp(24px, 6vw, 30px)",
+    fontSize: "clamp(28px, 7vw, 34px)",
     lineHeight: 1.1,
     fontWeight: 800,
-    letterSpacing: "-.5px",
+    letterSpacing: "-.6px",
+    color: "#fff",
   },
   signupTitle: {
     margin: "0 0 14px",
-    fontSize: "clamp(24px, 6vw, 30px)",
+    fontSize: "clamp(26px, 6.5vw, 32px)",
     lineHeight: 1.1,
     fontWeight: 800,
   },
-  subtitle: { margin: "6px 0 0", color: "#707070", fontSize: 13 },
-  centerTitle: { margin: "4px 0 8px", textAlign: "center", fontSize: "clamp(24px, 6vw, 30px)", fontWeight: 800 },
+  subtitle: { margin: "8px 0 0", color: "#8a8a8a", fontSize: 14 },
+  centerTitle: { margin: "4px 0 8px", textAlign: "center", fontSize: "clamp(26px, 6.5vw, 32px)", fontWeight: 800 },
   centerText: { margin: "6px 0 4px", color: "#858585", fontSize: 13, lineHeight: 1.45, textAlign: "center" },
   emailText: { margin: "8px 0", textAlign: "center", color: "#f5f5f5", fontSize: 14, overflowWrap: "anywhere" },
   goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", padding: "4px 0", fontWeight: 600 },
+  goldInline: { color: GOLD_LIGHT, fontWeight: 700 },
   circleBack: { width: 38, height: 38, borderRadius: "50%", border: "1px solid #2e2e2e", background: "#141414", color: "#eee", cursor: "pointer", fontSize: 18, display: "grid", placeItems: "center", flexShrink: 0 },
-  label: { display: "block", margin: "2px 0 7px", fontSize: 12, fontWeight: 600, color: "#9a9a9a" },
-  field: { width: "100%", minHeight: 54, marginBottom: 12, padding: "0 14px", display: "flex", alignItems: "center", boxSizing: "border-box", borderRadius: 14, border: "1px solid #2c2c2c", background: "#17171b" },
-  icon: { width: 24, height: 24, flexShrink: 0, color: GOLD_LIGHT, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  label: { display: "block", margin: "2px 0 8px", fontSize: 13, fontWeight: 500, color: "#9a9a9a" },
+  field: { width: "100%", minHeight: 56, marginBottom: 16, padding: "0 16px", display: "flex", alignItems: "center", boxSizing: "border-box", borderRadius: 16, border: "1px solid #2a2a2a", background: "#141418" },
+  icon: { width: 22, height: 22, flexShrink: 0, color: GOLD, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 12 },
   input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 15, padding: "2px 0" },
   eyeButton: { border: 0, background: "transparent", color: "#6c6c70", cursor: "pointer", padding: 4, display: "inline-flex" },
   turnstile: {
     width: "100%",
-    minHeight: 68,
+    minHeight: 65,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    margin: "6px 0 10px",
+    margin: "2px 0 18px",
     overflow: "hidden",
   },
-  turnstileMissing: { minHeight: 52, display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0 8px", padding: "10px 12px", borderRadius: 12, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
+  turnstileMissing: { minHeight: 52, display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0 12px", padding: "10px 12px", borderRadius: 14, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
   forgot: { display: "block", margin: "0 2px 12px auto", border: 0, background: "transparent", color: "#b77c27", fontSize: 13, cursor: "pointer", fontWeight: 500 },
-  primaryButton: { width: "100%", minHeight: 54, marginTop: 4, border: 0, borderRadius: 14, background: "linear-gradient(180deg, #ffc12e 0%, #e89a00 100%)", color: "#111", fontSize: 16, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 8px 24px rgba(232,154,0,.3)" },
+  forgotBottom: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    width: "100%",
+    marginTop: 20,
+    border: 0,
+    background: "transparent",
+    color: "#8a8a8a",
+    fontSize: 13,
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  backText: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    border: 0,
+    background: "transparent",
+    color: "#9a9a9a",
+    fontSize: 14,
+    cursor: "pointer",
+    fontWeight: 500,
+    padding: "0 0 12px",
+    marginBottom: 4,
+  },
+  successIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: "50%",
+    margin: "0 auto 16px",
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(34, 197, 94, 0.12)",
+    border: "1px solid rgba(34, 197, 94, 0.35)",
+    color: "#4ade80",
+    fontSize: 28,
+    fontWeight: 800,
+  },
+  signupHint: {
+    display: "block",
+    width: "100%",
+    marginTop: 14,
+    border: 0,
+    background: "transparent",
+    color: "#8a8a8a",
+    fontSize: 13,
+    cursor: "pointer",
+    textAlign: "center",
+  },
+  primaryButton: {
+    width: "100%",
+    minHeight: 56,
+    marginTop: 2,
+    border: 0,
+    borderRadius: 999,
+    background: "linear-gradient(180deg, #ffc94a 0%, #e89a00 100%)",
+    color: "#111",
+    fontSize: 16,
+    fontWeight: 800,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    boxShadow: "0 0 28px rgba(232,154,0,.35), 0 8px 20px rgba(0,0,0,.25)",
+  },
   outlineButton: { width: "100%", minHeight: 50, marginTop: 8, border: "1px solid #3a3a3d", borderRadius: 14, background: "#0c0c0c", color: "#eee", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
-  divider: { display: "flex", alignItems: "center", gap: 12, margin: "18px 0 12px", width: "100%" },
+  divider: { display: "flex", alignItems: "center", gap: 14, margin: "22px 0 14px", width: "100%" },
   dividerLine: { flex: 1, height: 1, background: "#2a2a2a", borderRadius: 1 },
-  dividerText: { color: "#7a7a7a", fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 },
-  socialButton: { width: "100%", minHeight: 48, marginTop: 0, border: "1px solid #27272b", borderRadius: 14, background: "#1a1a1f", color: "#eee", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 600 },
-  socialGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 },
+  dividerText: { color: "#6e6e6e", fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 },
+  socialButton: {
+    width: "100%",
+    minHeight: 50,
+    marginTop: 0,
+    border: "1px solid #2a2a2a",
+    borderRadius: 999,
+    background: "#16161a",
+    color: "#eee",
+    fontSize: 14,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    fontWeight: 600,
+  },
+  socialGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 12 },
   globalRow: { display: "flex", alignItems: "center", gap: 8, color: "#8c8c8f", fontSize: 12, marginBottom: 12 },
   referral: { width: "100%", padding: "4px 2px 10px", border: 0, background: "transparent", color: "#d8d8d8", fontSize: 13, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between" },
   agreeRow: { display: "flex", alignItems: "flex-start", gap: 8, margin: "6px 0 10px", color: "#7f7f83", fontSize: 11, lineHeight: 1.45 },
