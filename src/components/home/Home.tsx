@@ -831,7 +831,18 @@ export default function Home({
 
   const referralLink = referral?.referral_code ? `${window.location.origin}/?ref=${encodeURIComponent(referral.referral_code)}` : "";
 
-  if (!userId && loading) return <div style={styles.center}><div style={styles.spinner} /><span>Loading CEO Exchange…</span></div>;
+  if (!userId && loading) {
+    return (
+      <div style={styles.brandedLoader}>
+        <div style={styles.brandedLogoWrap}>
+          <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.brandedLogo} />
+          <div style={styles.brandedPulse} />
+        </div>
+        <div style={styles.brandedSpinner} />
+        <span style={styles.brandedLoaderText}>Loading CEO Exchange…</span>
+      </div>
+    );
+  }
   if (!userId) return <div style={styles.center}>Please sign in to continue.</div>;
 
   return (
@@ -968,7 +979,20 @@ function NavItem({ icon, label, active, onClick }: { icon: string; label: string
 function Empty({ text }: { text: string }) { return <div style={styles.empty}>{text}</div>; }
 
 function ModalShell({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div style={styles.overlay}><div style={{ ...styles.modal, ...(wide ? styles.modalWide : {}) }}><div style={styles.modalHeader}><h2>{title}</h2><button style={styles.iconButton} onClick={onClose}><Icon name="close" size={22} /></button></div>{children}</div></div>;
+  return (
+    <div className="ceo-overlay" style={styles.overlay} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="ceo-sheet" style={{ ...styles.modal, ...(wide ? styles.modalWide : {}) }}>
+        <div style={styles.sheetHandle} />
+        <div style={styles.modalHeader}>
+          <h2>{title}</h2>
+          <button style={styles.iconButton} onClick={onClose} aria-label="Close">
+            <Icon name="close" size={22} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 function DepositModal({
@@ -2034,8 +2058,8 @@ const styles: Record<string, React.CSSProperties> = {
   announcementBody: { margin: 0, color: "#bbb", lineHeight: 1.5, whiteSpace: "pre-wrap" },
   bottomNav: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: 78, display: "grid", gridTemplateColumns: "repeat(5,1fr)", background: "rgba(9,9,9,.98)", borderTop: "1px solid #202020", paddingBottom: "env(safe-area-inset-bottom)" },
   navItem: { border: 0, background: "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 10, cursor: "pointer" },
-  overlay: { position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.78)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0 },
-  modal: { width: "min(620px,100%)", maxHeight: "90vh", overflowY: "auto", background: "#0b0b0b", border: "1px solid #2a2110", borderRadius: "20px 20px 0 0", padding: "16px 14px calc(18px + env(safe-area-inset-bottom))", boxShadow: "0 -20px 60px rgba(0,0,0,.6)" },
+  overlay: { position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.72)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0, backdropFilter: "blur(6px)" },
+  modal: { width: "min(620px,100%)", maxHeight: "92vh", overflowY: "auto", background: "#0b0b0b", border: "1px solid #2a2110", borderRadius: "22px 22px 0 0", padding: "8px 14px calc(20px + env(safe-area-inset-bottom))", boxShadow: "0 -24px 80px rgba(0,0,0,.65)", willChange: "transform" },
   modalWide: { width: "min(880px,100%)" },
   modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 },
   "modalHeader h2": { margin: 0, fontSize: 19 },
@@ -2173,6 +2197,60 @@ const styles: Record<string, React.CSSProperties> = {
   toast: { position: "fixed", left: "50%", bottom: 94, transform: "translateX(-50%)", zIndex: 100, width: "min(92%,520px)", background: "#171717", border: "1px solid #5e4511", color: "#eee", borderRadius: 12, padding: "12px 14px", boxShadow: "0 12px 30px rgba(0,0,0,.5)", fontSize: 13 },
   center: { minHeight: "100vh", background: BG, color: "#aaa", display: "grid", placeItems: "center", gap: 10 },
   spinner: { width: 28, height: 28, borderRadius: "50%", border: "3px solid #333", borderTopColor: GOLD, animation: "spin 1s linear infinite" },
+  brandedLoader: {
+    minHeight: "100vh",
+    background: BG,
+    color: GOLD_LIGHT,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+  },
+  brandedLogoWrap: {
+    position: "relative",
+    width: 88,
+    height: 88,
+    display: "grid",
+    placeItems: "center",
+  },
+  brandedLogo: {
+    width: 72,
+    height: 72,
+    objectFit: "contain",
+    borderRadius: 18,
+    position: "relative",
+    zIndex: 2,
+  },
+  brandedPulse: {
+    position: "absolute",
+    inset: 0,
+    borderRadius: 22,
+    background: "radial-gradient(circle, rgba(245,181,27,0.35) 0%, transparent 70%)",
+    animation: "ceoPulse 1.6s ease-in-out infinite",
+  },
+  brandedSpinner: {
+    width: 26,
+    height: 26,
+    borderRadius: "50%",
+    border: "2.5px solid #2a2110",
+    borderTopColor: GOLD,
+    animation: "spin 0.85s linear infinite",
+  },
+  brandedLoaderText: {
+    fontSize: 14,
+    fontWeight: 600,
+    letterSpacing: "0.02em",
+    color: "#c9a227",
+  },
+  sheetHandle: {
+    width: 42,
+    height: 4,
+    borderRadius: 99,
+    background: "#3a3220",
+    margin: "2px auto 12px",
+  },
 };
 
 if (typeof document !== "undefined") {
@@ -2188,6 +2266,27 @@ if (typeof document !== "undefined") {
       input::placeholder, textarea::placeholder { color: #68686d; opacity: 1; }
       select option { background: #101010; color: #fff; }
       button:disabled { opacity: .5; cursor: not-allowed; }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes ceoPulse {
+        0%, 100% { transform: scale(0.92); opacity: 0.55; }
+        50% { transform: scale(1.12); opacity: 1; }
+      }
+      @keyframes ceoFadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes ceoSheetUp {
+        from { transform: translateY(100%); opacity: 0.6; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      .ceo-overlay {
+        animation: ceoFadeIn 0.22s ease-out forwards;
+      }
+      .ceo-sheet {
+        animation: ceoSheetUp 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      }
       @media (max-width: 420px) {
         body { overflow-x: hidden; }
       }
