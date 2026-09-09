@@ -576,20 +576,24 @@ export default function Home({
   }, 0), [marketMap, wallets]);
 
   const filteredMarkets = useMemo(() => {
-    const featured = ["BTC/USDT", "ETH/USDT", "SOL/USDT"];
+    const featured = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
     const normalize = (symbol: string) => symbol.replace(/[^a-z0-9]/gi, "").toUpperCase();
     const featuredRank = new Map(featured.map((s, i) => [normalize(s), i]));
-    let list = [...markets];
+    // Only markets that actually have a last price (enabled / live data)
+    let list = markets.filter((m) => m.last_price != null && Number(m.last_price) > 0);
 
     if (marketTab === "Favorites") {
       list = list.filter((m) => favoriteSymbols.includes(m.symbol));
     } else if (marketTab === "Gainers") {
+      list = list.filter((m) => Number(m.change_24h ?? 0) > 0);
       list.sort((a, b) => Number(b.change_24h ?? -Infinity) - Number(a.change_24h ?? -Infinity));
     } else if (marketTab === "Losers") {
+      list = list.filter((m) => Number(m.change_24h ?? 0) < 0);
       list.sort((a, b) => Number(a.change_24h ?? Infinity) - Number(b.change_24h ?? Infinity));
     } else if (marketTab === "New") {
       list.sort((a, b) => new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime());
     } else {
+      // Hot: volume-weighted with featured pairs first
       list.sort((a, b) => {
         const ar = featuredRank.get(normalize(a.symbol));
         const br = featuredRank.get(normalize(b.symbol));
@@ -605,7 +609,7 @@ export default function Home({
       list = list.filter((m) => `${m.symbol} ${m.base_asset} ${m.quote_asset}`.toLowerCase().includes(q));
     }
 
-    return showAllMarkets ? list : list.slice(0, 3);
+    return showAllMarkets ? list : list.slice(0, 8);
   }, [favoriteSymbols, marketTab, markets, search, showAllMarkets]);
 
   const filteredPosts = useMemo(() => {
@@ -838,13 +842,15 @@ export default function Home({
   const runRefresh = useCallback(async () => {
     if (!userId || isRefreshing) return;
     setIsRefreshing(true);
+    const started = Date.now();
     try {
       await loadAll(userId);
     } finally {
+      const wait = Math.max(0, 3000 - (Date.now() - started));
       window.setTimeout(() => {
         setIsRefreshing(false);
         setPullY(0);
-      }, 700);
+      }, wait);
     }
   }, [userId, isRefreshing, loadAll]);
 
@@ -887,19 +893,18 @@ export default function Home({
         </div>
       )}
       <header style={styles.header}>
-        <div style={styles.brand}>
-          <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.logo} />
-          <div style={styles.brandName}>{profile?.nickname || "CEO"}</div>
-        </div>
+        <button type="button" style={styles.profileBtn} onClick={() => setModal("menu")} aria-label="Profile">
+          <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
+        </button>
         <div style={styles.topSearch}>
-          <Icon name="search" size={20} />
-          <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search CEO Exchange" />
-          {search && <button style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={18} /></button>}
+          <Icon name="search" size={18} />
+          <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="" aria-label="Search markets" />
+          {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={16} /></button>}
         </div>
         <div style={styles.headerActions}>
-          <button style={styles.iconSquare} onClick={() => setModal("support")} aria-label="Support"><Icon name="headset" size={25} /></button>
-          <button style={styles.iconSquare} onClick={() => setModal("notifications")} aria-label="Notifications"><Icon name="bell" size={25} />{unreadTotal > 0 && <span style={styles.badge}>{unreadTotal > 99 ? "99+" : unreadTotal}</span>}</button>
-          <button style={styles.iconSquare} onClick={() => setModal("menu")} aria-label="Menu"><Icon name="menu" size={27} /></button>
+          <button type="button" style={styles.iconRound} onClick={() => setModal("support")} aria-label="Support"><Icon name="headset" size={22} /></button>
+          <button type="button" style={styles.iconRound} onClick={() => setModal("notifications")} aria-label="Notifications"><Icon name="bell" size={22} />{unreadTotal > 0 && <span style={styles.badge}>{unreadTotal > 99 ? "99+" : unreadTotal}</span>}</button>
+          <button type="button" style={styles.iconRound} onClick={() => setModal("menu")} aria-label="Menu"><Icon name="menu" size={22} /></button>
         </div>
       </header>
 
@@ -913,39 +918,60 @@ export default function Home({
         onTouchEnd={onPullEnd}
       >
         <section style={styles.balanceCard}>
-          <div style={styles.balanceInfo}>
-            <div style={styles.muted}>Estimated Balance</div>
-            <div style={styles.balanceLine}>
-              <strong>{showBalance ? `$${formatMoney(totalUsd)}` : "••••"}</strong>
-              <button style={styles.eyeButton} onClick={() => setShowBalance((x) => !x)} aria-label={showBalance ? "Hide balance" : "Show balance"}><Icon name={showBalance ? "eye" : "eyeOff"} size={23} /></button>
+          <div style={styles.balanceTop}>
+            <div>
+              <div style={styles.totalAssetsLabel}>
+                Total Assets
+                <button type="button" style={styles.eyeButton} onClick={() => setShowBalance((x) => !x)} aria-label={showBalance ? "Hide balance" : "Show balance"}>
+                  <Icon name={showBalance ? "eye" : "eyeOff"} size={16} />
+                </button>
+              </div>
+              <div style={styles.balanceAmount}>
+                {showBalance ? formatMoney(totalUsd) : "••••"}
+                <span style={styles.balanceUnit}> USD</span>
+              </div>
             </div>
-            <div style={styles.subtle}>Real wallet balance from Supabase</div>
-            <div style={styles.balanceButtons}>
-              <button style={styles.primaryButton} onClick={() => setModal("deposit")}><Icon name="plus" size={20} />Deposit</button>
-              <button style={styles.secondaryButton} onClick={() => setModal("withdraw")}><Icon name="plus" size={20} />Withdraw</button>
-            </div>
-          </div>
-          <div style={styles.walletVisual} aria-hidden="true">
-            <div style={styles.walletShape}>
-              <img src="/ceo-auth-reference-transparent.png" alt="" style={styles.walletLogo} />
-            </div>
+            <button type="button" style={styles.depositPill} onClick={() => setModal("deposit")}>Deposit</button>
           </div>
         </section>
 
         <section style={styles.quickGrid}>
-          <QuickAction icon="userPlus" label="Invite" onClick={() => setModal("invite")} />
-          <QuickAction icon="gift" label="Rewards" onClick={() => setModal("rewards")} />
+          <QuickAction icon="userPlus" label="Invite Friends" onClick={() => setModal("invite")} />
+          <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
+          <QuickAction icon="wallet" label="Web3 Wallet" onClick={() => notify("Web3 Wallet is coming soon.")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
         </section>
 
         <section style={styles.marketSection}>
           <div style={styles.tabsRow}>
-            {(["Hot", "New", "Gainers", "Losers", "Favorites"] as MarketTab[]).map((tab) => <button key={tab} onClick={() => setMarketTab(tab)} style={{ ...styles.tab, ...(marketTab === tab ? styles.tabActive : {}) }}><Icon name={tab === "Favorites" ? "star" : tab === "Gainers" ? "chart" : tab === "Losers" ? "chart" : tab === "New" ? "plus" : "star"} size={17} />{tab}</button>)}
+            {(["Hot", "New", "Gainers", "Losers", "Favorites"] as MarketTab[]).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setMarketTab(tab)}
+                style={{ ...styles.tab, ...(marketTab === tab ? styles.tabActive : {}) }}
+              >
+                {tab}
+              </button>
+            ))}
           </div>
-          <div style={styles.marketHeader}><span aria-hidden="true" /><span>Pair</span><span>Last Price</span><span>24h Change</span><span>Action</span></div>
-          {filteredMarkets.map((m) => <MarketRow key={m.symbol} market={m} favorite={favoriteSymbols.includes(m.symbol)} onFavorite={() => toggleFavorite(m.symbol)} onTrade={() => onTrade(m.symbol)} />)}
-          {!filteredMarkets.length && <Empty text={marketTab === "Favorites" ? "No favorite markets yet." : "No market data is available yet."} />}
-          {markets.length > 3 && <button style={styles.viewAll} onClick={() => setShowAllMarkets((value) => !value)}>{showAllMarkets ? "Show Featured Markets" : "View All Markets"} <Icon name="arrow" size={19} /></button>}
+          {filteredMarkets.map((m) => (
+            <MarketRow
+              key={m.symbol}
+              market={m}
+              favorite={favoriteSymbols.includes(m.symbol)}
+              onFavorite={() => toggleFavorite(m.symbol)}
+              onTrade={() => onTrade(m.symbol)}
+            />
+          ))}
+          {!filteredMarkets.length && (
+            <Empty text={marketTab === "Favorites" ? "No favorite markets yet." : marketTab === "Gainers" ? "No gainers right now." : marketTab === "Losers" ? "No losers right now." : "No market data is available yet."} />
+          )}
+          {markets.filter((m) => m.last_price != null && Number(m.last_price) > 0).length > 8 && (
+            <button type="button" style={styles.viewAll} onClick={() => setShowAllMarkets((value) => !value)}>
+              {showAllMarkets ? "Show less" : "View more"} <Icon name="arrow" size={18} />
+            </button>
+          )}
         </section>
 
         <section style={styles.feedSection}>
@@ -987,19 +1013,48 @@ export default function Home({
 }
 
 function QuickAction({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
-  return <button style={styles.quickAction} onClick={onClick}><span style={styles.quickIcon}><Icon name={icon} size={30} /></span><span>{label}</span></button>;
+  return (
+    <button type="button" style={styles.quickAction} onClick={onClick}>
+      <span style={styles.quickIcon}><Icon name={icon} size={22} /></span>
+      <span style={styles.quickLabel}>{label}</span>
+    </button>
+  );
 }
 
 function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
   const change = market.change_24h == null ? null : Number(market.change_24h);
+  const up = change != null && change >= 0;
+  const letter = (market.base_asset || market.symbol || "?").slice(0, 1).toUpperCase();
+  const vol = market.volume_24h == null ? null : Number(market.volume_24h);
+  const volLabel = vol == null ? "" : vol >= 1_000_000 ? `${(vol / 1_000_000).toFixed(2)}M` : vol >= 1_000 ? `${(vol / 1_000).toFixed(1)}K` : formatMoney(vol);
+
   return (
-    <div style={styles.marketRow}>
-      <button style={{ ...styles.starButton, ...(favorite ? styles.starButtonActive : {}) }} onClick={onFavorite} aria-label={favorite ? "Remove favorite" : "Add favorite"} title={favorite ? "Remove from Favorites" : "Add to Favorites"}><Icon name="star" size={18} /></button>
-      <div style={styles.pair}><b>{market.symbol}</b><span>{market.base_name || market.base_asset}{market.volume_24h == null ? " · No volume yet" : ` · Vol ${formatMoney(Number(market.volume_24h))}`}</span></div>
+    <button type="button" style={styles.marketRow} onClick={onTrade}>
+      <span
+        style={{ ...styles.starHit, ...(favorite ? styles.starButtonActive : {}) }}
+        onClick={(e) => { e.stopPropagation(); onFavorite(); }}
+        role="button"
+        aria-label={favorite ? "Remove favorite" : "Add favorite"}
+      >
+        <Icon name="star" size={15} />
+      </span>
+      <span style={styles.coinAvatar}>{letter}</span>
+      <div style={styles.pair}>
+        <b>{market.symbol}</b>
+        {vol != null && <span>{volLabel} USDT</span>}
+      </div>
       <div style={styles.price}>{market.last_price == null ? "—" : formatPrice(Number(market.last_price))}</div>
-      <div style={{ ...styles.change, color: change == null ? "#777" : change >= 0 ? "#22c7a4" : "#ff6574" }}>{change == null ? "—" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`}</div>
-      <button style={styles.tradeButton} onClick={onTrade}>Trade</button>
-    </div>
+      <span
+        style={{
+          ...styles.changePill,
+          background: change == null ? "#2a2a2a" : up ? "#0d3d2e" : "#3d1518",
+          color: change == null ? "#888" : up ? "#1ecf8a" : "#ff5c6c",
+        }}
+        onClick={(e) => { e.stopPropagation(); onTrade(); }}
+      >
+        {change == null ? "—" : `${up ? "+" : ""}${change.toFixed(2)}%`}
+      </span>
+    </button>
   );
 }
 
@@ -2093,49 +2148,61 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) { ret
 
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", background: BG, color: "#fff", paddingBottom: 82, fontFamily: "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", overflowX: "hidden" },
-  header: { position: "sticky", top: 0, zIndex: 20, minHeight: 68, padding: "9px 12px", display: "grid", gridTemplateColumns: "auto minmax(70px,1fr) auto", gap: 8, alignItems: "center", background: "rgba(5,5,5,.97)", backdropFilter: "blur(14px)", borderBottom: `1px solid ${BORDER}` },
+  header: { position: "sticky", top: 0, zIndex: 20, minHeight: 56, padding: "8px 12px", display: "grid", gridTemplateColumns: "auto minmax(80px,1fr) auto", gap: 10, alignItems: "center", background: "rgba(5,5,5,.96)", backdropFilter: "blur(16px)", borderBottom: "1px solid #121212" },
+  profileBtn: { border: 0, background: "transparent", padding: 0, cursor: "pointer", display: "grid", placeItems: "center" },
   brand: { display: "flex", alignItems: "center", gap: 9, minWidth: 0 },
   logo: { width: 34, height: 34, objectFit: "contain", borderRadius: 10 },
-  brandName: { maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 800, fontSize: 14 },
-  topSearch: { height: 40, minWidth: 0, display: "flex", alignItems: "center", gap: 7, padding: "0 10px", border: `1px solid ${BORDER}`, borderRadius: 13, background: "#0b0b0b", color: "#777" },
+  brandName: { display: "none" },
+  topSearch: { height: 36, minWidth: 0, display: "flex", alignItems: "center", gap: 8, padding: "0 14px", border: "1px solid #1c1c1c", borderRadius: 999, background: "#121212", color: "#6b6b6b" },
   topSearchInput: { flex: 1, minWidth: 0, width: "100%", border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 14, padding: 0 },
-  headerActions: { display: "flex", gap: 5 },
-  iconSquare: { position: "relative", width: 38, height: 38, border: `1px solid #211b0d`, borderRadius: 13, background: "#090909", color: GOLD_LIGHT, display: "grid", placeItems: "center", cursor: "pointer" },
-  badge: { position: "absolute", top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 99, background: "#eab308", color: "#090909", fontSize: 10, fontWeight: 800, display: "grid", placeItems: "center", padding: "0 4px" },
+  headerActions: { display: "flex", gap: 4, alignItems: "center" },
+  iconSquare: { position: "relative", width: 36, height: 36, border: 0, borderRadius: 999, background: "transparent", color: "#e8e8e8", display: "grid", placeItems: "center", cursor: "pointer" },
+  iconRound: { position: "relative", width: 36, height: 36, border: 0, borderRadius: 999, background: "transparent", color: "#e8e8e8", display: "grid", placeItems: "center", cursor: "pointer" },
+  badge: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 99, background: "#f0b90b", color: "#111", fontSize: 9, fontWeight: 800, display: "grid", placeItems: "center", padding: "0 3px" },
   iconButton: { border: 0, background: "transparent", color: "#aaa", display: "grid", placeItems: "center", cursor: "pointer" },
   errorBar: { margin: "12px 16px 0", padding: 12, border: "1px solid #4c2025", borderRadius: 12, background: "#1d0c0e", color: "#ff9aa3", fontSize: 13 },
   retry: { float: "right", border: 0, background: "transparent", color: GOLD_LIGHT, cursor: "pointer" },
-  content: { width: "min(760px,100%)", margin: "0 auto", padding: "12px 12px 20px" },
-  balanceCard: { minHeight: 228, borderRadius: 22, border: `1px solid #1f1a0e`, background: "radial-gradient(circle at 88% 22%,#35270e 0,#15120b 22%,#0e0e0e 52%,#0a0a0a 100%)", padding: "20px 18px", display: "flex", justifyContent: "space-between", overflow: "hidden", position: "relative" },
+  content: { width: "min(760px,100%)", margin: "0 auto", padding: "8px 14px 20px" },
+  balanceCard: { padding: "18px 4px 8px", background: "transparent", border: 0, borderRadius: 0, minHeight: 0 },
+  balanceTop: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  totalAssetsLabel: { display: "inline-flex", alignItems: "center", gap: 6, color: "#9a9a9a", fontSize: 13, fontWeight: 500, marginBottom: 6 },
+  balanceAmount: { fontSize: 32, fontWeight: 700, letterSpacing: -0.8, color: "#fff", lineHeight: 1.1 },
+  balanceUnit: { fontSize: 14, fontWeight: 600, color: "#aaa", marginLeft: 4 },
+  depositPill: { border: 0, borderRadius: 999, padding: "10px 22px", background: "linear-gradient(180deg,#f5c542 0%,#e8a800 100%)", color: "#111", fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 4px 14px rgba(232,168,0,.25)", flexShrink: 0 },
   balanceInfo: { position: "relative", zIndex: 2, maxWidth: 390 },
   muted: { color: "#a5a5a5", fontSize: 15, marginBottom: 4 },
   balanceLine: { display: "flex", alignItems: "center", gap: 9 },
   "balanceLine strong": { fontSize: 34, letterSpacing: -1.1 },
-  eyeButton: { border: 0, background: "transparent", color: "#aaa", cursor: "pointer", padding: 4 },
+  eyeButton: { border: 0, background: "transparent", color: "#8a8a8a", cursor: "pointer", padding: 2, display: "inline-grid", placeItems: "center" },
   subtle: { color: "#777", fontSize: 12, marginTop: 7 },
   balanceButtons: { display: "flex", gap: 9, marginTop: 20, flexWrap: "wrap" },
-  primaryButton: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, border: 0, borderRadius: 11, padding: "10px 16px", background: `linear-gradient(135deg,${GOLD},#d98e00)`, color: "#090909", fontWeight: 800, cursor: "pointer" },
-  secondaryButton: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, border: `1px solid #8b6416`, borderRadius: 11, padding: "9px 16px", background: "transparent", color: GOLD_LIGHT, fontWeight: 700, cursor: "pointer" },
-  walletVisual: { width: 130, minWidth: 105, position: "relative", display: "grid", placeItems: "center", alignSelf: "center" },
-  walletShape: { width: 112, height: 78, borderRadius: "12px 12px 18px 18px", background: "linear-gradient(145deg,#171717,#030303)", border: "1px solid #6d4c10", transform: "rotate(-6deg)", boxShadow: "0 14px 25px rgba(0,0,0,.55),inset 0 0 0 1px #18110a", display: "grid", placeItems: "center" },
-  walletLogo: { width: 42, height: 42, objectFit: "contain", display: "block" },
-  quickGrid: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, margin: "18px 4px 20px" },
-  quickAction: { border: 0, background: "transparent", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer" },
-  quickIcon: { width: 58, height: 58, borderRadius: 16, background: "#0c0c0c", border: "1px solid #151515", color: GOLD_LIGHT, display: "grid", placeItems: "center", boxShadow: "0 6px 16px rgba(0,0,0,.28)" },
-  marketSection: { marginTop: 2 },
-  tabsRow: { display: "flex", overflowX: "auto", gap: 4, borderBottom: "1px solid #242424", scrollbarWidth: "none" },
-  tab: { whiteSpace: "nowrap", border: 0, background: "transparent", color: "#888", padding: "11px 9px", display: "inline-flex", gap: 5, alignItems: "center", cursor: "pointer", fontWeight: 650, fontSize: 12 },
-  tabActive: { color: GOLD_LIGHT, borderBottom: `2px solid ${GOLD}` },
-  marketHeader: { display: "grid", gridTemplateColumns: "28px 1.45fr 1fr .75fr .62fr", gap: 6, padding: "9px 6px 6px", color: "#666", fontSize: 10 },
-  marketRow: { minHeight: 54, display: "grid", gridTemplateColumns: "28px 1.45fr 1fr .75fr .62fr", alignItems: "center", gap: 5, padding: "7px 6px", borderRadius: 10, background: "#0d0d0d", border: "1px solid #151515", marginBottom: 5 },
-  starButton: { border: 0, background: "transparent", color: "#555", padding: 0, cursor: "pointer", borderRadius: 7, width: 28, height: 28, display: "grid", placeItems: "center" },
-  starButtonActive: { color: GOLD_LIGHT, background: "#1b1508" },
+  primaryButton: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, border: 0, borderRadius: 999, padding: "10px 18px", background: "linear-gradient(180deg,#f5c542,#e8a800)", color: "#111", fontWeight: 700, cursor: "pointer" },
+  secondaryButton: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, border: "1px solid #333", borderRadius: 999, padding: "9px 16px", background: "transparent", color: "#ddd", fontWeight: 600, cursor: "pointer" },
+  walletVisual: { display: "none" },
+  walletShape: { display: "none" },
+  walletLogo: { display: "none" },
+  quickGrid: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, margin: "14px 0 18px" },
+  quickAction: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" },
+  quickIcon: { width: 48, height: 48, borderRadius: 999, background: "#161616", border: "1px solid #222", color: "#f0f0f0", display: "grid", placeItems: "center" },
+  quickLabel: { fontSize: 11, fontWeight: 500, color: "#cfcfcf", textAlign: "center", lineHeight: 1.2 },
+  marketSection: { marginTop: 4 },
+  tabsRow: { display: "flex", overflowX: "auto", gap: 2, borderBottom: "1px solid #1a1a1a", scrollbarWidth: "none", marginBottom: 4 },
+  tab: { whiteSpace: "nowrap", border: 0, background: "transparent", color: "#7a7a7a", padding: "12px 12px", display: "inline-flex", alignItems: "center", cursor: "pointer", fontWeight: 600, fontSize: 14 },
+  tabActive: { color: "#fff", borderBottom: "2px solid #f0b90b" },
+  marketHeader: { display: "none" },
+  marketRow: { width: "100%", minHeight: 60, display: "grid", gridTemplateColumns: "22px 34px 1.2fr auto auto", alignItems: "center", gap: 8, padding: "10px 4px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "1px solid #121212", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
+  starButton: { border: 0, background: "transparent", color: "#555", padding: 0, cursor: "pointer", borderRadius: 7, width: 22, height: 22, display: "grid", placeItems: "center" },
+  starHit: { border: 0, background: "transparent", color: "#4a4a4a", padding: 0, cursor: "pointer", width: 22, height: 22, display: "grid", placeItems: "center" },
+  starButtonActive: { color: "#f0b90b" },
+  coinAvatar: { width: 32, height: 32, borderRadius: 999, background: "linear-gradient(145deg,#2a2a2a,#141414)", border: "1px solid #2e2e2e", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#eee" },
   pair: { display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" },
-  "pair span": { color: "#666", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" },
-  price: { fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" },
+  "pair b": { fontSize: 14, fontWeight: 600, color: "#f5f5f5" },
+  "pair span": { color: "#666", fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" },
+  price: { fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", color: "#f5f5f5", textAlign: "right", minWidth: 72 },
   change: { fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" },
-  tradeButton: { border: `1px solid #785716`, borderRadius: 9, background: "transparent", color: GOLD_LIGHT, padding: "7px 6px", cursor: "pointer", fontWeight: 700, fontSize: 11 },
-  viewAll: { width: "100%", border: 0, background: "transparent", color: GOLD_LIGHT, padding: "14px 0 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", fontWeight: 700 },
+  changePill: { minWidth: 72, textAlign: "center", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" },
+  tradeButton: { border: 0, borderRadius: 8, background: "#1a1a1a", color: "#ddd", padding: "8px 10px", cursor: "pointer", fontWeight: 600, fontSize: 12 },
+  viewAll: { width: "100%", border: 0, background: "transparent", color: "#9a9a9a", padding: "16px 0 8px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 },
   feedSection: { borderTop: "1px solid #171717", paddingTop: 22 },
   sectionTitle: { display: "flex", alignItems: "center", gap: 9, fontWeight: 800, fontSize: 18, marginBottom: 15 },
   goldBar: { width: 5, height: 30, borderRadius: 4, background: GOLD },
