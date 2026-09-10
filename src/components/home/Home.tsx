@@ -203,8 +203,9 @@ type Comment = {
 
 type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | null;
 type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
-type FeedTab = "CEO Exchange" | "Following" | "Campaign" | "Announcements";
+type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
+type MarketCategory = "Spot" | "Futures" | "Funding";
 
 const GOLD = "#f5b51b";
 const GOLD_LIGHT = "#ffd45a";
@@ -348,8 +349,11 @@ export default function Home({
   const [modal, setModal] = useState<Modal>(null);
   const [depositResult, setDepositResult] = useState<any>(null);
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("Announcements");
-  const [feedTab, setFeedTab] = useState<FeedTab>("CEO Exchange");
+  const [feedTab, setFeedTab] = useState<FeedTab>("CEO");
   const [marketTab, setMarketTab] = useState<MarketTab>("Hot");
+  const [marketCategory, setMarketCategory] = useState<MarketCategory>("Spot");
+  const [showFab, setShowFab] = useState(false);
+  const [fabOpen, setFabOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [showBalance, setShowBalance] = useState(true);
   const [showAllMarkets, setShowAllMarkets] = useState(false);
@@ -702,7 +706,7 @@ export default function Home({
   const sharePost = async (postId: string) => {
     const link = `${window.location.origin}/?post=${encodeURIComponent(postId)}`;
     try {
-      if (navigator.share) await navigator.share({ title: "CEO Exchange", url: link });
+      if (navigator.share) await navigator.share({ title: "CEO", url: link });
       else { await navigator.clipboard.writeText(link); notify("Post link copied."); }
     } catch { /* user cancelled share */ }
   };
@@ -874,7 +878,7 @@ export default function Home({
     return (
       <div style={styles.brandedLoader}>
         <div style={styles.brandedLogoWrap}>
-          <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.brandedLogo} />
+          <img src="/ceo-auth-reference-transparent.png" alt="CEO" style={styles.brandedLogo} />
           <div style={styles.brandedPulse} />
         </div>
         <div style={styles.brandedSpinner} />
@@ -887,8 +891,16 @@ export default function Home({
   return (
     <div style={styles.page}>
       {(isRefreshing || pullY > 8) && (
-        <div style={{ ...styles.pullRefresh, height: isRefreshing ? 72 : Math.max(pullY, 0), opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1) }}>
-          <img src="/ceo-auth-reference-transparent.png" alt="" style={{ ...styles.pullLogo, transform: isRefreshing ? "scale(1)" : `scale(${0.7 + Math.min(pullY / 64, 1) * 0.3})` }} />
+        <div style={{ ...styles.pullRefresh, height: isRefreshing ? 80 : Math.max(pullY, 0), opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1) }}>
+          <img
+            src="/ceo-auth-reference-transparent.png"
+            alt="CEO"
+            style={{
+              ...styles.pullLogo,
+              transform: isRefreshing ? undefined : `scale(${0.7 + Math.min(pullY / 64, 1) * 0.3})`,
+              animation: isRefreshing ? "ceoShake 0.55s ease-in-out infinite" : undefined,
+            }}
+          />
           {isRefreshing && <div style={styles.brandedSpinner} />}
         </div>
       )}
@@ -916,6 +928,11 @@ export default function Home({
         onTouchStart={onPullStart}
         onTouchMove={onPullMove}
         onTouchEnd={onPullEnd}
+        onScroll={(e) => {
+          const top = (e.target as HTMLElement).scrollTop;
+          setShowFab(top > 180);
+          if (top <= 180) setFabOpen(false);
+        }}
       >
         <section style={styles.balanceCard}>
           <div style={styles.balanceTop}>
@@ -944,7 +961,7 @@ export default function Home({
 
         <section style={styles.marketSection}>
           <div style={styles.tabsRow}>
-            {(["Hot", "New", "Gainers", "Losers", "Favorites"] as MarketTab[]).map((tab) => (
+            {(["Favorites", "Hot", "New", "Gainers", "Losers"] as MarketTab[]).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -952,6 +969,18 @@ export default function Home({
                 style={{ ...styles.tab, ...(marketTab === tab ? styles.tabActive : {}) }}
               >
                 {tab}
+              </button>
+            ))}
+          </div>
+          <div style={styles.categoryRow}>
+            {(["Spot", "Futures", "Funding"] as MarketCategory[]).map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setMarketCategory(cat)}
+                style={{ ...styles.categoryTab, ...(marketCategory === cat ? styles.categoryTabActive : {}) }}
+              >
+                {cat}
               </button>
             ))}
           </div>
@@ -975,19 +1004,48 @@ export default function Home({
         </section>
 
         <section style={styles.feedSection}>
-          <div style={styles.sectionTitle}><span style={styles.goldBar} />CEO Exchange</div>
-          <div style={styles.feedTabs}>{(["CEO Exchange", "Following", "Campaign", "Announcements"] as FeedTab[]).map((tab) => <button key={tab} onClick={() => { setFeedTab(tab); if (userId) void loadPosts(userId, tab); }} style={{ ...styles.feedTab, ...(feedTab === tab ? styles.feedTabActive : {}) }}>{tab}</button>)}</div>
+          <div style={styles.sectionTitle}><span style={styles.goldBar} />CEO</div>
+          <div style={styles.feedTabs}>{(["CEO", "Following", "Campaign", "Announcements"] as FeedTab[]).map((tab) => <button key={tab} onClick={() => { setFeedTab(tab); if (userId) void loadPosts(userId, tab); }} style={{ ...styles.feedTab, ...(feedTab === tab ? styles.feedTabActive : {}) }}>{tab}</button>)}</div>
           {(feedTab === "Campaign" || feedTab === "Announcements") && <>
             {admin && <button style={styles.createPostButton} onClick={() => setModal("announcement")}><Icon name="plus" size={19} />Create {feedTab === "Campaign" ? "campaign" : "announcement"}</button>}
             {platformAnnouncements.filter((a) => feedTab === "Campaign" ? /campaign/i.test(a.type ?? "") : !/campaign/i.test(a.type ?? "")).map((a) => <PlatformCard key={a.id} item={a} />)}
           </>}
-          {(feedTab === "CEO Exchange" || feedTab === "Following") && <>
-            <button style={styles.createPostButton} onClick={() => setModal("post")}><Icon name="plus" size={18} />Create post</button>
+          {(feedTab === "CEO" || feedTab === "Following") && <>
             {filteredPosts.map((p) => <PostCard key={p.id} post={p} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p.id)} />)}
             {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
           </>}
         </section>
       </main>
+
+      {/* Floating + speed dial — appears after scroll (Bybit-style) */}
+      {showFab && (
+        <div style={styles.fabWrap}>
+          {fabOpen && (
+            <div style={styles.fabMenu}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("post"); }}>
+                <span style={styles.fabMenuIcon}><Icon name="plus" size={16} /></span>
+                <span>Post</span>
+              </button>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); notify("Messages coming soon."); }}>
+                <span style={styles.fabMenuIcon}><Icon name="bell" size={16} /></span>
+                <span>Message</span>
+              </button>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("menu"); }}>
+                <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
+                <span>Profile</span>
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            style={{ ...styles.fab, ...(fabOpen ? styles.fabOpen : {}) }}
+            onClick={() => setFabOpen((v) => !v)}
+            aria-label="Create"
+          >
+            <Icon name={fabOpen ? "close" : "plus"} size={22} />
+          </button>
+        </div>
+      )}
 
       <nav style={styles.bottomNav}>
         <NavItem icon="home" label="Home" active onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
@@ -1335,7 +1393,7 @@ function DepositModal({
       {transitioning && (
         <div style={styles.stepLoader}>
           <div style={styles.brandedLogoWrap}>
-            <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.brandedLogo} />
+            <img src="/ceo-auth-reference-transparent.png" alt="CEO" style={styles.brandedLogo} />
             <div style={styles.brandedPulse} />
           </div>
           <div style={styles.brandedSpinner} />
@@ -2202,6 +2260,15 @@ const styles: Record<string, React.CSSProperties> = {
   change: { fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" },
   changePill: { minWidth: 72, textAlign: "center", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" },
   tradeButton: { border: 0, borderRadius: 8, background: "#1a1a1a", color: "#ddd", padding: "8px 10px", cursor: "pointer", fontWeight: 600, fontSize: 12 },
+  categoryRow: { display: "flex", gap: 6, padding: "8px 0 4px", overflowX: "auto", scrollbarWidth: "none" },
+  categoryTab: { border: "1px solid #2a2a2a", background: "#121212", color: "#9a9a9a", borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
+  categoryTabActive: { borderColor: "#f5b51b", color: "#f5b51b", background: "rgba(245,181,27,0.08)" },
+  fabWrap: { position: "fixed", right: 16, bottom: 88, zIndex: 40, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 },
+  fab: { width: 52, height: 52, borderRadius: 999, border: 0, background: "#f5b51b", color: "#111", display: "grid", placeItems: "center", boxShadow: "0 8px 24px rgba(245,181,27,0.35)", cursor: "pointer" },
+  fabOpen: { background: "#333", color: "#fff", boxShadow: "0 8px 20px rgba(0,0,0,0.45)" },
+  fabMenu: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 },
+  fabMenuItem: { display: "flex", alignItems: "center", gap: 10, border: 0, background: "#1a1a1a", color: "#eee", borderRadius: 999, padding: "10px 16px", fontSize: 13, fontWeight: 600, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", cursor: "pointer" },
+  fabMenuIcon: { width: 28, height: 28, borderRadius: 999, background: "#2a2a2a", display: "grid", placeItems: "center", color: "#f5b51b" },
   viewAll: { width: "100%", border: 0, background: "transparent", color: "#9a9a9a", padding: "16px 0 8px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 },
   feedSection: { borderTop: "1px solid #171717", paddingTop: 22 },
   sectionTitle: { display: "flex", alignItems: "center", gap: 9, fontWeight: 800, fontSize: 18, marginBottom: 15 },
