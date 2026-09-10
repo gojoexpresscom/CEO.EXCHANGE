@@ -44,10 +44,12 @@ type Post = {
   likes_count: number | null;
   comments_count: number | null;
   reposts_count: number | null;
+  shares_count: number | null;
   views_count: number | null;
   created_at: string | null;
   profile?: Pick<Profile, "nickname" | "profile_picture_url">;
   likedByMe?: boolean;
+  repostedByMe?: boolean;
 };
 
 type Notification = {
@@ -206,6 +208,7 @@ type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
 type MarketCategory = "Spot" | "Futures" | "Funding";
+type MarketCategory = "Spot" | "Futures" | "Funding";
 
 const GOLD = "#f5b51b";
 const GOLD_LIGHT = "#ffd45a";
@@ -293,13 +296,17 @@ function formatPrice(value: number) {
 function timeAgo(value: string | null) {
   if (!value) return "";
   const diff = Math.max(0, Date.now() - new Date(value).getTime());
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "now";
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 45) return "just now";
+  const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
-  return `${days}d`;
+  if (days < 7) return `${days}d`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w`;
+  return new Date(value).toLocaleDateString();
 }
 
 function deviceName(userAgent: string | null) {
@@ -424,7 +431,7 @@ export default function Home({
   }, []);
 
   const loadPosts = useCallback(async (id: string, tab: FeedTab) => {
-    let query = supabase.from("posts").select("id,user_id,content,image_url,likes,likes_count,comments_count,reposts_count,views_count,created_at").order("created_at", { ascending: false }).limit(50);
+    let query = supabase.from("posts").select("id,user_id,content,image_url,likes,likes_count,comments_count,reposts_count,shares_count,views_count,created_at").order("created_at", { ascending: false }).limit(50);
     if (tab === "Following") {
       const { data: follows, error: fe } = await supabase.from("user_follows").select("following_id").eq("follower_id", id);
       if (fe) throw fe;
@@ -439,13 +446,24 @@ export default function Home({
     if (e) throw e;
     const rows = (data ?? []) as Post[];
     const userIds = [...new Set(rows.map((p) => p.user_id).filter(Boolean))] as string[];
-    const [{ data: ps }, { data: likes }] = await Promise.all([
+    const postIds = rows.map((p) => p.id);
+    const [{ data: ps }, { data: likes }, repostsRes] = await Promise.all([
       userIds.length ? supabase.from("profiles").select("id,nickname,profile_picture_url").in("id", userIds) : Promise.resolve({ data: [] as any[] }),
-      rows.length ? supabase.from("post_likes").select("post_id").eq("user_id", id).in("post_id", rows.map((p) => p.id)) : Promise.resolve({ data: [] as any[] }),
+      postIds.length ? supabase.from("post_likes").select("post_id").eq("user_id", id).in("post_id", postIds) : Promise.resolve({ data: [] as any[] }),
+      // post_reposts may not exist yet — soft-fail
+      postIds.length
+        ? supabase.from("post_reposts").select("post_id").eq("user_id", id).in("post_id", postIds)
+        : Promise.resolve({ data: [] as any[], error: null }),
     ]);
     const pMap = new Map((ps ?? []).map((p: any) => [p.id, p]));
     const liked = new Set((likes ?? []).map((l: any) => l.post_id));
-    setPosts(rows.map((p) => ({ ...p, profile: pMap.get(p.user_id ?? ""), likedByMe: liked.has(p.id) })));
+    const reposted = new Set(((repostsRes as any)?.data ?? []).map((r: any) => r.post_id));
+    setPosts(rows.map((p) => ({
+      ...p,
+      profile: pMap.get(p.user_id ?? ""),
+      likedByMe: liked.has(p.id),
+      repostedByMe: reposted.has(p.id),
+    })));
   }, []);
 
   const loadNotifications = useCallback(async (id: string) => {
@@ -658,14 +676,31 @@ export default function Home({
   const toggleLike = async (post: Post) => {
     if (!userId) return;
     const wasLiked = Boolean(post.likedByMe);
-    setPosts((items) => items.map((p) => p.id === post.id ? { ...p, likedByMe: !wasLiked, likes_count: Math.max(0, Number(p.likes_count ?? p.likes ?? 0) + (wasLiked ? -1 : 1)), likes: Math.max(0, Number(p.likes ?? p.likes_count ?? 0) + (wasLiked ? -1 : 1)) } : p));
+    // Optimistic UI
+    setPosts((items) => items.map((p) => p.id === post.id ? {
+      ...p,
+      likedByMe: !wasLiked,
+      likes_count: Math.max(0, Number(p.likes_count ?? p.likes ?? 0) + (wasLiked ? -1 : 1)),
+      likes: Math.max(0, Number(p.likes ?? p.likes_count ?? 0) + (wasLiked ? -1 : 1)),
+    } : p));
     if (wasLiked) {
       const { error: e } = await supabase.from("post_likes").delete().eq("post_id", post.id).eq("user_id", userId);
-      if (e) { setPosts((items) => items.map((p) => p.id === post.id ? { ...p, likedByMe: wasLiked } : p)); notify(e.message); }
+      if (e) {
+        setPosts((items) => items.map((p) => p.id === post.id ? { ...p, likedByMe: true, likes_count: Number(post.likes_count ?? post.likes ?? 0), likes: Number(post.likes ?? post.likes_count ?? 0) } : p));
+        notify(e.message);
+        return;
+      }
     } else {
       const { error: e } = await supabase.from("post_likes").insert({ post_id: post.id, user_id: userId });
-      if (e && e.code !== "23505") { setPosts((items) => items.map((p) => p.id === post.id ? { ...p, likedByMe: false } : p)); notify(e.message); }
+      if (e && e.code !== "23505") {
+        setPosts((items) => items.map((p) => p.id === post.id ? { ...p, likedByMe: false, likes_count: Number(post.likes_count ?? post.likes ?? 0), likes: Number(post.likes ?? post.likes_count ?? 0) } : p));
+        notify(e.message);
+        return;
+      }
     }
+    // Best-effort sync of denormalized count on posts (RLS may block; unique table is source of truth)
+    const nextCount = Math.max(0, Number(post.likes_count ?? post.likes ?? 0) + (wasLiked ? -1 : 1));
+    void supabase.from("posts").update({ likes_count: nextCount, likes: nextCount }).eq("id", post.id);
   };
 
   const openComments = async (postId: string) => {
@@ -684,40 +719,105 @@ export default function Home({
     if (!userId || !commentPostId || !content.trim()) return;
     const { error: e } = await supabase.from("post_comments").insert({ post_id: commentPostId, user_id: userId, content: content.trim() });
     if (e) return notify(e.message);
+    // Bump denormalized count
+    const target = posts.find((p) => p.id === commentPostId);
+    const next = Number(target?.comments_count ?? 0) + 1;
+    setPosts((items) => items.map((p) => p.id === commentPostId ? { ...p, comments_count: next } : p));
+    void supabase.from("posts").update({ comments_count: next }).eq("id", commentPostId);
     await openComments(commentPostId);
     notify("Comment posted.");
   };
 
+  const deleteComment = async (commentId: string) => {
+    if (!userId || !commentPostId) return;
+    const { error: e } = await supabase.from("post_comments").delete().eq("id", commentId).eq("user_id", userId);
+    if (e) return notify(e.message);
+    setComments((rows) => rows.filter((c) => c.id !== commentId));
+    const target = posts.find((p) => p.id === commentPostId);
+    const next = Math.max(0, Number(target?.comments_count ?? 0) - 1);
+    setPosts((items) => items.map((p) => p.id === commentPostId ? { ...p, comments_count: next } : p));
+    void supabase.from("posts").update({ comments_count: next }).eq("id", commentPostId);
+    notify("Comment deleted.");
+  };
+
   const recordView = async (postId: string) => {
     if (!userId) return;
+    // Ignore unique conflicts — view once is fine
     await supabase.from("post_views").insert({ post_id: postId, user_id: userId });
   };
 
+  /**
+   * Repost toggle — requires `post_reposts` table with UNIQUE(user_id, post_id).
+   * If the table is missing, we surface a clear error instead of double-counting.
+   */
   const repost = async (post: Post) => {
-    const next = Number(post.reposts_count ?? 0) + 1;
-    setPosts((items) => items.map((p) => p.id === post.id ? { ...p, reposts_count: next } : p));
-    const { error: e } = await supabase.from("posts").update({ reposts_count: next }).eq("id", post.id);
-    if (e) {
-      setPosts((items) => items.map((p) => p.id === post.id ? { ...p, reposts_count: Number(post.reposts_count ?? 0) } : p));
-      notify(e.message);
-    } else notify("Repost count updated.");
+    if (!userId) return;
+    const was = Boolean(post.repostedByMe);
+    setPosts((items) => items.map((p) => p.id === post.id ? {
+      ...p,
+      repostedByMe: !was,
+      reposts_count: Math.max(0, Number(p.reposts_count ?? 0) + (was ? -1 : 1)),
+    } : p));
+    if (was) {
+      const { error: e } = await supabase.from("post_reposts").delete().eq("post_id", post.id).eq("user_id", userId);
+      if (e) {
+        setPosts((items) => items.map((p) => p.id === post.id ? { ...p, repostedByMe: true, reposts_count: Number(post.reposts_count ?? 0) } : p));
+        if ((e as any).code === "42P01" || /does not exist/i.test(e.message)) {
+          notify("Repost table missing. Ask Cloud to create post_reposts (user_id, post_id UNIQUE).");
+        } else notify(e.message);
+        return;
+      }
+    } else {
+      const { error: e } = await supabase.from("post_reposts").insert({ post_id: post.id, user_id: userId });
+      if (e && e.code !== "23505") {
+        setPosts((items) => items.map((p) => p.id === post.id ? { ...p, repostedByMe: false, reposts_count: Number(post.reposts_count ?? 0) } : p));
+        if ((e as any).code === "42P01" || /does not exist/i.test(e.message)) {
+          notify("Repost table missing. Ask Cloud to create post_reposts (user_id, post_id UNIQUE).");
+        } else notify(e.message);
+        return;
+      }
+    }
+    const next = Math.max(0, Number(post.reposts_count ?? 0) + (was ? -1 : 1));
+    void supabase.from("posts").update({ reposts_count: next }).eq("id", post.id);
   };
 
-  const sharePost = async (postId: string) => {
-    const link = `${window.location.origin}/?post=${encodeURIComponent(postId)}`;
+  const sharePost = async (post: Post) => {
+    const link = `${window.location.origin}/?post=${encodeURIComponent(post.id)}`;
     try {
       if (navigator.share) await navigator.share({ title: "CEO", url: link });
       else { await navigator.clipboard.writeText(link); notify("Post link copied."); }
-    } catch { /* user cancelled share */ }
+      // Best-effort share count (column may not exist — soft fail)
+      const next = Number(post.shares_count ?? 0) + 1;
+      setPosts((items) => items.map((p) => p.id === post.id ? { ...p, shares_count: next } : p));
+      void supabase.from("posts").update({ shares_count: next }).eq("id", post.id);
+    } catch { /* user cancelled */ }
   };
 
   const createPost = async (content: string, imageUrl: string) => {
-    if (!userId || !content.trim() || !imageUrl.trim()) return notify("Add a caption and an image URL.");
-    const { error: e } = await supabase.from("posts").insert({ user_id: userId, content: content.trim(), image_url: imageUrl.trim(), likes: 0, likes_count: 0, comments_count: 0, reposts_count: 0, views_count: 0 });
+    if (!userId || !content.trim()) return notify("Write something before publishing.");
+    const payload: Record<string, unknown> = {
+      user_id: userId,
+      content: content.trim(),
+      likes: 0,
+      likes_count: 0,
+      comments_count: 0,
+      reposts_count: 0,
+      views_count: 0,
+    };
+    if (imageUrl.trim()) payload.image_url = imageUrl.trim();
+    const { error: e } = await supabase.from("posts").insert(payload);
     if (e) return notify(e.message);
     closeModal();
     await loadPosts(userId, feedTab);
     notify("Post published.");
+  };
+
+  const deletePost = async (post: Post) => {
+    if (!userId || post.user_id !== userId) return notify("You can only delete your own posts.");
+    const { error: e } = await supabase.from("posts").delete().eq("id", post.id).eq("user_id", userId);
+    if (e) return notify(e.message);
+    setPosts((items) => items.filter((p) => p.id !== post.id));
+    notify("Post deleted.");
   };
 
   const createTicket = async (subject: string, message: string, attachmentUrl: string) => {
@@ -1011,18 +1111,17 @@ export default function Home({
             {platformAnnouncements.filter((a) => feedTab === "Campaign" ? /campaign/i.test(a.type ?? "") : !/campaign/i.test(a.type ?? "")).map((a) => <PlatformCard key={a.id} item={a} />)}
           </>}
           {(feedTab === "CEO" || feedTab === "Following") && <>
-            {filteredPosts.map((p) => <PostCard key={p.id} post={p} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p.id)} />)}
+            {filteredPosts.map((p) => <PostCard key={p.id} post={p} currentUserId={userId} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />)}
             {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
           </>}
         </section>
       </main>
 
-      {/* Floating + speed dial — appears after scroll (Bybit-style) */}
       {showFab && (
         <div style={styles.fabWrap}>
           {fabOpen && (
             <div style={styles.fabMenu}>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("post"); }}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("post"); setCommentPostId(null); }}>
                 <span style={styles.fabMenuIcon}><Icon name="plus" size={16} /></span>
                 <span>Post</span>
               </button>
@@ -1036,12 +1135,7 @@ export default function Home({
               </button>
             </div>
           )}
-          <button
-            type="button"
-            style={{ ...styles.fab, ...(fabOpen ? styles.fabOpen : {}) }}
-            onClick={() => setFabOpen((v) => !v)}
-            aria-label="Create"
-          >
+          <button type="button" style={{ ...styles.fab, ...(fabOpen ? styles.fabOpen : {}) }} onClick={() => setFabOpen((v) => !v)} aria-label="Create">
             <Icon name={fabOpen ? "close" : "plus"} size={22} />
           </button>
         </div>
@@ -1064,7 +1158,7 @@ export default function Home({
       {modal === "rewards" && <RewardsModal referral={referral} onClose={closeModal} />}
       {modal === "giveaway" && <GiveawayModal giveaways={giveaways} onClose={closeModal} />}
       {modal === "menu" && <MenuModal profile={profile} onClose={closeModal} onLogout={async () => { await supabase.auth.signOut(); onLogout?.(); }} />}
-      {modal === "post" && commentPostId ? <CommentsModal comments={comments} onClose={closeModal} onAdd={addComment} /> : modal === "post" ? <CreatePostModal onClose={closeModal} onCreate={createPost} /> : null}
+      {modal === "post" && commentPostId ? <CommentsModal comments={comments} currentUserId={userId} onClose={closeModal} onAdd={addComment} onDelete={deleteComment} /> : modal === "post" ? <CreatePostModal onClose={closeModal} onCreate={createPost} /> : null}
       {modal === "announcement" && <CreateAnnouncementModal defaultType={feedTab === "Campaign" ? "campaign" : "announcement"} onClose={closeModal} onCreate={createPlatformAnnouncement} />}
     </div>
   );
@@ -1116,14 +1210,62 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
   );
 }
 
-function PostCard({ post, onView, onLike, onComment, onRepost, onShare }: { post: Post; onView: () => void; onLike: () => void; onComment: () => void; onRepost: () => void; onShare: () => void }) {
-  useEffect(() => { onView(); }, [post.id]);
+function PostCard({ post, currentUserId, onView, onLike, onComment, onRepost, onShare, onDelete }: {
+  post: Post;
+  currentUserId: string | null;
+  onView: () => void;
+  onLike: () => void;
+  onComment: () => void;
+  onRepost: () => void;
+  onShare: () => void;
+  onDelete: () => void;
+}) {
   const name = post.profile?.nickname || "CEO Member";
-  return <article style={styles.postCard}><div style={styles.postHead}><Avatar url={post.profile?.profile_picture_url} text={name} /><div style={{ flex: 1 }}><b>{name}</b><div style={styles.postTime}>{timeAgo(post.created_at)} ago</div></div><button style={styles.moreButton}>•••</button></div>{post.content && <div style={styles.postText}>{post.content}</div>}{post.image_url && <img src={post.image_url} alt="Post" style={styles.postImage} onError={(e) => { e.currentTarget.style.display = "none"; }} />}<div style={styles.postActions}><button onClick={onLike} style={{ ...styles.postAction, color: post.likedByMe ? GOLD_LIGHT : "#aaa" }}><Icon name="heart" size={19} />{post.likes_count ?? post.likes ?? 0}</button><button onClick={onComment} style={styles.postAction}><Icon name="comment" size={19} />{post.comments_count ?? 0}</button><button onClick={onRepost} style={styles.postAction}><Icon name="repost" size={19} />{post.reposts_count ?? 0}</button><button onClick={onShare} style={styles.postAction}><Icon name="share" size={19} />Share</button></div></article>;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const isOwner = Boolean(currentUserId && post.user_id === currentUserId);
+  useEffect(() => { onView(); }, []);
+  const ts = timeAgo(post.created_at);
+  return (
+    <article style={styles.postCard}>
+      <div style={styles.postHead}>
+        <Avatar url={post.profile?.profile_picture_url} text={name} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <b style={{ fontSize: 14 }}>{name}</b>
+          <div style={styles.postTime}>{ts}</div>
+        </div>
+        {isOwner && (
+          <div style={{ position: "relative" }}>
+            <button type="button" style={styles.moreButton} onClick={() => setMenuOpen((v) => !v)}>•••</button>
+            {menuOpen && (
+              <div style={styles.postMenu}>
+                <button type="button" style={styles.postMenuItem} onClick={() => { setMenuOpen(false); onDelete(); }}>Delete post</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {post.content && <div style={styles.postText}>{post.content}</div>}
+      {post.image_url && <img src={post.image_url} alt="" style={styles.postImage} onError={(e) => { e.currentTarget.style.display = "none"; }} />}
+      <div style={styles.postActions}>
+        <button type="button" onClick={onLike} style={{ ...styles.postAction, color: post.likedByMe ? GOLD_LIGHT : "#aaa" }}>
+          <Icon name="heart" size={18} />{post.likes_count ?? post.likes ?? 0}
+        </button>
+        <button type="button" onClick={onComment} style={styles.postAction}>
+          <Icon name="comment" size={18} />{post.comments_count ?? 0}
+        </button>
+        <button type="button" onClick={onRepost} style={{ ...styles.postAction, color: post.repostedByMe ? GOLD_LIGHT : "#aaa" }}>
+          <Icon name="repost" size={18} />{post.reposts_count ?? 0}
+        </button>
+        <button type="button" onClick={onShare} style={styles.postAction}>
+          <Icon name="share" size={18} />{post.shares_count != null ? post.shares_count : "Share"}
+        </button>
+      </div>
+    </article>
+  );
 }
 
 function PlatformCard({ item }: { item: PlatformAnnouncement }) {
-  return <article style={styles.announcementCard}><div style={styles.announcementMeta}><span style={styles.pill}>{item.type || "Announcement"}</span><span>{timeAgo(item.created_at)} ago</span></div><h3 style={styles.announcementTitle}>{item.title}</h3><p style={styles.announcementBody}>{item.content}</p></article>;
+  return <article style={styles.announcementCard}><div style={styles.announcementMeta}><span style={styles.pill}>{item.type || "Announcement"}</span><span>{timeAgo(item.created_at)}</span></div><h3 style={styles.announcementTitle}>{item.title}</h3><p style={styles.announcementBody}>{item.content}</p></article>;
 }
 
 function Avatar({ url, text }: { url?: string | null; text: string }) {
@@ -2187,7 +2329,7 @@ function MenuModal({ profile, onClose, onLogout }: { profile: Profile | null; on
 function CreatePostModal({ onClose, onCreate }: { onClose: () => void; onCreate: (content: string, imageUrl: string) => Promise<void> }) {
   const [content, setContent] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-  return <ModalShell title="Create post" onClose={onClose}><p style={styles.modalHint}>Posts are image + caption only. The live schema has image_url but no dedicated social-feed storage bucket, so this build accepts an image URL and does not create a bucket.</p><label style={styles.label}>Image URL<input style={styles.input} value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://…" /></label><label style={styles.label}>Caption<textarea style={styles.textarea} maxLength={5000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write a caption…" /></label><button style={styles.primaryButtonFull} onClick={() => void onCreate(content, imageUrl)}>Publish</button></ModalShell>;
+  return <ModalShell title="Create post" onClose={onClose}><p style={styles.modalHint}>Caption is required. Image URL is optional (paste a public image link if you want a photo).</p><label style={styles.label}>Image URL<input style={styles.input} value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://… (optional)" /></label><label style={styles.label}>Caption<textarea style={styles.textarea} maxLength={5000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write a caption…" /></label><button style={styles.primaryButtonFull} onClick={() => void onCreate(content, imageUrl)}>Publish</button></ModalShell>;
 }
 
 function CreateAnnouncementModal({ defaultType, onClose, onCreate }: { defaultType: string; onClose: () => void; onCreate: (title: string, content: string, type: string) => Promise<void> }) {
@@ -2197,9 +2339,38 @@ function CreateAnnouncementModal({ defaultType, onClose, onCreate }: { defaultTy
   return <ModalShell title="Admin post" onClose={onClose}><p style={styles.modalHint}>Only an administrator can publish to platform_announcements. This uses the existing author_role/type/is_active columns; no new schema is created.</p><label style={styles.label}>Type<input style={styles.input} value={type} onChange={(e) => setType(e.target.value)} /></label><label style={styles.label}>Title<input style={styles.input} value={title} onChange={(e) => setTitle(e.target.value)} /></label><label style={styles.label}>Content<textarea style={styles.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label><button style={styles.primaryButtonFull} onClick={() => void onCreate(title, content, type)}>Publish</button></ModalShell>;
 }
 
-function CommentsModal({ comments, onClose, onAdd }: { comments: Comment[]; onClose: () => void; onAdd: (content: string) => Promise<void> }) {
+function CommentsModal({ comments, currentUserId, onClose, onAdd, onDelete }: {
+  comments: Comment[];
+  currentUserId: string | null;
+  onClose: () => void;
+  onAdd: (content: string) => Promise<void>;
+  onDelete: (commentId: string) => Promise<void>;
+}) {
   const [text, setText] = useState("");
-  return <ModalShell title="Comments" onClose={onClose}><div style={styles.comments}>{comments.map((c) => <div key={c.id} style={styles.commentRow}><Avatar url={c.profile?.profile_picture_url} text={c.profile?.nickname || "CE"} /><div><b>{c.profile?.nickname || "CEO Member"}</b><div>{c.content}</div><small>{timeAgo(c.created_at)} ago</small></div></div>)}{!comments.length && <Empty text="No comments yet." />}</div><div style={styles.otpRow}><input style={{ ...styles.input, flex: 1 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a comment" /><button style={styles.primaryButton} onClick={() => { void onAdd(text); setText(""); }}>Post</button></div></ModalShell>;
+  return (
+    <ModalShell title="Comments" onClose={onClose}>
+      <div style={styles.comments}>
+        {comments.map((c) => (
+          <div key={c.id} style={styles.commentRow}>
+            <Avatar url={c.profile?.profile_picture_url} text={c.profile?.nickname || "CE"} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <b>{c.profile?.nickname || "CEO Member"}</b>
+              <div>{c.content}</div>
+              <small style={{ color: "#777" }}>{timeAgo(c.created_at)}</small>
+            </div>
+            {currentUserId && c.user_id === currentUserId && (
+              <button type="button" style={styles.commentDelete} onClick={() => void onDelete(c.id)}>Delete</button>
+            )}
+          </div>
+        ))}
+        {!comments.length && <Empty text="No comments yet." />}
+      </div>
+      <div style={styles.otpRow}>
+        <input style={{ ...styles.input, flex: 1 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a comment" />
+        <button type="button" style={styles.primaryButton} onClick={() => { void onAdd(text); setText(""); }}>Post</button>
+      </div>
+    </ModalShell>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) { return <div style={styles.stat}><span>{label}</span><b>{value}</b></div>; }
@@ -2268,6 +2439,9 @@ const styles: Record<string, React.CSSProperties> = {
   fabOpen: { background: "#333", color: "#fff", boxShadow: "0 8px 20px rgba(0,0,0,0.45)" },
   fabMenu: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 },
   fabMenuItem: { display: "flex", alignItems: "center", gap: 10, border: 0, background: "#1a1a1a", color: "#eee", borderRadius: 999, padding: "10px 16px", fontSize: 13, fontWeight: 600, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", cursor: "pointer" },
+  postMenu: { position: "absolute", right: 0, top: 28, background: "#1a1a1a", border: "1px solid #333", borderRadius: 10, minWidth: 140, zIndex: 5, overflow: "hidden" },
+  postMenuItem: { width: "100%", border: 0, background: "transparent", color: "#ff6b6b", padding: "10px 14px", textAlign: "left" as const, fontSize: 13, cursor: "pointer" },
+  commentDelete: { border: 0, background: "transparent", color: "#ff6b6b", fontSize: 11, cursor: "pointer", padding: "4px 6px" },
   fabMenuIcon: { width: 28, height: 28, borderRadius: 999, background: "#2a2a2a", display: "grid", placeItems: "center", color: "#f5b51b" },
   viewAll: { width: "100%", border: 0, background: "transparent", color: "#9a9a9a", padding: "16px 0 8px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 },
   feedSection: { borderTop: "1px solid #171717", paddingTop: 22 },
