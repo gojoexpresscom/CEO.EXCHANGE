@@ -93,11 +93,26 @@ export function p2pTradeErrorMessage(
     return `The amount is above this ${orderSide === "buy" ? "buy" : "sell"} order's maximum limit.`;
   }
 
-  if (
-    raw.includes("payment method") ||
-    raw.includes("payment_method")
-  ) {
-    return "The selected payment method could not be used for this trade.";
+    if (raw.includes("payment_method_required")) {
+    return "Select a payment method to receive payment into before continuing.";
+  }
+
+  if (raw.includes("payment_method_not_found_or_not_owned_by_seller")) {
+    return orderSide === "buy"
+      ? "Your selected payment method isn't valid for this trade. Pick another one."
+      : "This merchant's payment method isn't set up correctly. Please try a different order.";
+  }
+
+  if (raw.includes("seller_not_kyc_verified")) {
+    return orderSide === "buy"
+      ? "You need to complete identity verification before you can fulfill this order."
+      : "This merchant isn't verified right now. Please try another order.";
+  }
+
+  if (raw.includes("payment_account_name_does_not_match_verified_identity")) {
+    return orderSide === "buy"
+      ? "The selected payment method's account name must match your verified identity."
+      : "This merchant's payment method doesn't match their verified identity. Please try a different order.";
   }
 
   if (
