@@ -113,7 +113,7 @@ const css = `
 function fmt(v:number|null|undefined,d=2){if(v==null||!Number.isFinite(v))return "—";return v.toLocaleString(undefined,{maximumFractionDigits:d})}
 function fmtPrice(v:number|null|undefined){if(v==null||!Number.isFinite(v))return "—";const a=Math.abs(v);return v.toLocaleString(undefined,{maximumFractionDigits:a>=1000?2:a>=1?4:8})}
 function fmtTime(iso:string){const d=new Date(iso);return d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit"})}
-function routeSymbol(){const m=window.location.pathname.match(/\/trade\/([^/]+)/i);return m?decodeURIComponent(m[1]).replace("-","/").toUpperCase():""}
+function routeSymbol(){const m=window.location.pathname.match(/^\/trade\/(.+)$/i);return m?decodeURIComponent(m[1]).toUpperCase():""}
 
 function CandleChart({rows,last,pairSymbol}:{rows:Candle[];last:number|null;pairSymbol:string}){
   if(!rows.length)return <div className="empty">No trade history yet for {pairSymbol}.<br/>The chart fills in as soon as real trades execute on this pair.</div>;
@@ -186,7 +186,7 @@ export default function TradingPage({symbol:propSymbol,onBack,onAddFunds}:Props)
   // and only then releases the remaining locked funds.
   const cancelOrder=async(orderId:string)=>{const {data:{user}}=await supabase.auth.getUser();if(!user)return;setCancellingId(orderId);const {data,error}=await supabase.functions.invoke("kraken-spot",{body:{action:"cancel_order",order_id:orderId}});setCancellingId(null);if(error){setNotice(error.message||"Unable to reach the Kraken order routing service.");setNoticeOk(false);return}if(data?.error){setNotice(data.error);setNoticeOk(false);return}if(data?.live_trading_enabled===false){setNotice(data.message||"Kraken live trading isn't enabled yet.");setNoticeOk(false);return}setNotice("Cancellation confirmed with Kraken — any unfilled amount was released back to your wallet.");setNoticeOk(true);void loadUser()};
 
-  const switchPair=(s:string)=>{setSymbol(s);window.history.pushState({},"",`/trade/${encodeURIComponent(s.replace("/","-"))}`)};
+  const switchPair=(s:string)=>{setSymbol(s);window.history.pushState({},"",`/trade/${encodeURIComponent(s.toUpperCase())}`)};
 
   if(busy)return <div className="trade-page"><style>{css}</style><div className="loading">Loading real market data…</div></div>;
   if(!pair)return <div className="trade-page"><style>{css}</style><div className="trade-shell"><button className="trade-back" onClick={onBack||(()=>window.history.back())}>←</button><div className="error">{notice||"Trading pair not found."}</div></div></div>;
