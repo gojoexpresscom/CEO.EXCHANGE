@@ -208,7 +208,6 @@ type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
 type MarketCategory = "Spot" | "Futures" | "Funding";
-type MarketCategory = "Spot" | "Futures" | "Funding";
 
 const GOLD = "#f5b51b";
 const GOLD_LIGHT = "#ffd45a";
@@ -978,7 +977,7 @@ export default function Home({
     return (
       <div style={styles.brandedLoader}>
         <div style={styles.brandedLogoWrap}>
-          <img src="/ceo-auth-reference-transparent.png" alt="CEO" style={styles.brandedLogo} />
+          <img src="/ceo-auth-reference-transparent.png" alt="CEO" style={{ ...styles.brandedLogo, animation: "ceoShake 1.8s ease-in-out infinite" }} />
           <div style={styles.brandedPulse} />
         </div>
         <div style={styles.brandedSpinner} />
@@ -2768,6 +2767,13 @@ if (typeof document !== "undefined") {
       @keyframes ceoPulse {
         0%, 100% { transform: scale(0.92); opacity: 0.55; }
         50% { transform: scale(1.12); opacity: 1; }
+      }
+      @keyframes ceoShake {
+        0%, 100% { transform: rotate(0deg) scale(1); }
+        20% { transform: rotate(-4deg) scale(1.02); }
+        40% { transform: rotate(3deg) scale(1.02); }
+        60% { transform: rotate(-2deg) scale(1.01); }
+        80% { transform: rotate(1.5deg) scale(1.01); }
       }
       @keyframes ceoFadeIn {
         from { opacity: 0; }
