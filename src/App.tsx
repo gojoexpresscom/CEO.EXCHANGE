@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
+import P2PMarketplace from "./components/p2p/P2PMarketplace";
 import { supabase } from "./lib/supabase";
 
 type AppRoute =
   | { page: "home" }
-  | { page: "trade"; symbol: string };
+  | { page: "trade"; symbol: string }
+  | { page: "p2p" };
 
 function getRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -17,6 +19,12 @@ function getRoute(): AppRoute {
     return {
       page: "trade",
       symbol: decodeURIComponent(tradeMatch[1]).toUpperCase(),
+    };
+  }
+
+  if (path === "/p2p") {
+    return {
+      page: "p2p",
     };
   }
 
@@ -39,20 +47,20 @@ export default function App() {
     });
 
     const {
-  data: { subscription },
-} = supabase.auth.onAuthStateChange((event, session) => {
-  if (!alive) return;
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!alive) return;
 
-  if (event === "PASSWORD_RECOVERY") {
-    // A recovery session was just created. Don't treat this as a normal
-    // login — let AuthScreen take over and show the new-password screen.
-    setReady(true);
-    return;
-  }
+      if (event === "PASSWORD_RECOVERY") {
+        // A recovery session was just created. Don't treat this as a normal
+        // login — let AuthScreen take over and show the new-password screen.
+        setReady(true);
+        return;
+      }
 
-  setAuthenticated(Boolean(session));
-  setReady(true);
-});
+      setAuthenticated(Boolean(session));
+      setReady(true);
+    });
 
     return () => {
       alive = false;
@@ -92,6 +100,19 @@ export default function App() {
     });
   }
 
+  function openP2P() {
+    window.history.pushState({}, "", "/p2p");
+
+    setRoute({
+      page: "p2p",
+    });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "instant",
+    });
+  }
+
   function goHome() {
     window.history.pushState({}, "", "/");
 
@@ -115,7 +136,8 @@ export default function App() {
           alignItems: "center",
           justifyContent: "center",
           gap: 16,
-          background: "radial-gradient(ellipse at 50% 30%, rgba(245,181,27,.08), transparent 50%), #050505",
+          background:
+            "radial-gradient(ellipse at 50% 30%, rgba(245,181,27,.08), transparent 50%), #050505",
           color: "#f5b51b",
           fontFamily:
             "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
@@ -165,6 +187,10 @@ export default function App() {
     );
   }
 
+  if (route.page === "p2p") {
+    return <P2PMarketplace onBack={goHome} />;
+  }
+
   return (
     <Home
       onLogout={() => {
@@ -172,6 +198,7 @@ export default function App() {
         goHome();
       }}
       onTrade={openTrade}
+      onP2P={openP2P}
     />
   );
 }
