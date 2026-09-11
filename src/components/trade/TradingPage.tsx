@@ -17,6 +17,11 @@ const CANCELLABLE = new Set(["open","partially_filled"]);
 // All data below comes from Supabase (trading_pairs, market_tickers, market_candles,
 // get_order_book, orders, trades, wallets). Nothing here is a placeholder, and every
 // control on screen maps to something that actually works against the backend.
+//
+// Order placement and cancellation are routed through the kraken-spot Edge Function,
+// which is the only component that talks to Kraken. Real-time UI state (orders,
+// wallets, tickers, candles, trades) still comes straight from Postgres/Realtime,
+// since Kraken fills are reconciled back into these same tables server-side.
 const css = `
 .trade-page{min-height:100vh;background:#050505;color:#eee;font-family:Inter,ui-sans-serif,system-ui,sans-serif}
 .trade-shell{width:min(1400px,100%);margin:auto;padding:10px 14px 26px;box-sizing:border-box}
@@ -170,9 +175,16 @@ export default function TradingPage({symbol:propSymbol,onBack,onAddFunds}:Props)
 
   const pickFromBook=(row:BookRow)=>{setSide(row.side==="sell"?"buy":"sell");setP(String(row.price));setActivePct(null);setView("trade")};
 
-  const submit=async()=>{setNotice("");if(!pair)return;if(!wallet||!wallet.exists||wallet.available<=0){setNotice(`You don't have enough ${wallet?.asset||pair.quote_asset} to place this order. Add funds to continue.`);setNoticeOk(false);return}if(!Number.isFinite(np)||np<=0||!Number.isFinite(na)||na<=0){setNotice("Enter a valid price and amount.");setNoticeOk(false);return}if(total>wallet.available){setNotice(`You don't have enough ${wallet.asset} to place this order. Add funds to continue.`);setNoticeOk(false);return}const {data:{user}}=await supabase.auth.getUser();if(!user){setNotice("Please sign in to trade.");setNoticeOk(false);return}setSubmitting(true);const {data,error}=await supabase.rpc("place_spot_limit_order",{p_user_id:user.id,p_trading_pair:pair.symbol,p_side:side,p_price:np,p_amount:na});setSubmitting(false);if(error){setNotice(/balance|insufficient|fund/i.test(error.message)?`You don't have enough ${wallet.asset} to place this order. Add funds to continue.`:error.message);setNoticeOk(false);return}if(!data){setNotice("The server did not return an order id.");setNoticeOk(false);return}setAmount("");setActivePct(null);setNotice("Order placed. It will fill automatically once it crosses an opposite order.");setNoticeOk(true);void loadMarket();void loadUser()};
+  // Order placement is routed through the kraken-spot Edge Function, which reserves
+  // CEO Exchange funds first (same accounting as before) and then submits the real
+  // order to Kraken. It never credits a trade itself — only a confirmed Kraken fill,
+  // reconciled server-side, ever changes a wallet balance.
+  const submit=async()=>{setNotice("");if(!pair)return;if(!wallet||!wallet.exists||wallet.available<=0){setNotice(`You don't have enough ${wallet?.asset||pair.quote_asset} to place this order. Add funds to continue.`);setNoticeOk(false);return}if(!Number.isFinite(np)||np<=0||!Number.isFinite(na)||na<=0){setNotice("Enter a valid price and amount.");setNoticeOk(false);return}if(total>wallet.available){setNotice(`You don't have enough ${wallet.asset} to place this order. Add funds to continue.`);setNoticeOk(false);return}const {data:{user}}=await supabase.auth.getUser();if(!user){setNotice("Please sign in to trade.");setNoticeOk(false);return}setSubmitting(true);const {data,error}=await supabase.functions.invoke("kraken-spot",{body:{action:"place_order",trading_pair:pair.symbol,side,price:np,amount:na}});setSubmitting(false);if(error){setNotice(error.message||"Unable to reach the Kraken order routing service.");setNoticeOk(false);return}if(data?.error){setNotice(/balance|insufficient|fund/i.test(data.error)?`You don't have enough ${wallet.asset} to place this order. Add funds to continue.`:data.error);setNoticeOk(false);return}if(data?.live_trading_enabled===false){setNotice(data.message||"Kraken live trading isn't enabled yet.");setNoticeOk(false);return}if(!data?.order_id){setNotice("The server did not return an order id.");setNoticeOk(false);return}setAmount("");setActivePct(null);setNotice(`Order routed to Kraken (ref ${data.kraken_order_id}). It settles automatically once Kraken reports a real fill.`);setNoticeOk(true);void loadMarket();void loadUser()};
 
-  const cancelOrder=async(orderId:string)=>{const {data:{user}}=await supabase.auth.getUser();if(!user)return;setCancellingId(orderId);const {error}=await supabase.rpc("cancel_spot_order",{p_user_id:user.id,p_order_id:orderId});setCancellingId(null);if(error){setNotice(error.message);setNoticeOk(false);return}setNotice("Order cancelled — your funds were released back to your wallet.");setNoticeOk(true);void loadUser()};
+  // Cancellation also goes through the Edge Function: it cancels the real Kraken
+  // order first, confirms Kraken's actual final state, settles any last-moment fill,
+  // and only then releases the remaining locked funds.
+  const cancelOrder=async(orderId:string)=>{const {data:{user}}=await supabase.auth.getUser();if(!user)return;setCancellingId(orderId);const {data,error}=await supabase.functions.invoke("kraken-spot",{body:{action:"cancel_order",order_id:orderId}});setCancellingId(null);if(error){setNotice(error.message||"Unable to reach the Kraken order routing service.");setNoticeOk(false);return}if(data?.error){setNotice(data.error);setNoticeOk(false);return}if(data?.live_trading_enabled===false){setNotice(data.message||"Kraken live trading isn't enabled yet.");setNoticeOk(false);return}setNotice("Cancellation confirmed with Kraken — any unfilled amount was released back to your wallet.");setNoticeOk(true);void loadUser()};
 
   const switchPair=(s:string)=>{setSymbol(s);window.history.pushState({},"",`/trade/${encodeURIComponent(s.replace("/","-"))}`)};
 
