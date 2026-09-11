@@ -325,13 +325,10 @@ function initials(name: string) {
 export default function Home({
   onLogout,
   onTrade,
-  onP2P,
 }: {
   onLogout?: () => void;
   onTrade: (symbol: string) => void;
-  onP2P?: () => void;
 }) {
-  
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [wallets, setWallets] = useState<Wallet[]>([]);
@@ -1114,8 +1111,45 @@ export default function Home({
           </>}
           {(feedTab === "CEO" || feedTab === "Following") && <>
             {filteredPosts.map((p) => <PostCard key={p.id} post={p} currentUserId={userId} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />)}
-                  {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} onP2P={onP2P} />}
+            {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
+          </>}
+        </section>
+      </main>
+
+      {showFab && (
+        <div style={styles.fabWrap}>
+          {fabOpen && (
+            <div style={styles.fabMenu}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("post"); setCommentPostId(null); }}>
+                <span style={styles.fabMenuIcon}><Icon name="plus" size={16} /></span>
+                <span>Post</span>
+              </button>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); notify("Messages coming soon."); }}>
+                <span style={styles.fabMenuIcon}><Icon name="bell" size={16} /></span>
+                <span>Message</span>
+              </button>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("menu"); }}>
+                <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
+                <span>Profile</span>
+              </button>
+            </div>
+          )}
+          <button type="button" style={{ ...styles.fab, ...(fabOpen ? styles.fabOpen : {}) }} onClick={() => setFabOpen((v) => !v)} aria-label="Create">
+            <Icon name={fabOpen ? "close" : "plus"} size={22} />
+          </button>
+        </div>
+      )}
+
+      <nav style={styles.bottomNav}>
+        <NavItem icon="home" label="Home" active onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
+        <NavItem icon="chart" label="Markets" onClick={() => notify("Markets navigation is coming next.")} />
+        <NavItem icon="trade" label="Trade" onClick={() => notify("Trade navigation is coming next.")} />
+        <NavItem icon="percent" label="Earn" onClick={() => notify("Earn navigation is coming next.")} />
+        <NavItem icon="wallet" label="Assets" onClick={() => notify("Assets navigation is coming next.")} />
+      </nav>
+
+      {toast && <div style={styles.toast}>{toast}</div>}
+      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onGetQuote={getWithdrawalQuote} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
@@ -1296,7 +1330,6 @@ function DepositModal({
   onDeposit,
   onBuyCrypto,
   onProvisionAddress,
-  onP2P,
 }: {
   networks: Network[];
   deposits: Deposit[];
@@ -1305,7 +1338,6 @@ function DepositModal({
   onDeposit: (network: Network, amount: string) => Promise<any>;
   onBuyCrypto: (network: Network, fiatAmount: string) => Promise<any>;
   onProvisionAddress: (network: Network) => Promise<any>;
-  onP2P?: () => void;
 }) {
   type Step = "methods" | "coins" | "networks" | "amount" | "result";
   type Flow = "crypto" | "buy";
@@ -1521,10 +1553,10 @@ function DepositModal({
             <span style={styles.methodLargeText}><b>Buy Crypto</b><small>Get your real wallet address to buy crypto on this network.</small></span>
             <Icon name="arrow" size={21} />
           </button>
-          <button type="button" style={styles.methodLarge} onClick={() => { onClose(); onP2P?.(); }}>
+          <button type="button" style={styles.methodLargeDisabled} disabled>
             <span style={styles.methodLargeIcon}><Icon name="trade" size={23} /></span>
-            <span style={styles.methodLargeText}><b>P2P Trading</b><small>More choices, better prices.</small></span>
-            <Icon name="arrow" size={21} />
+            <span style={styles.methodLargeText}><b>P2P Trading</b><small>More choices, better prices — available later.</small></span>
+            <span style={styles.comingSoon}>Later</span>
           </button>
           <button type="button" style={styles.methodLargeDisabled} disabled>
             <span style={styles.methodLargeIcon}><Icon name="userPlus" size={23} /></span>
