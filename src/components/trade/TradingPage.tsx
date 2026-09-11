@@ -151,7 +151,15 @@ export default function TradingPage({symbol:propSymbol,onBack,onAddFunds}:Props)
 
   const loadPair=useCallback(async()=>{if(!symbol)return;setBusy(true);const [{data,error},{data:all,error:e2}]=await Promise.all([supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active").eq("symbol",symbol).maybeSingle(),supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active").eq("is_active",true).order("symbol").limit(200)]);if(error||e2){setNotice(error?.message||e2?.message||"Unable to load pairs.");setNoticeOk(false);setBusy(false);return}if(!data||!data.is_active){setNotice("This trading pair is unavailable.");setNoticeOk(false);setPair(null);setBusy(false);return}setPair(data as Pair);setPairs((all||[]) as Pair[]);setP("");setAmount("");setActivePct(null);setBusy(false)},[symbol]);
 
-  const loadMarket=useCallback(async()=>{if(!pair)return;const [{data:t},{data:c},{data:b,error:be}]=await Promise.all([supabase.from("market_tickers").select("symbol,last_price,bid_price,ask_price,high_24h,low_24h,volume_24h,change_24h").eq("symbol",pair.symbol).maybeSingle(),supabase.from("market_candles").select("open_time,open,high,low,close,volume").eq("trading_pair",pair.symbol).eq("timeframe",tf).order("open_time",{ascending:true}).limit(500),supabase.rpc("get_order_book",{p_trading_pair:pair.symbol})]);setTicker((t||null) as Ticker|null);setCandles((c||[]) as Candle[]);if(!be)setBook((b||[]) as BookRow[]);if(!p&&t?.last_price!=null)setP(String(t.last_price))},[pair,tf,p]);
+  // Candles must come from Kraken, not sit empty waiting for something else to fill
+  // market_candles. We call the kraken-spot Edge Function's `ohlc` sync first (it
+  // upserts real Kraken OHLC into market_candles server-side), then read the table —
+  // same pattern as the ticker, just triggered on-demand per symbol/timeframe instead
+  // of on a cron, since only the pair currently being viewed needs it live.
+  const loadMarket=useCallback(async()=>{if(!pair)return;
+    const {error:ohlcErr}=await supabase.functions.invoke(`kraken-spot?action=ohlc&symbol=${encodeURIComponent(pair.symbol)}&timeframe=${tf}`,{method:"GET"});
+    if(ohlcErr)console.error("Kraken OHLC sync failed:",ohlcErr.message);
+    const [{data:t},{data:c},{data:b,error:be}]=await Promise.all([supabase.from("market_tickers").select("symbol,last_price,bid_price,ask_price,high_24h,low_24h,volume_24h,change_24h").eq("symbol",pair.symbol).maybeSingle(),supabase.from("market_candles").select("open_time,open,high,low,close,volume").eq("trading_pair",pair.symbol).eq("timeframe",tf).order("open_time",{ascending:true}).limit(500),supabase.rpc("get_order_book",{p_trading_pair:pair.symbol})]);setTicker((t||null) as Ticker|null);setCandles((c||[]) as Candle[]);if(!be)setBook((b||[]) as BookRow[]);if(!p&&t?.last_price!=null)setP(String(t.last_price))},[pair,tf,p]);
 
   const loadTrades=useCallback(async()=>{if(!pair)return;const {data}=await supabase.from("trades").select("id,trading_pair,price,amount,created_at").eq("trading_pair",pair.symbol).order("created_at",{ascending:false}).limit(50);setRecentTrades((data||[]) as RecentTrade[])},[pair]);
 
@@ -159,6 +167,9 @@ export default function TradingPage({symbol:propSymbol,onBack,onAddFunds}:Props)
 
   useEffect(()=>{void loadPair()},[loadPair]);
   useEffect(()=>{void loadMarket();void loadUser();void loadTrades()},[loadMarket,loadUser,loadTrades]);
+  // Keep pulling fresh Kraken candles while this chart is on screen (only for the one
+  // pair/timeframe actually being viewed — not a blanket poll across every market).
+  useEffect(()=>{if(!pair)return;const id=window.setInterval(()=>{void loadMarket()},60000);return()=>window.clearInterval(id)},[pair,loadMarket]);
   useEffect(()=>{if(!pair)return;const ch=supabase.channel(`trade-${pair.symbol}-${tf}`)
     .on("postgres_changes",{event:"*",schema:"public",table:"market_tickers",filter:`symbol=eq.${pair.symbol}`},x=>setTicker((x.new||null) as Ticker))
     .on("postgres_changes",{event:"*",schema:"public",table:"market_candles",filter:`trading_pair=eq.${pair.symbol}`},x=>{const r=x.new as Candle&{timeframe:string};if(r?.timeframe!==tf)return;setCandles(prev=>{const i=prev.findIndex(c=>c.open_time===r.open_time);if(i<0)return [...prev,r].slice(-500);const n=[...prev];n[i]=r;return n})})
