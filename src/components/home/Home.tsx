@@ -1553,11 +1553,19 @@ function DepositModal({
             <span style={styles.methodLargeText}><b>Buy Crypto</b><small>Get your real wallet address to buy crypto on this network.</small></span>
             <Icon name="arrow" size={21} />
           </button>
-          <button type="button" style={styles.methodLargeDisabled} disabled>
-            <span style={styles.methodLargeIcon}><Icon name="trade" size={23} /></span>
-            <span style={styles.methodLargeText}><b>P2P Trading</b><small>More choices, better prices — available later.</small></span>
-            <span style={styles.comingSoon}>Later</span>
-          </button>
+          <button
+  type="button"
+  style={styles.methodLarge}
+  onClick={() => {
+    onClose();
+    window.history.pushState({}, "", "/p2p");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }}
+>
+  <span style={styles.methodLargeIcon}><Icon name="trade" size={23} /></span>
+  <span style={styles.methodLargeText}><b>P2P Trading</b><small>Buy or sell crypto directly with other users at your own price.</small></span>
+  <Icon name="arrow" size={21} />
+</button>
           <button type="button" style={styles.methodLargeDisabled} disabled>
             <span style={styles.methodLargeIcon}><Icon name="userPlus" size={23} /></span>
             <span style={styles.methodLargeText}><b>Deposit via CEO User</b><small>CEO User transfers will be added later.</small></span>
