@@ -34,7 +34,6 @@ type TurnstileAPI = {
     },
   ) => string;
   reset: (widgetId?: string) => void;
-  remove?: (widgetId?: string) => void;
 };
 
 declare global {
@@ -148,7 +147,14 @@ function Rule({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 function Turnstile({ siteKey, onToken }: { siteKey?: string; onToken: (token: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const widget = useRef<string | undefined>(undefined);
+  const onTokenRef = useRef(onToken);
   const [loaded, setLoaded] = useState(false);
+
+  // Keep the latest callback without causing the Turnstile widget to be
+  // destroyed and recreated whenever AuthScreen re-renders.
+  useEffect(() => {
+    onTokenRef.current = onToken;
+  }, [onToken]);
 
   useEffect(() => {
     if (!siteKey) return;
@@ -165,18 +171,18 @@ function Turnstile({ siteKey, onToken }: { siteKey?: string; onToken: (token: st
           theme: "dark",
           size: "flexible",
           callback: (token: string) => {
-            if (active) onToken(token);
+            if (active) onTokenRef.current(token);
           },
           "expired-callback": () => {
-            if (active) onToken("");
+            if (active) onTokenRef.current("");
           },
           "error-callback": () => {
-            if (active) onToken("");
+            if (active) onTokenRef.current("");
           },
         });
         if (active) setLoaded(true);
       } catch {
-        if (active) onToken("");
+        if (active) onTokenRef.current("");
       }
     };
 
@@ -212,7 +218,7 @@ function Turnstile({ siteKey, onToken }: { siteKey?: string; onToken: (token: st
       }
       widget.current = undefined;
     };
-  }, [siteKey, onToken]);
+  }, [siteKey]);
 
   if (!siteKey) {
     return (
