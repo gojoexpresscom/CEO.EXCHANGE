@@ -33,7 +33,10 @@ type Market = {
   quote_asset: string;
   base_name?: string;
   hasTicker: boolean;
+  listed_at: string | null;
 };
+
+type MarketFavorite = { symbol: string };
 
 type Post = {
   id: string;
@@ -378,11 +381,12 @@ export default function Home({
     window.setTimeout(() => setToast(""), 3500);
   }, []);
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("ceo-market-favorites") || "[]");
-      if (Array.isArray(saved)) setFavoriteSymbols(saved.filter((x) => typeof x === "string"));
-    } catch { setFavoriteSymbols([]); }
+  // Favorites are real, per-user rows in market_favorites (RLS-scoped to auth.uid()),
+  // not client-only state — they persist across devices/reinstalls like the rest of the account.
+  const loadFavorites = useCallback(async (id: string) => {
+    const { data, error: fe } = await supabase.from("market_favorites").select("symbol").eq("user_id", id);
+    if (fe) throw fe;
+    setFavoriteSymbols(((data ?? []) as MarketFavorite[]).map((f) => f.symbol));
   }, []);
 
   const loadProfileAndWallets = useCallback(async (id: string) => {
@@ -400,7 +404,7 @@ export default function Home({
 
   const loadMarkets = useCallback(async () => {
     const [{ data: pairs, error: pairError }, { data: tickers, error: tickerError }, { data: assets, error: assetError }] = await Promise.all([
-      supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active").eq("is_active", true).order("symbol").limit(100),
+      supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active,listed_at").eq("is_active", true).order("symbol").limit(100),
       supabase.from("market_tickers").select("symbol,last_price,change_24h,volume_24h,updated_at").limit(100),
       supabase.from("assets").select("symbol,name,is_active").eq("is_active", true).order("symbol").limit(100),
     ]);
@@ -424,6 +428,7 @@ export default function Home({
         volume_24h: ticker?.volume_24h == null ? null : Number(ticker.volume_24h),
         updated_at: ticker?.updated_at ?? null,
         hasTicker: Boolean(ticker),
+        listed_at: pair.listed_at ?? null,
       } as Market;
     });
     setMarkets(rows);
@@ -545,14 +550,14 @@ export default function Home({
     try {
       await Promise.all([
         loadProfileAndWallets(id), loadMarkets(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
-        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id),
+        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id), loadFavorites(id),
       ]);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load the Home Page.");
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements]);
+  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements, loadFavorites]);
 
   useEffect(() => {
     let alive = true;
@@ -582,9 +587,9 @@ export default function Home({
 
   useEffect(() => {
     if (!userId) return;
-    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarkets(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).subscribe();
+    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarkets(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [feedTab, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, userId]);
+  }, [feedTab, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, userId]);
 
   const marketMap = useMemo(() => new Map(markets.map((m) => [m.symbol.toUpperCase(), m])), [markets]);
   const totalUsd = useMemo(() => wallets.reduce((sum, w) => {
@@ -597,9 +602,11 @@ export default function Home({
   }, 0), [marketMap, wallets]);
 
   const filteredMarkets = useMemo(() => {
-    const featured = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
-    const normalize = (symbol: string) => symbol.replace(/[^a-z0-9]/gi, "").toUpperCase();
-    const featuredRank = new Map(featured.map((s, i) => [normalize(s), i]));
+    // marketCategory === "Spot" is the only category with a real backing provider right now
+    // (Kraken spot via the kraken-spot Edge Function). Futures/Funding render an honest
+    // "not connected" empty state below instead of silently reusing Spot data.
+    if (marketCategory !== "Spot") return [];
+
     // Only markets that actually have a last price (enabled / live data)
     let list = markets.filter((m) => m.last_price != null && Number(m.last_price) > 0);
 
@@ -612,17 +619,13 @@ export default function Home({
       list = list.filter((m) => Number(m.change_24h ?? 0) < 0);
       list.sort((a, b) => Number(a.change_24h ?? Infinity) - Number(b.change_24h ?? Infinity));
     } else if (marketTab === "New") {
-      list.sort((a, b) => new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime());
+      // "New" = most recently listed on CEO Exchange (trading_pairs.listed_at), not Kraken
+      // listing age — Kraken's public AssetPairs endpoint has no listing-date field to source
+      // that from, so this is the only honest definition of "new" available to us.
+      list.sort((a, b) => new Date(b.listed_at ?? 0).getTime() - new Date(a.listed_at ?? 0).getTime());
     } else {
-      // Hot: volume-weighted with featured pairs first
-      list.sort((a, b) => {
-        const ar = featuredRank.get(normalize(a.symbol));
-        const br = featuredRank.get(normalize(b.symbol));
-        if (ar != null && br != null) return ar - br;
-        if (ar != null) return -1;
-        if (br != null) return 1;
-        return Number(b.volume_24h ?? -Infinity) - Number(a.volume_24h ?? -Infinity);
-      });
+      // Hot: purely 24h volume — the one real, deterministic "activity" metric we have.
+      list.sort((a, b) => Number(b.volume_24h ?? -Infinity) - Number(a.volume_24h ?? -Infinity));
     }
 
     if (search.trim()) {
@@ -631,7 +634,7 @@ export default function Home({
     }
 
     return showAllMarkets ? list : list.slice(0, 8);
-  }, [favoriteSymbols, marketTab, markets, search, showAllMarkets]);
+  }, [favoriteSymbols, marketCategory, marketTab, markets, search, showAllMarkets]);
 
   const filteredPosts = useMemo(() => {
     if (!search.trim()) return posts;
@@ -647,13 +650,21 @@ export default function Home({
 
   const closeModal = () => { setModal(null); if (modal === "deposit") setDepositResult(null); };
 
-  const toggleFavorite = (symbol: string) => {
-    const next = favoriteSymbols.includes(symbol)
-      ? favoriteSymbols.filter((x) => x !== symbol)
-      : [...favoriteSymbols, symbol];
-    setFavoriteSymbols(next);
-    localStorage.setItem("ceo-market-favorites", JSON.stringify(next));
-    notify(next.includes(symbol) ? `${symbol} added to Favorites.` : `${symbol} removed from Favorites.`);
+  const toggleFavorite = async (symbol: string) => {
+    if (!userId) return;
+    const isFavorite = favoriteSymbols.includes(symbol);
+    // Optimistic UI update, then reconcile against the real row so a failed
+    // write (offline, RLS, etc.) doesn't leave the star in a false state.
+    setFavoriteSymbols((prev) => (isFavorite ? prev.filter((x) => x !== symbol) : [...prev, symbol]));
+    const { error: favErr } = isFavorite
+      ? await supabase.from("market_favorites").delete().eq("user_id", userId).eq("symbol", symbol)
+      : await supabase.from("market_favorites").insert({ user_id: userId, symbol });
+    if (favErr) {
+      setFavoriteSymbols((prev) => (isFavorite ? [...prev, symbol] : prev.filter((x) => x !== symbol)));
+      notify(favErr.message || "Unable to update Favorites.");
+      return;
+    }
+    notify(isFavorite ? `${symbol} removed from Favorites.` : `${symbol} added to Favorites.`);
   };
 
   const markAnnouncementRead = async (announcement: Announcement) => {
@@ -1093,9 +1104,23 @@ export default function Home({
             />
           ))}
           {!filteredMarkets.length && (
-            <Empty text={marketTab === "Favorites" ? "No favorite markets yet." : marketTab === "Gainers" ? "No gainers right now." : marketTab === "Losers" ? "No losers right now." : "No market data is available yet."} />
+            <Empty
+              text={
+                marketCategory === "Futures"
+                  ? "Futures markets aren't connected yet."
+                  : marketCategory === "Funding"
+                  ? "Funding data isn't available yet."
+                  : marketTab === "Favorites"
+                  ? "No favorite markets yet."
+                  : marketTab === "Gainers"
+                  ? "No gainers right now."
+                  : marketTab === "Losers"
+                  ? "No losers right now."
+                  : "No market data is available yet."
+              }
+            />
           )}
-          {markets.filter((m) => m.last_price != null && Number(m.last_price) > 0).length > 8 && (
+          {marketCategory === "Spot" && markets.filter((m) => m.last_price != null && Number(m.last_price) > 0).length > 8 && (
             <button type="button" style={styles.viewAll} onClick={() => setShowAllMarkets((value) => !value)}>
               {showAllMarkets ? "Show less" : "View more"} <Icon name="arrow" size={18} />
             </button>
