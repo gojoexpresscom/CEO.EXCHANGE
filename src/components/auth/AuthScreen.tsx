@@ -34,6 +34,7 @@ type TurnstileAPI = {
     },
   ) => string;
   reset: (widgetId?: string) => void;
+  remove?: (widgetId?: string) => void;
 };
 
 declare global {
@@ -152,43 +153,65 @@ function Turnstile({ siteKey, onToken }: { siteKey?: string; onToken: (token: st
   useEffect(() => {
     if (!siteKey) return;
 
+    let active = true;
+    let timer: number | undefined;
+
     const mount = () => {
-      if (!host.current || !window.turnstile || widget.current) return;
-      widget.current = window.turnstile.render(host.current, {
-        sitekey: siteKey,
-        theme: "dark",
-        size: "flexible",
-        callback: onToken,
-        "expired-callback": () => onToken(""),
-        "error-callback": () => onToken(""),
-      });
-      setLoaded(true);
+      if (!active || !host.current || !window.turnstile || widget.current) return;
+
+      try {
+        widget.current = window.turnstile.render(host.current, {
+          sitekey: siteKey,
+          theme: "dark",
+          size: "flexible",
+          callback: (token: string) => {
+            if (active) onToken(token);
+          },
+          "expired-callback": () => {
+            if (active) onToken("");
+          },
+          "error-callback": () => {
+            if (active) onToken("");
+          },
+        });
+        if (active) setLoaded(true);
+      } catch {
+        if (active) onToken("");
+      }
     };
 
     if (window.turnstile) {
       mount();
-      return;
-    }
-
-    const src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-    let script = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
-
-    if (!script) {
-      script = document.createElement("script");
-      script.src = src;
-      script.async = true;
-      script.defer = true;
-      script.onload = mount;
-      document.head.appendChild(script);
     } else {
-      const timer = window.setInterval(() => {
-        if (window.turnstile) {
-          window.clearInterval(timer);
-          mount();
-        }
-      }, 100);
-      return () => window.clearInterval(timer);
+      const src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      let script = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
+
+      if (!script) {
+        script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        script.defer = true;
+        script.onload = mount;
+        document.head.appendChild(script);
+      } else {
+        timer = window.setInterval(() => {
+          if (window.turnstile) {
+            if (timer !== undefined) window.clearInterval(timer);
+            mount();
+          }
+        }, 100);
+      }
     }
+
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearInterval(timer);
+
+      if (widget.current && window.turnstile?.remove) {
+        window.turnstile.remove(widget.current);
+      }
+      widget.current = undefined;
+    };
   }, [siteKey, onToken]);
 
   if (!siteKey) {
@@ -751,10 +774,13 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {screen === "signup" && (
           <>
-            <div style={styles.loginHead}>
-              <h1 style={styles.title}>{title.signup}</h1>
-              <p style={styles.subtitle}>Create your CEO Exchange account</p>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
+              <button type="button" style={styles.goldLink} onClick={goLogin}>Login Now</button>
             </div>
+
+            <h1 style={styles.signupTitle}>{title.signup}</h1>
+            <div style={styles.globalRow}><span style={{ fontSize: 22 }}>◎</span><span>CEO Exchange Global</span><span style={{ marginLeft: "auto" }}>↔</span></div>
 
             <label style={styles.label}>Email / Mobile Number</label>
             <div style={styles.field}>
@@ -795,32 +821,23 @@ export default function AuthScreen({ onAuth }: Props) {
               {loading ? "Creating…" : "Create Account"} <Arrow />
             </button>
 
-            <div style={styles.divider}>
-              <span style={styles.dividerLine} />
-              <span style={styles.dividerText}>Or continue with</span>
-              <span style={styles.dividerLine} />
-            </div>
+            <div style={styles.divider}><span style={styles.dividerLine} /><span style={styles.dividerText}>OR</span><span style={styles.dividerLine} /></div>
             <div style={styles.socialGrid}>
               <button type="button" style={styles.socialButton} onClick={() => void oauth("google")}><GoogleIcon /> Google</button>
-              <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}><XIcon /> X</button>
+              <button type="button" style={styles.socialButton} onClick={() => void oauth("x")}><XIcon /> X (Twitter)</button>
             </div>
-
-            <button type="button" style={styles.forgotBottom} onClick={goLogin}>
-              Already have an account? <span style={styles.goldInline}>Login Now</span>
-            </button>
           </>
         )}
 
         {screen === "verify-signup" && (
           <>
-            <button type="button" style={styles.backText} onClick={() => setScreen("signup")} aria-label="Back">
-              <Arrow left /> Back
-            </button>
-            <div style={styles.loginHead}>
-              <h1 style={styles.title}>{title["verify-signup"]}</h1>
-              <p style={styles.subtitle}>A 6-digit code was sent to</p>
-              <p style={styles.emailText}>{signupMethod === "phone" ? sessionStorage.getItem("ceo_exchange_signup_identifier") || identifier : email || identifier}</p>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={() => setScreen("signup")} aria-label="Back"><Arrow left /></button>
             </div>
+            <h1 style={styles.centerTitle}>{title["verify-signup"]}</h1>
+            <p style={styles.centerText}>A 6-digit verification code has been sent to:</p>
+            <p style={styles.emailText}>{signupMethod === "phone" ? sessionStorage.getItem("ceo_exchange_signup_identifier") || identifier : email || identifier}</p>
+            <p style={styles.centerText}>Enter the code from your email or SMS.</p>
             <div style={styles.otpRow}>
               {Array.from({ length: 6 }).map((_, index) => (
                 <input key={index} id={`ceo-otp-${index}`} value={otp[index] || ""} maxLength={1} inputMode="numeric"
@@ -841,14 +858,13 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {screen === "recovery-verify" && (
           <>
-            <button type="button" style={styles.backText} onClick={() => setScreen("forgot")} aria-label="Back">
-              <Arrow left /> Back
-            </button>
-            <div style={styles.loginHead}>
-              <h1 style={styles.title}>{title["recovery-verify"]}</h1>
-              <p style={styles.subtitle}>A 6-digit code was sent to</p>
-              <p style={styles.emailText}>{email}</p>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={() => setScreen("forgot")} aria-label="Back"><Arrow left /></button>
             </div>
+            <h1 style={styles.centerTitle}>{title["recovery-verify"]}</h1>
+            <p style={styles.centerText}>A 6-digit verification code has been sent to:</p>
+            <p style={styles.emailText}>{email}</p>
+            <p style={styles.centerText}>Enter the code to continue resetting your password.</p>
             <div style={styles.otpRow}>
               {Array.from({ length: 6 }).map((_, index) => (
                 <input key={index} id={`ceo-otp-${index}`} value={otp[index] || ""} maxLength={1} inputMode="numeric"
@@ -870,23 +886,22 @@ export default function AuthScreen({ onAuth }: Props) {
         {screen === "password-reset-success" && (
           <>
             <div style={styles.successIcon} aria-hidden="true">✓</div>
-            <div style={styles.loginHead}>
-              <h1 style={{ ...styles.title, textAlign: "center" }}>{title["password-reset-success"]}</h1>
-              <p style={{ ...styles.subtitle, textAlign: "center" }}>Your password has been changed. You can log in with your new password.</p>
-            </div>
+            <h1 style={styles.centerTitle}>{title["password-reset-success"]}</h1>
+            <p style={styles.centerText}>Your password has been changed successfully. You can now log in with your new password.</p>
             <button type="button" style={styles.primaryButton} onClick={goLogin}>Back to Login <Arrow /></button>
           </>
         )}
 
         {screen === "create-recovery-password" && (
           <>
-            <button type="button" style={styles.backText} onClick={goLogin} aria-label="Back to login">
-              <Arrow left /> Back
-            </button>
-            <div style={styles.loginHead}>
-              <h1 style={styles.title}>{title["create-recovery-password"]}</h1>
-              <p style={styles.subtitle}>Create a strong new password. This replaces your old password.</p>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login">
+                <Arrow left />
+              </button>
             </div>
+
+            <h1 style={styles.centerTitle}>{title["create-recovery-password"]}</h1>
+            <p style={styles.centerText}>Create a strong new password. This replaces your old password completely.</p>
 
             <label style={styles.label}>New Password</label>
             <div style={styles.field}>
@@ -936,31 +951,31 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {passwordScreen && (
           <>
-            <button
-              type="button"
-              style={styles.backText}
-              onClick={() => setScreen(
-                passwordConfirmScreen
-                  ? screen === "confirm-signup-password"
-                    ? "create-signup-password"
-                    : "oauth-password"
-                  : passwordKind === "signup"
-                    ? "verify-signup"
-                    : "login",
-              )}
-              aria-label="Back"
-            >
-              <Arrow left /> Back
-            </button>
-
-            <div style={styles.loginHead}>
-              <h1 style={styles.title}>{title[screen]}</h1>
-              <p style={styles.subtitle}>
-                {passwordCreateScreen
-                  ? "Create a strong password. Stored securely by Supabase Auth."
-                  : "Enter the same password again to confirm."}
-              </p>
+            <div style={styles.headerRow}>
+              <button
+                type="button"
+                style={styles.circleBack}
+                onClick={() => setScreen(
+                  passwordConfirmScreen
+                    ? screen === "confirm-signup-password"
+                      ? "create-signup-password"
+                      : "oauth-password"
+                    : passwordKind === "signup"
+                      ? "verify-signup"
+                      : "login",
+                )}
+                aria-label="Back"
+              >
+                <Arrow left />
+              </button>
             </div>
+
+            <h1 style={styles.centerTitle}>{title[screen]}</h1>
+            <p style={styles.centerText}>
+              {passwordCreateScreen
+                ? "Create a strong password. Your password is stored securely by Supabase Auth."
+                : "Enter the same password again to confirm it."}
+            </p>
 
             <div style={styles.field}>
               <span style={styles.icon}><LockIcon /></span>
@@ -1009,13 +1024,11 @@ export default function AuthScreen({ onAuth }: Props) {
 
         {screen === "forgot" && (
           <form onSubmit={forgotStart}>
-            <button type="button" style={styles.backText} onClick={goLogin} aria-label="Back to login">
-              <Arrow left /> Back
-            </button>
-            <div style={styles.loginHead}>
-              <h1 style={styles.title}>{title.forgot}</h1>
-              <p style={styles.subtitle}>Enter your email and we’ll send a 6-digit code to reset your password.</p>
+            <div style={styles.headerRow}>
+              <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
             </div>
+            <h1 style={styles.centerTitle}>{title.forgot}</h1>
+            <p style={styles.centerText}>Enter your email and we’ll send a 6-digit code to reset your password.</p>
             <label style={styles.label}>Email</label>
             <div style={styles.field}>
               <span style={styles.icon}><MailIcon /></span>
@@ -1201,32 +1214,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     cursor: "pointer",
     fontWeight: 500,
-  },
-  backText: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    border: 0,
-    background: "transparent",
-    color: "#9a9a9a",
-    fontSize: 14,
-    cursor: "pointer",
-    fontWeight: 500,
-    padding: "0 0 12px",
-    marginBottom: 4,
-  },
-  successIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: "50%",
-    margin: "0 auto 16px",
-    display: "grid",
-    placeItems: "center",
-    background: "rgba(34, 197, 94, 0.12)",
-    border: "1px solid rgba(34, 197, 94, 0.35)",
-    color: "#4ade80",
-    fontSize: 28,
-    fontWeight: 800,
   },
   signupHint: {
     display: "block",
