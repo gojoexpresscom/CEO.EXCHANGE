@@ -3,18 +3,19 @@ import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
 import P2PMarketplace from "./components/p2p/P2PMarketplace";
+import P2POrderDetail from "./components/p2p/P2POrderDetail";
 import { supabase } from "./lib/supabase";
 
 type AppRoute =
   | { page: "home" }
   | { page: "trade"; symbol: string }
-  | { page: "p2p" };
+  | { page: "p2p" }
+  | { page: "p2p-order"; orderId: string };
 
 function getRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
 
   const tradeMatch = path.match(/^\/trade\/(.+)$/i);
-
   if (tradeMatch) {
     return {
       page: "trade",
@@ -22,10 +23,16 @@ function getRoute(): AppRoute {
     };
   }
 
-  if (path === "/p2p") {
+  const p2pOrderMatch = path.match(/^\/p2p\/order\/([^/]+)$/i);
+  if (p2pOrderMatch) {
     return {
-      page: "p2p",
+      page: "p2p-order",
+      orderId: decodeURIComponent(p2pOrderMatch[1]),
     };
+  }
+
+  if (/^\/p2p$/i.test(path)) {
+    return { page: "p2p" };
   }
 
   return { page: "home" };
@@ -41,7 +48,6 @@ export default function App() {
 
     void supabase.auth.getSession().then(({ data }) => {
       if (!alive) return;
-
       setAuthenticated(Boolean(data.session));
       setReady(true);
     });
@@ -52,8 +58,6 @@ export default function App() {
       if (!alive) return;
 
       if (event === "PASSWORD_RECOVERY") {
-        // A recovery session was just created. Don't treat this as a normal
-        // login — let AuthScreen take over and show the new-password screen.
         setReady(true);
         return;
       }
@@ -113,6 +117,24 @@ export default function App() {
     });
   }
 
+  function openP2POrder(orderId: string) {
+    window.history.pushState(
+      {},
+      "",
+      `/p2p/order/${encodeURIComponent(orderId)}`
+    );
+
+    setRoute({
+      page: "p2p-order",
+      orderId,
+    });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "instant",
+    });
+  }
+
   function goHome() {
     window.history.pushState({}, "", "/");
 
@@ -153,6 +175,7 @@ export default function App() {
             filter: "drop-shadow(0 8px 24px rgba(245,181,27,.25))",
           }}
         />
+
         <div
           style={{
             width: 24,
@@ -163,7 +186,14 @@ export default function App() {
             animation: "spin 0.85s linear infinite",
           }}
         />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+        <style>{`
+          @keyframes spin {
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}</style>
       </div>
     );
   }
@@ -188,7 +218,23 @@ export default function App() {
   }
 
   if (route.page === "p2p") {
-    return <P2PMarketplace onBack={goHome} />;
+    return (
+      <P2PMarketplace
+        onBack={goHome}
+      />
+    );
+  }
+
+  if (route.page === "p2p-order") {
+    return (
+      <P2POrderDetail
+        orderId={route.orderId}
+        onBack={openP2P}
+        onTradeCreated={(tradeId) => {
+          console.log("P2P trade created:", tradeId);
+        }}
+      />
+    );
   }
 
   return (
@@ -198,7 +244,6 @@ export default function App() {
         goHome();
       }}
       onTrade={openTrade}
-      onP2P={openP2P}
     />
   );
 }
