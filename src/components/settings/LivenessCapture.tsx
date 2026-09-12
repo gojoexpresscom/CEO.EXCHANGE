@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
 import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
 
@@ -24,11 +25,19 @@ const STAGES: Stage[] = [
 ];
 
 const HOLD_MS = 3000;
-const SAMPLE_MS = 200;
+const SAMPLE_MS = 150;
+const MIN_CONFIDENCE = 0.6;
+
+// MediaPipe hosts these publicly for free — no API key, no account, no per-call cost.
+const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
 
 /**
  * Auto-capture liveness (5 poses). No manual Capture button.
- * Uses FaceDetector API when available; otherwise frame-stability heuristics.
+ * Uses a real on-device face-detection model (MediaPipe BlazeFace) to confirm an
+ * actual face is present, centered and reasonably sized — not just "something bright
+ * and still" like a brightness/motion heuristic would allow.
  * Uploads private paths to kyc-documents bucket.
  */
 export default function LivenessCapture({ userId, onComplete, onCancel, notify }: Props) {
@@ -39,6 +48,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
   const holdStartRef = useRef<number | null>(null);
   const lastSampleRef = useRef<number>(0);
   const prevLumaRef = useRef<number | null>(null);
+  const faceDetectorRef = useRef<FaceDetector | null>(null);
 
   const [stageIdx, setStageIdx] = useState(0);
   const [paths, setPaths] = useState<string[]>([]);
@@ -48,12 +58,47 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
   const [holdProgress, setHoldProgress] = useState(0);
   const [capturing, setCapturing] = useState(false);
   const [done, setDone] = useState(false);
+  const [modelState, setModelState] = useState<"loading" | "ready" | "unavailable">("loading");
   const capturingRef = useRef(false);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+  }, []);
+
+  // Load the on-device face detection model once.
+  useEffect(() => {
+    let cancelled = false;
+    async function initDetector() {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+        const detector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: MODEL_URL,
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          minDetectionConfidence: MIN_CONFIDENCE,
+        });
+        if (cancelled) {
+          detector.close();
+          return;
+        }
+        faceDetectorRef.current = detector;
+        setModelState("ready");
+      } catch {
+        // Offline, blocked CDN, or unsupported device — fall back to the
+        // brightness/motion heuristic rather than blocking verification entirely.
+        if (!cancelled) setModelState("unavailable");
+      }
+    }
+    void initDetector();
+    return () => {
+      cancelled = true;
+      faceDetectorRef.current?.close();
+      faceDetectorRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -86,6 +131,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     };
   }, [stopCamera]);
 
+  // Fallback heuristic — only used if the real face-detection model failed to load.
   const sampleCenter = useCallback((): { ok: boolean; luma: number; motion: number } => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -96,7 +142,6 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     canvas.height = h;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return { ok: false, luma: 0, motion: 999 };
-    // sample center oval region of mirrored face area
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 480;
     const sx = vw * 0.25;
@@ -116,33 +161,42 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     const prev = prevLumaRef.current;
     const motion = prev == null ? 0 : Math.abs(luma - prev);
     prevLumaRef.current = luma;
-    // sufficient light + low motion = stable
     const ok = luma > 35 && luma < 230 && motion < 8;
     return { ok, luma, motion };
   }, []);
 
-  const detectFace = useCallback(async (): Promise<boolean> => {
+  const detectFace = useCallback((): boolean => {
     const video = videoRef.current;
-    if (!video) return false;
-    // Prefer native FaceDetector when present
-    const FD = (window as any).FaceDetector;
-    if (typeof FD === "function") {
+    if (!video || video.readyState < 2) return false;
+
+    const detector = faceDetectorRef.current;
+    if (detector) {
       try {
-        const detector = new FD({ fastMode: true, maxDetectedFaces: 1 });
-        const faces = await detector.detect(video);
-        if (!faces?.length) return false;
-        const f = faces[0].boundingBox;
+        const result = detector.detectForVideo(video, performance.now());
+        const detections = result?.detections ?? [];
+        if (!detections.length) return false;
+        const top = detections[0];
+        const box = top.boundingBox;
+        if (!box) return false;
+        const score = top.categories?.[0]?.score ?? 0;
+        if (score < MIN_CONFIDENCE) return false;
+
         const vw = video.videoWidth || 1;
         const vh = video.videoHeight || 1;
-        const cx = f.x + f.width / 2;
-        const cy = f.y + f.height / 2;
-        const centered = Math.abs(cx - vw / 2) < vw * 0.22 && Math.abs(cy - vh * 0.42) < vh * 0.2;
-        const sized = f.width > vw * 0.18 && f.width < vw * 0.7;
+        // Mirrored preview: flip the x-origin to match what the user sees on screen.
+        const originX = vw - box.originX - box.width;
+        const cx = originX + box.width / 2;
+        const cy = box.originY + box.height / 2;
+        const centered = Math.abs(cx - vw / 2) < vw * 0.24 && Math.abs(cy - vh * 0.42) < vh * 0.22;
+        const sized = box.width > vw * 0.16 && box.width < vw * 0.78;
         return centered && sized;
       } catch {
-        /* fall through */
+        return false;
       }
     }
+
+    // Model never loaded (offline / blocked) — degrade to the old heuristic
+    // rather than trapping the user in an unusable flow.
     const { ok } = sampleCenter();
     return ok;
   }, [sampleCenter]);
@@ -167,13 +221,13 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     return path;
   }, [userId, stageIdx]);
 
-  // Detection loop
+  // Detection loop — waits for the model to finish loading (or fail) before starting.
   useEffect(() => {
-    if (!ready || done || capturingRef.current || permError) return;
+    if (!ready || done || capturingRef.current || permError || modelState === "loading") return;
 
     let alive = true;
 
-    const tick = async () => {
+    const tick = () => {
       if (!alive || capturingRef.current) return;
       const now = performance.now();
       if (now - lastSampleRef.current < SAMPLE_MS) {
@@ -182,8 +236,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       }
       lastSampleRef.current = now;
 
-      const faceOk = await detectFace();
-      if (!alive) return;
+      const faceOk = detectFace();
 
       if (faceOk) {
         if (holdStartRef.current == null) {
@@ -197,31 +250,33 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
           capturingRef.current = true;
           setCapturing(true);
           setStatus("Captured ✓");
-          try {
-            const path = await captureFrame();
-            const nextPaths = [...paths, path];
-            setPaths(nextPaths);
-            holdStartRef.current = null;
-            setHoldProgress(0);
-            prevLumaRef.current = null;
-            if (nextPaths.length >= STAGES.length) {
-              setDone(true);
-              setStatus("Verification captures complete");
-              stopCamera();
-              onComplete(nextPaths);
-            } else {
-              setStageIdx(nextPaths.length);
-              setStatus(STAGES[nextPaths.length].hint);
-              notify(`Captured ${nextPaths.length}/${STAGES.length}`);
+          void (async () => {
+            try {
+              const path = await captureFrame();
+              const nextPaths = [...paths, path];
+              setPaths(nextPaths);
+              holdStartRef.current = null;
+              setHoldProgress(0);
+              prevLumaRef.current = null;
+              if (nextPaths.length >= STAGES.length) {
+                setDone(true);
+                setStatus("Verification captures complete");
+                stopCamera();
+                onComplete(nextPaths);
+              } else {
+                setStageIdx(nextPaths.length);
+                setStatus(STAGES[nextPaths.length].hint);
+                notify(`Captured ${nextPaths.length}/${STAGES.length}`);
+              }
+            } catch (e: any) {
+              setStatus(e?.message || "Capture failed — try again");
+              holdStartRef.current = null;
+              setHoldProgress(0);
+            } finally {
+              capturingRef.current = false;
+              setCapturing(false);
             }
-          } catch (e: any) {
-            setStatus(e?.message || "Capture failed — try again");
-            holdStartRef.current = null;
-            setHoldProgress(0);
-          } finally {
-            capturingRef.current = false;
-            setCapturing(false);
-          }
+          })();
         }
       } else {
         holdStartRef.current = null;
@@ -239,7 +294,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       alive = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [ready, stageIdx, paths, done, permError, detectFace, captureFrame, onComplete, notify, stopCamera]);
+  }, [ready, stageIdx, paths, done, permError, modelState, detectFace, captureFrame, onComplete, notify, stopCamera]);
 
   const stage = STAGES[Math.min(stageIdx, STAGES.length - 1)];
 
@@ -328,9 +383,9 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                 />
               </div>
             )}
-            {!ready && (
+            {(!ready || modelState === "loading") && (
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#777", background: "#0a0a0a" }}>
-                Starting camera…
+                {!ready ? "Starting camera…" : "Loading face detection…"}
               </div>
             )}
           </div>

@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 import LivenessCapture from "./LivenessCapture";
+import { checkDocumentImageQuality } from "./docQuality";
 
 type Props = {
   userId: string;
@@ -32,9 +33,35 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
   const [livenessUrls, setLivenessUrls] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [checkingFront, setCheckingFront] = useState(false);
+  const [checkingBack, setCheckingBack] = useState(false);
 
   const frontRef = useRef<HTMLInputElement>(null);
   const backRef = useRef<HTMLInputElement>(null);
+
+  // Runs a free, in-browser blur + "is there actually text here" check before
+  // accepting a document photo, so an unusable photo gets rejected immediately
+  // instead of only being caught later by an admin.
+  const handleDocFile = async (file: File | null, side: "front" | "back") => {
+    setError("");
+    const setChecking = side === "front" ? setCheckingFront : setCheckingBack;
+    const setFile = side === "front" ? setFrontFile : setBackFile;
+    if (!file) {
+      setFile(null);
+      return;
+    }
+    setChecking(true);
+    const result = await checkDocumentImageQuality(file);
+    setChecking(false);
+    if (!result.ok) {
+      setError(result.reason || "This photo isn't clear enough. Please retake it.");
+      setFile(null);
+      const ref = side === "front" ? frontRef : backRef;
+      if (ref.current) ref.current.value = "";
+      return;
+    }
+    setFile(file);
+  };
 
   const needsBack = docType !== "passport";
   const idLabel =
@@ -257,7 +284,7 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
             accept="image/*"
             capture="environment"
             style={{ display: "none" }}
-            onChange={(e) => setFrontFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => void handleDocFile(e.target.files?.[0] ?? null, "front")}
           />
           <input
             ref={backRef}
@@ -265,19 +292,22 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
             accept="image/*"
             capture="environment"
             style={{ display: "none" }}
-            onChange={(e) => setBackFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => void handleDocFile(e.target.files?.[0] ?? null, "back")}
           />
 
-          <button type="button" style={s.row} onClick={() => frontRef.current?.click()}>
+          <button type="button" style={s.row} disabled={checkingFront} onClick={() => frontRef.current?.click()}>
             <span style={s.rowLabel}>Front of document</span>
-            <span style={s.rowValue}>{frontFile ? frontFile.name : "Choose"}</span>
+            <span style={s.rowValue}>{checkingFront ? "Checking…" : frontFile ? frontFile.name : "Choose"}</span>
           </button>
           {needsBack && (
-            <button type="button" style={s.row} onClick={() => backRef.current?.click()}>
+            <button type="button" style={s.row} disabled={checkingBack} onClick={() => backRef.current?.click()}>
               <span style={s.rowLabel}>Back of document</span>
-              <span style={s.rowValue}>{backFile ? backFile.name : "Choose"}</span>
+              <span style={s.rowValue}>{checkingBack ? "Checking…" : backFile ? backFile.name : "Choose"}</span>
             </button>
           )}
+          <p style={{ color: "#666", fontSize: 12, margin: "4px 0 0" }}>
+            Photos are checked for blur and readability as soon as you choose them.
+          </p>
 
           {error && <div style={s.errorBox}>{error}</div>}
           {busy && <div style={s.infoBox}>Submitting verification…</div>}
@@ -285,7 +315,7 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
           <button
             type="button"
             style={s.primaryBtn}
-            disabled={busy}
+            disabled={busy || checkingFront || checkingBack}
             onClick={() => {
               if (!frontFile) {
                 setError("Front of document is required.");
