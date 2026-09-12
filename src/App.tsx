@@ -3,19 +3,19 @@ import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
 import P2PMarketplace from "./components/p2p/P2PMarketplace";
-import P2POrderDetail from "./components/p2p/P2POrderDetail";
+import AdminPortal from "./components/admin/AdminPortal";
 import { supabase } from "./lib/supabase";
 
 type AppRoute =
   | { page: "home" }
   | { page: "trade"; symbol: string }
-  | { page: "p2p" }
-  | { page: "p2p-order"; orderId: string };
+  | { page: "p2p" };
 
 function getRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
 
   const tradeMatch = path.match(/^\/trade\/(.+)$/i);
+
   if (tradeMatch) {
     return {
       page: "trade",
@@ -23,16 +23,10 @@ function getRoute(): AppRoute {
     };
   }
 
-  const p2pOrderMatch = path.match(/^\/p2p\/order\/([^/]+)$/i);
-  if (p2pOrderMatch) {
+  if (path === "/p2p") {
     return {
-      page: "p2p-order",
-      orderId: decodeURIComponent(p2pOrderMatch[1]),
+      page: "p2p",
     };
-  }
-
-  if (/^\/p2p$/i.test(path)) {
-    return { page: "p2p" };
   }
 
   return { page: "home" };
@@ -41,20 +35,39 @@ function getRoute(): AppRoute {
 export default function App() {
   const [ready, setReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [route, setRoute] = useState<AppRoute>(() => getRoute());
 
   useEffect(() => {
     let alive = true;
 
-    void supabase.auth.getSession().then(({ data }) => {
+    async function checkSession() {
+      const { data } = await supabase.auth.getSession();
       if (!alive) return;
-      setAuthenticated(Boolean(data.session));
+
+      const session = data.session;
+      setAuthenticated(Boolean(session));
+
+      if (session?.user?.id) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        if (!alive) return;
+        const role = profile?.role;
+        setIsAdmin(role === "admin" || role === "owner");
+      }
+
       setReady(true);
-    });
+    }
+
+    void checkSession();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!alive) return;
 
       if (event === "PASSWORD_RECOVERY") {
@@ -63,6 +76,21 @@ export default function App() {
       }
 
       setAuthenticated(Boolean(session));
+
+      if (session?.user?.id) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        if (!alive) return;
+        const role = profile?.role;
+        setIsAdmin(role === "admin" || role === "owner");
+      } else {
+        setIsAdmin(false);
+      }
+
       setReady(true);
     });
 
@@ -117,24 +145,6 @@ export default function App() {
     });
   }
 
-  function openP2POrder(orderId: string) {
-    window.history.pushState(
-      {},
-      "",
-      `/p2p/order/${encodeURIComponent(orderId)}`
-    );
-
-    setRoute({
-      page: "p2p-order",
-      orderId,
-    });
-
-    window.scrollTo({
-      top: 0,
-      behavior: "instant",
-    });
-  }
-
   function goHome() {
     window.history.pushState({}, "", "/");
 
@@ -175,7 +185,6 @@ export default function App() {
             filter: "drop-shadow(0 8px 24px rgba(245,181,27,.25))",
           }}
         />
-
         <div
           style={{
             width: 24,
@@ -186,14 +195,7 @@ export default function App() {
             animation: "spin 0.85s linear infinite",
           }}
         />
-
-        <style>{`
-          @keyframes spin {
-            to {
-              transform: rotate(360deg);
-            }
-          }
-        `}</style>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -208,6 +210,11 @@ export default function App() {
     );
   }
 
+  // Admin / Owner → Admin Portal
+  if (isAdmin) {
+    return <AdminPortal />;
+  }
+
   if (route.page === "trade") {
     return (
       <TradingPage
@@ -218,23 +225,7 @@ export default function App() {
   }
 
   if (route.page === "p2p") {
-    return (
-      <P2PMarketplace
-        onBack={goHome}
-      />
-    );
-  }
-
-  if (route.page === "p2p-order") {
-    return (
-      <P2POrderDetail
-        orderId={route.orderId}
-        onBack={openP2P}
-        onTradeCreated={(tradeId) => {
-          console.log("P2P trade created:", tradeId);
-        }}
-      />
-    );
+    return <P2PMarketplace onBack={goHome} />;
   }
 
   return (
@@ -244,6 +235,7 @@ export default function App() {
         goHome();
       }}
       onTrade={openTrade}
+      onP2P={openP2P}
     />
   );
 }
