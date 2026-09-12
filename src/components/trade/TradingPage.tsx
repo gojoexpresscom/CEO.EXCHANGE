@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 type Props = { symbol?: string; onBack?: () => void; onAddFunds?: () => void };
@@ -53,6 +53,17 @@ const TF = [
   { label: "4H", value: "4h" },
   { label: "1D", value: "1d" },
 ] as const;
+
+// Maps our internal timeframe values to TradingView's interval codes.
+const TV_INTERVAL: Record<string, string> = { "15m": "15", "1h": "60", "4h": "240", "1d": "D" };
+
+// Builds a real Kraken symbol for TradingView's chart feed (e.g. "KRAKEN:BTCUSDT").
+// This is TradingView's own live Kraken market data — the same feed Kraken's own
+// site and every serious exchange chart embed uses — not something we're faking
+// or approximating with our own rendering.
+function tvSymbolFor(pair: Pair): string {
+  return `KRAKEN:${pair.base_asset.toUpperCase()}${pair.quote_asset.toUpperCase()}`;
+}
 
 const ACCOUNT_TABS = [
   { label: "Spot", value: "spot" },
@@ -117,7 +128,7 @@ const css = `
 .tf-row{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid #141414;overflow:auto}
 .tf-btn{background:none;border:1px solid #202020;border-radius:6px;color:#888;padding:4px 9px;font-size:11px;cursor:pointer;white-space:nowrap}
 .tf-btn.active{color:#f4c542;border-color:#7a5c14}
-.chart-wrap{height:260px;position:relative}
+.chart-wrap{height:380px;position:relative}
 .chart-svg{width:100%;height:100%;display:block}
 .empty{height:100%;display:grid;place-items:center;text-align:center;color:#666;padding:20px;box-sizing:border-box;font-size:12px;line-height:1.55}
 
@@ -233,6 +244,13 @@ const css = `
 .balance-card .row b{color:#eee;font-weight:600}
 .transfer-btn{width:100%;margin-top:12px;border:1px solid #a67a18;background:#171307;color:#f4c542;border-radius:9px;padding:11px;font-weight:700;cursor:pointer;font-size:13px}
 .transfer-btn:disabled{opacity:.5;cursor:not-allowed}
+.transfer-form{margin-top:12px;border:1px solid #232323;border-radius:10px;background:#0a0a0a;padding:12px}
+.transfer-select,.transfer-input{width:100%;background:#070707;border:1px solid #232323;border-radius:8px;color:#eee;padding:10px;font-size:13px;margin-top:6px;box-sizing:border-box}
+.transfer-select:focus,.transfer-input:focus{border-color:#d9a927;outline:0}
+.transfer-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.transfer-cancel{border:1px solid #232323;background:#0a0a0a;color:#999;border-radius:9px;padding:10px;font-weight:700;cursor:pointer;font-size:13px}
+.transfer-confirm{border:0;background:#08a96b;color:#fff;border-radius:9px;padding:10px;font-weight:800;cursor:pointer;font-size:13px}
+.transfer-confirm:disabled,.transfer-cancel:disabled{opacity:.5;cursor:not-allowed}
 
 .error{margin:8px 12px;border:1px solid #5b1d26;background:#1b080b;color:#ff9aa6;border-radius:9px;padding:10px;font-size:12px}
 .notice-ok{margin:8px 12px;border:1px solid #1e4a34;background:#08160f;color:#8fe0bb;border-radius:9px;padding:10px;font-size:12px}
@@ -257,69 +275,65 @@ function routeSymbol() {
   return m ? decodeURIComponent(m[1]).toUpperCase() : "";
 }
 
-function CandleChart({ rows, last, pairSymbol }: { rows: Candle[]; last: number | null; pairSymbol: string }) {
-  if (!rows.length)
-    return (
-      <div className="empty">
-        No trade history yet for {pairSymbol}.
-        <br />
-        The chart fills in as soon as real trades execute on this pair.
-      </div>
-    );
-  const W = 1000,
-    H = 260,
-    L = 12,
-    R = 54,
-    T = 10,
-    B = 24,
-    PW = W - L - R,
-    PH = H - T - B,
-    min = Math.min(...rows.map((x) => x.low)),
-    max = Math.max(...rows.map((x) => x.high)),
-    range = max - min || 1,
-    y = (v: number) => T + ((max - v) / range) * PH,
-    step = PW / rows.length,
-    body = Math.max(2, Math.min(10, step * 0.55)),
-    vmax = Math.max(...rows.map((x) => x.volume), 1);
-  return (
-    <svg className="chart-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Candlestick chart for ${pairSymbol}`}>
-      {Array.from({ length: 5 }).map((_, i) => {
-        const yy = T + (PH * i) / 4;
-        return (
-          <g key={i}>
-            <line x1={L} x2={W - R} y1={yy} y2={yy} stroke="#141414" />
-            <text x={W - R + 4} y={yy + 3.5} fill="#666" fontSize="10">
-              {fmtPrice(max - (range * i) / 4)}
-            </text>
-          </g>
-        );
-      })}
-      {rows.map((c, i) => {
-        const x = L + step * i + step / 2,
-          up = c.close >= c.open,
-          by = Math.min(y(c.open), y(c.close)),
-          bh = Math.max(1.5, Math.abs(y(c.close) - y(c.open))),
-          vh = (c.volume / vmax) * 26;
-        return (
-          <g key={c.open_time}>
-            <line x1={x} x2={x} y1={y(c.high)} y2={y(c.low)} stroke={up ? "#16c784" : "#ea3943"} strokeWidth="1.1" />
-            <rect x={x - body / 2} y={by} width={body} height={bh} fill={up ? "#16c784" : "#ea3943"} />
-            <rect x={x - body / 2} y={H - 12 - vh} width={body} height={vh} fill={up ? "#16c784" : "#ea3943"} opacity=".35" />
-          </g>
-        );
-      })}
-      {last != null && last >= min && last <= max ? (
-        <>
-          <line x1={L} x2={W - R} y1={y(last)} y2={y(last)} stroke="#d9a927" strokeDasharray="4 4" />
-          <rect x={W - R + 1} y={y(last) - 8} width="52" height="16" rx="3" fill="#d9a927" />
-          <text x={W - R + 4} y={y(last) + 3.5} fill="#050505" fontSize="10">
-            {fmtPrice(last)}
-          </text>
-        </>
-      ) : null}
-    </svg>
-  );
+// Real, live, pinch-to-zoom/pan candlestick chart backed by TradingView's own
+// Kraken market data feed — the same feed TradingView (and most real exchanges'
+// embedded charts) serves for KRAKEN: symbols. Replaces a hand-rolled SVG chart
+// that couldn't zoom/pan and looked like a demo. One widget instance per
+// container id; re-created whenever symbol or interval changes.
+let tvScriptPromise: Promise<void> | null = null;
+function loadTradingViewScript(): Promise<void> {
+  if ((window as any).TradingView) return Promise.resolve();
+  if (tvScriptPromise) return tvScriptPromise;
+  tvScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/tv.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load TradingView chart library."));
+    document.head.appendChild(script);
+  });
+  return tvScriptPromise;
 }
+
+function TradingViewChart({ symbol, interval }: { symbol: string; interval: string }) {
+  const containerId = useMemo(() => `tv_${symbol.replace(/[^A-Za-z0-9]/g, "")}_${Math.random().toString(36).slice(2)}`, []);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadTradingViewScript()
+      .then(() => {
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.innerHTML = "";
+        new (window as any).TradingView.widget({
+          container_id: containerId,
+          symbol,
+          interval,
+          autosize: true,
+          theme: "dark",
+          style: "1",
+          timezone: "Etc/UTC",
+          locale: "en",
+          toolbar_bg: "#0a0a0a",
+          hide_side_toolbar: false,
+          hide_top_toolbar: false,
+          allow_symbol_change: false,
+          save_image: false,
+          backgroundColor: "#070707",
+          gridColor: "rgba(255,255,255,0.06)",
+          studies: ["Volume@tv-basicstudies"],
+        });
+      })
+      .catch((e) => console.error(e));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, interval, containerId]);
+
+  return <div id={containerId} ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+}
+
 
 export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: Props) {
   const [symbol, setSymbol] = useState((propSymbol || routeSymbol()).toUpperCase());
@@ -350,6 +364,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   const [marketsFilter, setMarketsFilter] = useState("");
   const [tpSl, setTpSl] = useState(false);
   const [postOnly, setPostOnly] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferAsset, setTransferAsset] = useState("");
+  const [transferDirection, setTransferDirection] = useState<"from_spot" | "to_spot">("from_spot");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferring, setTransferring] = useState(false);
 
   // Load pair + all active pairs
   const loadPair = useCallback(async () => {
@@ -582,6 +601,10 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     return wallets.filter((w) => (w.account_type || w.wallet_type || "").toLowerCase() === "futures");
   }, [wallets]);
 
+  const spotWallets = useMemo(() => {
+    return wallets.filter((w) => (w.account_type || w.wallet_type || "").toLowerCase() === "spot" || !w.account_type);
+  }, [wallets]);
+
   const np = Number(p),
     na = Number(amount),
     total = Number.isFinite(np) && Number.isFinite(na) ? np * na : 0;
@@ -703,6 +726,45 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setSymbol(s);
     setShowMarkets(false);
     window.history.pushState({}, "", `/trade/${encodeURIComponent(s.toUpperCase())}`);
+  };
+
+  // Real internal transfer via the existing transfer_between_accounts() RPC —
+  // only Spot<->Funding here since this panel is the Funding tab; the RPC itself
+  // enforces spot-must-be-one-side, real balance checks, and real ledger writes.
+  const submitTransfer = async () => {
+    setNotice("");
+    const amt = Number(transferAmount);
+    if (!transferAsset) {
+      setNotice("Choose an asset to transfer.");
+      setNoticeOk(false);
+      return;
+    }
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setNotice("Enter a valid transfer amount.");
+      setNoticeOk(false);
+      return;
+    }
+    const fromAccount = transferDirection === "from_spot" ? "spot" : "funding";
+    const toAccount = transferDirection === "from_spot" ? "funding" : "spot";
+    setTransferring(true);
+    const { error } = await supabase.rpc("transfer_between_accounts", {
+      p_asset: transferAsset.toUpperCase(),
+      p_from_account: fromAccount,
+      p_to_account: toAccount,
+      p_amount: amt,
+      p_idempotency_key: crypto.randomUUID(),
+    });
+    setTransferring(false);
+    if (error) {
+      setNotice(error.message);
+      setNoticeOk(false);
+      return;
+    }
+    setNotice(`Transferred ${fmt(amt, 8)} ${transferAsset.toUpperCase()} from ${fromAccount} to ${toAccount}.`);
+    setNoticeOk(true);
+    setTransferAmount("");
+    setShowTransfer(false);
+    void loadUser();
   };
 
   // Order book depth + ratio
@@ -871,7 +933,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                         ))}
                       </div>
                       <div className="chart-wrap">
-                        <CandleChart rows={candles} last={last} pairSymbol={pair.symbol} />
+                        <TradingViewChart symbol={tvSymbolFor(pair)} interval={TV_INTERVAL[tf]} />
                       </div>
                     </>
                   )}
@@ -1235,16 +1297,58 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                 </div>
               ))
             )}
-            <button
-              className="transfer-btn"
-              onClick={() => {
-                // Placeholder: wire to real transfer_between_accounts UI when ready
-                setNotice("Transfer UI uses the existing transfer_between_accounts() RPC. Full transfer sheet can be added in a follow-up.");
-                setNoticeOk(true);
-              }}
-            >
-              Transfer between accounts
-            </button>
+            {!showTransfer ? (
+              <button className="transfer-btn" onClick={() => setShowTransfer(true)}>
+                Transfer between accounts
+              </button>
+            ) : (
+              <div className="transfer-form">
+                <div className="label">
+                  <span>Direction</span>
+                </div>
+                <select
+                  className="transfer-select"
+                  value={transferDirection}
+                  onChange={(e) => setTransferDirection(e.target.value as "from_spot" | "to_spot")}
+                >
+                  <option value="from_spot">Spot → Funding</option>
+                  <option value="to_spot">Funding → Spot</option>
+                </select>
+                <div className="label">
+                  <span>Asset</span>
+                </div>
+                <select className="transfer-select" value={transferAsset} onChange={(e) => setTransferAsset(e.target.value)}>
+                  <option value="">Select asset</option>
+                  {Array.from(
+                    new Set(
+                      (transferDirection === "from_spot" ? spotWallets : fundingWallets).map((w) => w.asset.toUpperCase())
+                    )
+                  ).map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+                <div className="label">
+                  <span>Amount</span>
+                </div>
+                <input
+                  className="transfer-input"
+                  inputMode="decimal"
+                  value={transferAmount}
+                  onChange={(e) => setTransferAmount(e.target.value)}
+                  placeholder="0.00"
+                />
+                <div className="transfer-actions">
+                  <button className="transfer-cancel" onClick={() => setShowTransfer(false)} disabled={transferring}>
+                    Cancel
+                  </button>
+                  <button className="transfer-confirm" onClick={submitTransfer} disabled={transferring}>
+                    {transferring ? "Transferring…" : "Confirm transfer"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
