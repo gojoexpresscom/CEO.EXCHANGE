@@ -591,6 +591,15 @@ export default function Home({
     return () => { void supabase.removeChannel(channel); };
   }, [feedTab, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, userId]);
 
+  // Backup to the realtime subscription above: if the socket ever drops silently
+  // (backgrounded tab, network switch), prices shouldn't just sit frozen with no
+  // self-correction. Same 60s polling pattern already used on the trading page.
+  useEffect(() => {
+    if (!userId) return;
+    const id = window.setInterval(() => { void loadMarkets(); }, 60000);
+    return () => window.clearInterval(id);
+  }, [userId, loadMarkets]);
+
   const marketMap = useMemo(() => new Map(markets.map((m) => [m.symbol.toUpperCase(), m])), [markets]);
   const totalUsd = useMemo(() => wallets.reduce((sum, w) => {
     const amount = Number(w.balance ?? 0);
