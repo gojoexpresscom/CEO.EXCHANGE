@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import Settings, { type SettingsTab } from "../settings/Settings";
 
 type Profile = {
   id: string;
@@ -356,6 +357,8 @@ export default function Home({
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("My Info");
   const [depositResult, setDepositResult] = useState<any>(null);
   const [notificationTab, setNotificationTab] = useState<NotificationTab>("Announcements");
   const [feedTab, setFeedTab] = useState<FeedTab>("CEO");
@@ -1190,9 +1193,23 @@ export default function Home({
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
       {modal === "rewards" && <RewardsModal referral={referral} onClose={closeModal} />}
       {modal === "giveaway" && <GiveawayModal giveaways={giveaways} onClose={closeModal} />}
-      {modal === "menu" && <MenuModal profile={profile} onClose={closeModal} onLogout={async () => { await supabase.auth.signOut(); onLogout?.(); }} />}
+      {modal === "menu" && (
+        <MenuModal
+          profile={profile}
+          onClose={closeModal}
+          onLogout={async () => { await supabase.auth.signOut(); onLogout?.(); }}
+          onOpenSettings={(tab) => { closeModal(); setSettingsTab(tab); setSettingsOpen(true); }}
+        />
+      )}
       {modal === "post" && commentPostId ? <CommentsModal comments={comments} currentUserId={userId} onClose={closeModal} onAdd={addComment} onDelete={deleteComment} /> : modal === "post" ? <CreatePostModal onClose={closeModal} onCreate={createPost} /> : null}
       {modal === "announcement" && <CreateAnnouncementModal defaultType={feedTab === "Campaign" ? "campaign" : "announcement"} onClose={closeModal} onCreate={createPlatformAnnouncement} />}
+      {settingsOpen && (
+        <Settings
+          initialTab={settingsTab}
+          onClose={() => setSettingsOpen(false)}
+          onLogout={() => { setSettingsOpen(false); onLogout?.(); }}
+        />
+      )}
     </div>
   );
 }
@@ -2363,8 +2380,8 @@ function GiveawayModal({ giveaways, onClose }: { giveaways: Giveaway[]; onClose:
   return <ModalShell title="Giveaway" onClose={onClose}>{giveaways.map((g) => <div key={g.id} style={styles.giveawayCard}><div style={styles.notificationMeta}><span style={styles.pill}>{g.status || "ACTIVE"}</span><span>{g.ends_at ? `Ends ${new Date(g.ends_at).toLocaleDateString()}` : ""}</span></div><h3>{g.title || "Giveaway"}</h3><p>{g.description}</p><b>Prize: ${formatMoney(Number(g.prize_amount ?? 0))}</b>{g.winner_id && <div style={styles.subtle}>Winner selected</div>}</div>)}{!giveaways.length && <Empty text="No giveaways are currently listed." />}</ModalShell>;
 }
 
-function MenuModal({ profile, onClose, onLogout }: { profile: Profile | null; onClose: () => void; onLogout: () => Promise<void> }) {
-  return <ModalShell title="Menu" onClose={onClose}><div style={styles.profileMenu}><Avatar url={profile?.profile_picture_url} text={profile?.nickname || "CEO"} /><div><b>{profile?.nickname || "CEO"}</b><small>{profile?.email || ""}</small></div></div><button style={styles.menuItem} onClick={() => onClose()}>Settings <Icon name="arrow" size={18} /></button><button style={styles.menuItem} onClick={() => onClose()}>Security <Icon name="shield" size={18} /></button><button style={{ ...styles.menuItem, color: "#ff6574" }} onClick={() => void onLogout()}>Sign out <Icon name="logout" size={18} /></button></ModalShell>;
+function MenuModal({ profile, onClose, onLogout, onOpenSettings }: { profile: Profile | null; onClose: () => void; onLogout: () => Promise<void>; onOpenSettings: (tab: SettingsTab) => void }) {
+  return <ModalShell title="Menu" onClose={onClose}><div style={styles.profileMenu}><Avatar url={profile?.profile_picture_url} text={profile?.nickname || "CEO"} /><div><b>{profile?.nickname || "CEO"}</b><small>{profile?.email || ""}</small></div></div><button style={styles.menuItem} onClick={() => onOpenSettings("My Info")}>Settings <Icon name="arrow" size={18} /></button><button style={styles.menuItem} onClick={() => onOpenSettings("Security")}>Security <Icon name="shield" size={18} /></button><button style={{ ...styles.menuItem, color: "#ff6574" }} onClick={() => void onLogout()}>Sign out <Icon name="logout" size={18} /></button></ModalShell>;
 }
 
 function CreatePostModal({ onClose, onCreate }: { onClose: () => void; onCreate: (content: string, imageUrl: string) => Promise<void> }) {
