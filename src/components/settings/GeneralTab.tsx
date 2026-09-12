@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 import type { SettingsData } from "./Settings";
+import SupportChat from "./SupportChat";
 
 type Props = {
   data: SettingsData;
@@ -54,6 +55,8 @@ export default function GeneralTab({
   const [supportEmail, setSupportEmail] = useState(profile?.email || "");
   const [candleMode, setCandleMode] = useState(prefs?.candle_color_mode || "green_up");
   const [alwaysOn, setAlwaysOn] = useState(Boolean(prefs?.screen_always_on));
+  const [chatOpen, setChatOpen] = useState(false);
+  const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [dbLanguages, setDbLanguages] = useState<{ code: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -131,30 +134,12 @@ export default function GeneralTab({
     }
   };
 
-  const openSupportTicket = async () => {
+  const openSupportTicket = () => {
     if (!supportName.trim() || !supportEmail.trim()) {
       notify("Enter your name and email first.");
       return;
     }
-    setBusy(true);
-    try {
-      const { error } = await supabase.from("support_tickets").insert({
-        user_id: userId,
-        contact_name: supportName.trim(),
-        contact_email: supportEmail.trim(),
-        channel: "live_chat",
-        subject: "Live chat",
-        status: "open",
-        last_activity_at: new Date().toISOString(),
-      });
-      if (error) throw error;
-      notify("Support ticket opened. An agent will reply in Live Chat.");
-      setSub(null);
-    } catch (e: any) {
-      notify(e?.message || "Could not open ticket.");
-    } finally {
-      setBusy(false);
-    }
+    setChatOpen(true);
   };
 
   const langLabel =
@@ -291,6 +276,20 @@ export default function GeneralTab({
           Back
         </button>
       </div>
+    );
+  }
+
+  if (chatOpen) {
+    return (
+      <SupportChat
+        userId={userId}
+        ticketId={activeTicketId}
+        contactName={supportName.trim()}
+        contactEmail={supportEmail.trim()}
+        onClose={() => setChatOpen(false)}
+        onTicketCreated={(id) => setActiveTicketId(id)}
+        notify={notify}
+      />
     );
   }
 
