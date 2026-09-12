@@ -75,6 +75,9 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [localTheme, setLocalTheme] = useState<"dark" | "light">("dark");
+  const [showLangPicker, setShowLangPicker] = useState(false);
+  const [languages, setLanguages] = useState<{ code: string; name: string }[]>([]);
+  const [langBusy, setLangBusy] = useState(false);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -121,6 +124,32 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
     void reload();
   }, [reload]);
 
+  const openLangPicker = async () => {
+    setShowLangPicker(true);
+    if (languages.length) return;
+    const { data: rows } = await supabase
+      .from("supported_languages")
+      .select("code,name")
+      .eq("is_active", true)
+      .order("sort_order");
+    setLanguages((rows as { code: string; name: string }[]) ?? []);
+  };
+
+  const setLanguage = async (code: string) => {
+    setLangBusy(true);
+    try {
+      const { error } = await supabase.rpc("set_preferred_language", { p_lang: code });
+      if (error) throw error;
+      notify("Language updated.");
+      setShowLangPicker(false);
+      await reload();
+    } catch (e: any) {
+      notify(e?.message || "Could not save language.");
+    } finally {
+      setLangBusy(false);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     onLogout();
@@ -164,7 +193,7 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
           >
             <SIcon name={localTheme === "dark" ? "moon" : "sun"} size={18} />
           </button>
-          <button type="button" style={s.headerBtn} aria-label="Language">
+          <button type="button" style={s.headerBtn} aria-label="Language" onClick={() => void openLangPicker()}>
             <SIcon name="globe" size={18} />
           </button>
         </div>
@@ -234,6 +263,27 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
         )}
       </div>
 
+      {showLangPicker && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "flex-end" }} onClick={() => setShowLangPicker(false)}>
+          <div style={{ width: "100%", maxHeight: "70%", overflowY: "auto", background: "#0a0a0a", borderTop: "1px solid #2a2110", borderRadius: "16px 16px 0 0", padding: "16px 14px calc(20px + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ width: 42, height: 4, borderRadius: 99, background: "#3a3220", margin: "0 auto 14px" }} />
+            <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 16 }}>Language</h3>
+            {(languages.length ? languages : [{ code: "en", name: "English" }]).map((l) => (
+              <button
+                key={l.code}
+                type="button"
+                style={{ ...s.row, marginBottom: 6 }}
+                disabled={langBusy}
+                onClick={() => void setLanguage(l.code)}
+              >
+                <span style={s.rowLabel}>{l.name}</span>
+                {data.profile?.preferred_language === l.code && <SIcon name="check" size={16} />}
+              </button>
+            ))}
+            <button type="button" style={s.secondaryBtn} onClick={() => setShowLangPicker(false)}>Close</button>
+          </div>
+        </div>
+      )}
       {toast && <div style={s.toast}>{toast}</div>}
     </div>
   );

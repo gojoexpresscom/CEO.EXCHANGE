@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../../lib/supabase";
-import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
+import { s, GOLD } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 import type { SettingsData } from "./Settings";
 
@@ -22,38 +22,70 @@ type SubView =
   | "password"
   | "withdrawal";
 
+/** Minimal ISO → dial map (backend countries table has no dial_code column). */
+const DIAL: Record<string, string> = {
+  US: "1", CA: "1", GB: "44", UK: "44", AU: "61", NZ: "64",
+  IN: "91", PK: "92", BD: "880", NG: "234", KE: "254", ZA: "27",
+  GH: "233", EG: "20", AE: "971", SA: "966", TR: "90",
+  DE: "49", FR: "33", ES: "34", IT: "39", NL: "31", BE: "32",
+  PT: "351", BR: "55", MX: "52", AR: "54", CO: "57", PH: "63",
+  ID: "62", MY: "60", SG: "65", TH: "66", VN: "84", JP: "81",
+  KR: "82", CN: "86", HK: "852", TW: "886", RU: "7", UA: "380",
+  PL: "48", SE: "46", NO: "47", DK: "45", FI: "358", IE: "353",
+  CH: "41", AT: "43", CZ: "420", RO: "40", HU: "36", GR: "30",
+};
+
+function toE164(countryIso: string, national: string): string {
+  const digits = national.replace(/\D/g, "");
+  if (national.trim().startsWith("+")) return `+${digits}`;
+  const dial = DIAL[countryIso.toUpperCase()] || "";
+  if (!dial) return digits.startsWith("+") ? digits : `+${digits}`;
+  const stripped = digits.startsWith(dial) ? digits.slice(dial.length) : digits;
+  return `+${dial}${stripped}`;
+}
+
+async function edgeErrorMessage(fnErr: any, res: any): Promise<string> {
+  if (res?.error) return String(res.error);
+  if (res?.message) return String(res.message);
+  if (fnErr?.context) {
+    try {
+      const body = await fnErr.context.json?.();
+      if (body?.error) return String(body.error);
+      if (body?.message) return String(body.message);
+    } catch {
+      /* ignore */
+    }
+  }
+  return fnErr?.message || "Request failed. Try again.";
+}
+
 export default function SecurityTab({ data, onReload, notify, maskEmail, maskPhone }: Props) {
-  const { profile, twoFaEnabled, userId } = data;
+  const { profile, twoFaEnabled } = data;
   const [view, setView] = useState<SubView>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // 2FA setup state
   const [secret, setSecret] = useState("");
   const [otpauthUrl, setOtpauthUrl] = useState("");
   const [code, setCode] = useState("");
 
-  // Password
   const [newPass, setNewPass] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
 
-  // Email change (current only — new email OTP not available yet)
-  const [emailOtp, setEmailOtp] = useState("");
-  const [emailStep, setEmailStep] = useState<"verify-current" | "new-email-stub">("verify-current");
+  const [newEmail, setNewEmail] = useState("");
 
-  // Phone
   const [phoneCountry, setPhoneCountry] = useState(profile?.country_code || "US");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [phoneOtp, setPhoneOtp] = useState("");
   const [phoneStep, setPhoneStep] = useState<"enter" | "verify">("enter");
+  const [pendingE164, setPendingE164] = useState("");
 
-  // Withdrawal whitelist
   const [whitelistAddr, setWhitelistAddr] = useState("");
 
   const lockUntil = profile?.withdrawal_lock_until
     ? new Date(profile.withdrawal_lock_until)
     : null;
-  const locked = lockUntil && lockUntil.getTime() > Date.now();
+  const locked = !!(lockUntil && lockUntil.getTime() > Date.now());
   const lockRemaining = locked
     ? Math.max(0, Math.ceil((lockUntil!.getTime() - Date.now()) / 3600000))
     : 0;
@@ -65,7 +97,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
       const { data: res, error: fnErr } = await supabase.functions.invoke("manage-2fa", {
         body: { action: "setup" },
       });
-      if (fnErr) throw fnErr;
+      if (fnErr) throw new Error(await edgeErrorMessage(fnErr, res));
       if (!res?.secret || !res?.otpauthUrl) throw new Error("Setup did not return a secret.");
       setSecret(res.secret);
       setOtpauthUrl(res.otpauthUrl);
@@ -89,8 +121,8 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
       const { data: res, error: fnErr } = await supabase.functions.invoke("manage-2fa", {
         body: { action: "confirm", code },
       });
-      if (fnErr) throw fnErr;
-      if (res?.error) throw new Error(res.error);
+      if (fnErr) throw new Error(await edgeErrorMessage(fnErr, res));
+      if (res?.error) throw new Error(String(res.error));
       notify("Google 2FA enabled. Withdrawals are locked for 24 hours.");
       setSecret("");
       setOtpauthUrl("");
@@ -115,8 +147,8 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
       const { data: res, error: fnErr } = await supabase.functions.invoke("manage-2fa", {
         body: { action: "disable", code },
       });
-      if (fnErr) throw fnErr;
-      if (res?.error) throw new Error(res.error);
+      if (fnErr) throw new Error(await edgeErrorMessage(fnErr, res));
+      if (res?.error) throw new Error(String(res.error));
       notify("Google 2FA turned off. Withdrawals are locked for 24 hours.");
       setCode("");
       setView(null);
@@ -153,68 +185,49 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     }
   };
 
-  const sendEmailOtp = async () => {
+  const changeEmail = async () => {
     setError("");
-    setBusy(true);
-    try {
-      const { data: res, error: fnErr } = await supabase.functions.invoke("send-otp", {
-        body: { purpose: "change_email_verify_current" },
-      });
-      if (fnErr) throw fnErr;
-      if (res?.error) throw new Error(res.error);
-      notify("Verification code sent to your current email.");
-    } catch (e: any) {
-      setError(e?.message || "Could not send code. Check that email delivery is configured.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verifyCurrentEmail = async () => {
-    if (!/^\d{4,8}$/.test(emailOtp)) {
-      setError("Enter the code from your email.");
+    const email = newEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      setError("Enter a valid new email address.");
       return;
     }
-    setError("");
     setBusy(true);
     try {
-      const { data: res, error: fnErr } = await supabase.functions.invoke("verify-otp", {
-        body: { purpose: "change_email_verify_current", code: emailOtp },
-      });
-      if (fnErr) throw fnErr;
-      if (res?.error) throw new Error(res.error);
-      // Backend cannot yet OTP a brand-new address.
-      setEmailStep("new-email-stub");
-      notify("Current email verified. New-email step is waiting on backend.");
+      const { error: authErr } = await supabase.auth.updateUser({ email });
+      if (authErr) throw authErr;
+      notify("Confirmation links sent. Check your current and new email inboxes.");
+      setNewEmail("");
+      setView(null);
     } catch (e: any) {
-      setError(e?.message || "Invalid or expired code.");
+      setError(e?.message || "Could not start email change. Try again.");
     } finally {
       setBusy(false);
     }
   };
 
-  const sendPhoneOtp = async () => {
+  const sendPhoneCode = async () => {
     setError("");
     if (!phoneNumber.trim()) {
       setError("Enter a phone number.");
       return;
     }
+    const e164 = toE164(phoneCountry, phoneNumber.trim());
     setBusy(true);
     try {
-      const { data: res, error: fnErr } = await supabase.functions.invoke("send-otp", {
-        body: {
-          purpose: "phone_verify",
-          phone: phoneNumber.trim(),
-          country_code: phoneCountry,
-        },
-      });
-      if (fnErr) throw fnErr;
-      if (res?.error) throw new Error(res.error);
-      // SMS provider may not be configured — surface real error, never fake success.
+      const { error: authErr } = await supabase.auth.updateUser({ phone: e164 });
+      if (authErr) {
+        const msg = authErr.message || "";
+        if (/sms|provider|phone|not.*configured|unsupported/i.test(msg)) {
+          throw new Error("SMS verification is not yet available — contact support.");
+        }
+        throw authErr;
+      }
+      setPendingE164(e164);
       setPhoneStep("verify");
-      notify("If SMS is configured, a code was sent.");
+      notify("Verification code sent to your phone.");
     } catch (e: any) {
-      const msg = e?.message || "SMS provider is not configured. Phone verification is unavailable.";
+      const msg = e?.message || "SMS verification is not yet available — contact support.";
       setError(msg);
       notify(msg);
     } finally {
@@ -222,7 +235,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     }
   };
 
-  const verifyPhone = async () => {
+  const verifyPhoneCode = async () => {
     if (!/^\d{4,8}$/.test(phoneOtp)) {
       setError("Enter the SMS code.");
       return;
@@ -230,13 +243,17 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     setError("");
     setBusy(true);
     try {
-      const { data: res, error: fnErr } = await supabase.functions.invoke("verify-otp", {
-        body: { purpose: "phone_verify", code: phoneOtp },
+      const { error: authErr } = await supabase.auth.verifyOtp({
+        phone: pendingE164,
+        token: phoneOtp,
+        type: "phone_change",
       });
-      if (fnErr) throw fnErr;
-      if (res?.error) throw new Error(res.error);
+      if (authErr) throw authErr;
       notify("Phone number verified.");
       setView(null);
+      setPhoneStep("enter");
+      setPhoneOtp("");
+      setPhoneNumber("");
       await onReload();
     } catch (e: any) {
       setError(e?.message || "Invalid code or SMS not configured.");
@@ -266,7 +283,6 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     }
   };
 
-  // ——— Sub-views ———
   if (view === "2fa-setup") {
     return (
       <div style={s.section}>
@@ -360,31 +376,27 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
   if (view === "email") {
     return (
       <div style={s.section}>
-        {emailStep === "verify-current" ? (
-          <>
-            <div style={s.infoBox}>
-              Current email: {maskEmail(profile?.email ?? null)}. We send a code to this address first.
-              Verifying a brand-new email address is not available yet (backend gap).
-            </div>
-            <button type="button" style={s.secondaryBtn} disabled={busy} onClick={() => void sendEmailOtp()}>
-              {busy ? "Sending…" : "Send code to current email"}
-            </button>
-            <label style={s.field}>
-              Code from email
-              <input style={s.input} value={emailOtp} onChange={(e) => setEmailOtp(e.target.value)} inputMode="numeric" />
-            </label>
-            {error && <div style={s.errorBox}>{error}</div>}
-            <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void verifyCurrentEmail()}>
-              Verify current email
-            </button>
-          </>
-        ) : (
-          <div style={s.infoBox}>
-            Current email verified. The backend does not yet provide an Edge Function that sends/verifies an OTP to a new address.
-            Flagged for the backend agent — this step is intentionally a stub.
-          </div>
-        )}
-        <button type="button" style={s.secondaryBtn} onClick={() => { setView(null); setError(""); setEmailStep("verify-current"); }}>
+        <div style={s.infoBox}>
+          Current email: {maskEmail(profile?.email ?? null)}.
+          Enter a new address below. We send confirmation links to your current and new email —
+          click both to complete the change. There is no in-app code step for this method.
+        </div>
+        <label style={s.field}>
+          New email address
+          <input
+            style={s.input}
+            type="email"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoFocus
+          />
+        </label>
+        {error && <div style={s.errorBox}>{error}</div>}
+        <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void changeEmail()}>
+          {busy ? "Sending…" : "Send confirmation links"}
+        </button>
+        <button type="button" style={s.secondaryBtn} onClick={() => { setView(null); setError(""); setNewEmail(""); }}>
           Back
         </button>
       </div>
@@ -395,36 +407,64 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     return (
       <div style={s.section}>
         <div style={s.infoBox}>
-          SMS provider is not configured on the live project. The full flow is built; any configuration error from the backend is shown plainly (never faked as success).
+          Uses Supabase Auth phone change. If SMS is not configured, the error is shown plainly.
+          After verification, profile phone fields update automatically via trigger.
         </div>
         {phoneStep === "enter" ? (
           <>
             <label style={s.field}>
-              Country code (ISO)
-              <input style={s.input} value={phoneCountry} onChange={(e) => setPhoneCountry(e.target.value.toUpperCase().slice(0, 2))} placeholder="US" />
+              Country (ISO)
+              <input
+                style={s.input}
+                value={phoneCountry}
+                onChange={(e) => setPhoneCountry(e.target.value.toUpperCase().slice(0, 2))}
+                placeholder="US"
+              />
             </label>
             <label style={s.field}>
               Phone number
-              <input style={s.input} value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="2015550123" inputMode="tel" />
+              <input
+                style={s.input}
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                placeholder="+12015550123 or national number"
+                inputMode="tel"
+              />
             </label>
             {error && <div style={s.errorBox}>{error}</div>}
-            <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void sendPhoneOtp()}>
+            <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void sendPhoneCode()}>
               {busy ? "Sending…" : "Send verification code"}
             </button>
           </>
         ) : (
           <>
+            <div style={s.infoBox}>Code sent to {pendingE164}. Enter it below.</div>
             <label style={s.field}>
               SMS code
-              <input style={s.input} value={phoneOtp} onChange={(e) => setPhoneOtp(e.target.value)} inputMode="numeric" />
+              <input
+                style={s.input}
+                value={phoneOtp}
+                onChange={(e) => setPhoneOtp(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                inputMode="numeric"
+                autoFocus
+              />
             </label>
             {error && <div style={s.errorBox}>{error}</div>}
-            <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void verifyPhone()}>
-              Verify phone
+            <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void verifyPhoneCode()}>
+              {busy ? "Verifying…" : "Verify phone"}
             </button>
           </>
         )}
-        <button type="button" style={s.secondaryBtn} onClick={() => { setView(null); setError(""); setPhoneStep("enter"); }}>
+        <button
+          type="button"
+          style={s.secondaryBtn}
+          onClick={() => {
+            setView(null);
+            setError("");
+            setPhoneStep("enter");
+            setPhoneOtp("");
+          }}
+        >
           Cancel
         </button>
       </div>
@@ -456,7 +496,6 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     );
   }
 
-  // ——— Main list (flat, no "Basic Protect" / Passkeys) ———
   return (
     <div style={s.section}>
       <button type="button" style={s.row} onClick={() => setView("email")}>
@@ -478,10 +517,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
         <span style={s.rowLabel}>Google 2FA Authentication</span>
         <button
           type="button"
-          style={{
-            ...s.toggle,
-            background: twoFaEnabled ? GOLD : "#333",
-          }}
+          style={{ ...s.toggle, background: twoFaEnabled ? GOLD : "#333" }}
           onClick={() => {
             if (twoFaEnabled) {
               setCode("");
@@ -492,12 +528,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
           }}
           aria-label={twoFaEnabled ? "Disable 2FA" : "Enable 2FA"}
         >
-          <span
-            style={{
-              ...s.toggleKnob,
-              left: twoFaEnabled ? 21 : 3,
-            }}
-          />
+          <span style={{ ...s.toggleKnob, left: twoFaEnabled ? 21 : 3 }} />
         </button>
       </div>
 

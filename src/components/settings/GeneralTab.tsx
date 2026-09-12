@@ -54,6 +54,7 @@ export default function GeneralTab({
   const [supportEmail, setSupportEmail] = useState(profile?.email || "");
   const [candleMode, setCandleMode] = useState(prefs?.candle_color_mode || "green_up");
   const [alwaysOn, setAlwaysOn] = useState(Boolean(prefs?.screen_always_on));
+  const [dbLanguages, setDbLanguages] = useState<{ code: string; name: string }[]>([]);
 
   useEffect(() => {
     setCandleMode(prefs?.candle_color_mode || "green_up");
@@ -62,28 +63,34 @@ export default function GeneralTab({
 
   useEffect(() => {
     void (async () => {
-      const { data: rows } = await supabase
-        .from("supported_currencies")
-        .select("code,name")
-        .order("code")
-        .limit(80);
+      const [{ data: rows }, { data: langs }] = await Promise.all([
+        supabase.from("supported_currencies").select("code,name").order("code").limit(80),
+        supabase.from("supported_languages").select("code,name").eq("is_active", true).order("sort_order"),
+      ]);
       setCurrencies((rows as CurrencyRow[]) ?? []);
+      setDbLanguages((langs as { code: string; name: string }[]) ?? []);
     })();
   }, []);
 
   const saveLang = async (code: string) => {
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ preferred_language: code })
-        .eq("id", userId);
+      const { error } = await supabase.rpc("set_preferred_language", { p_lang: code });
       if (error) throw error;
       notify("Changes saved.");
       setSub(null);
       await onReload();
     } catch (e: any) {
-      notify(e?.message || "Could not save language.");
+      // Fallback if RPC missing
+      try {
+        const { error: e2 } = await supabase.from("profiles").update({ preferred_language: code }).eq("id", userId);
+        if (e2) throw e2;
+        notify("Changes saved.");
+        setSub(null);
+        await onReload();
+      } catch (e3: any) {
+        notify(e3?.message || e?.message || "Could not save language.");
+      }
     } finally {
       setBusy(false);
     }
@@ -161,7 +168,7 @@ export default function GeneralTab({
         <div style={s.infoBox}>
           Language is stored on your profile. String tables / i18n library can be added later without redesigning this picker.
         </div>
-        {LANGUAGES.map((l) => (
+        {(dbLanguages.length ? dbLanguages.map((l) => ({ code: l.code, label: l.name })) : LANGUAGES).map((l) => (
           <button
             key={l.code}
             type="button"

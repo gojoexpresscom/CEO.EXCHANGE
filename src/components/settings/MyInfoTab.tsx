@@ -38,6 +38,9 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
   const [showKyc, setShowKyc] = useState(false);
   const [linkProvider, setLinkProvider] = useState<"telegram" | "twitter" | null>(null);
   const [linkHandle, setLinkHandle] = useState("");
+  const [tgCode, setTgCode] = useState("");
+  const [tgExpires, setTgExpires] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   const tg = socials.find((x) => x.provider === "telegram");
   const tw = socials.find((x) => x.provider === "twitter" || x.provider === "x");
@@ -109,31 +112,44 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     }
   };
 
-  const saveSocial = async () => {
-    if (!linkProvider) return;
-    const handle = linkHandle.trim().replace(/^@/, "");
-    if (!handle) {
-      notify("Enter a handle.");
-      return;
-    }
+  const requestTelegramCode = async () => {
+    setError("");
     setSaving(true);
     try {
-      const { error } = await supabase.from("user_social_accounts").upsert(
-        {
-          user_id: userId,
-          provider: linkProvider,
-          handle,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,provider" }
-      );
-      if (error) throw error;
-      notify(`${linkProvider === "telegram" ? "Telegram" : "X"} linked.`);
-      setLinkProvider(null);
-      setLinkHandle("");
-      await onReload();
+      const { data, error: rpcErr } = await supabase.rpc("request_social_link_code", {
+        p_provider: "telegram",
+      });
+      if (rpcErr) throw rpcErr;
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row?.code) throw new Error("No link code returned.");
+      setTgCode(String(row.code));
+      setTgExpires(row.expires_at ? String(row.expires_at) : null);
+      notify("Link code ready. Send it to the bot.");
     } catch (e: any) {
-      notify(e?.message || "Could not link account.");
+      const msg = e?.message || "Could not request Telegram link code.";
+      setError(msg);
+      notify(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startXLink = async () => {
+    setError("");
+    setSaving(true);
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke("link-x-oauth", {
+        body: { action: "start" },
+      });
+      if (fnErr) throw fnErr;
+      if (data?.error) throw new Error(String(data.error));
+      const url = data?.authorize_url;
+      if (!url) throw new Error(data?.message || "X linking is not configured yet.");
+      window.location.href = url;
+    } catch (e: any) {
+      const msg = e?.message || "X linking is not configured yet.";
+      setError(msg);
+      notify(msg);
     } finally {
       setSaving(false);
     }
@@ -173,27 +189,43 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     );
   }
 
-  if (linkProvider) {
+  if (linkProvider === "telegram") {
     return (
       <div style={s.section}>
         <div style={s.infoBox}>
-          Link is stored on your account. Ownership verification is not yet enforced by the backend —
-          do not treat this as a verified identity link.
+          {tgCode
+            ? `Open your Telegram bot and send: /link ${tgCode}`
+            : "Request a one-time link code, then send it to the bot with /link <code>."}
+          {tgExpires ? ` Code expires at ${new Date(tgExpires).toLocaleString()}.` : ""}
         </div>
-        <label style={s.field}>
-          {linkProvider === "telegram" ? "Telegram handle" : "X (Twitter) handle"}
-          <input
-            style={s.input}
-            value={linkHandle}
-            onChange={(e) => setLinkHandle(e.target.value)}
-            placeholder="@username"
-            autoFocus
-          />
-        </label>
-        <button type="button" style={s.primaryBtn} disabled={saving} onClick={() => void saveSocial()}>
-          {saving ? "Saving…" : "Link account"}
+        {error && <div style={s.errorBox}>{error}</div>}
+        {!tgCode ? (
+          <button type="button" style={s.primaryBtn} disabled={saving} onClick={() => void requestTelegramCode()}>
+            {saving ? "Requesting…" : "Get Telegram link code"}
+          </button>
+        ) : (
+          <button type="button" style={s.primaryBtn} disabled={saving} onClick={async () => { await onReload(); notify("Refreshed linked accounts."); }}>
+            I&apos;ve done it — refresh
+          </button>
+        )}
+        <button type="button" style={s.secondaryBtn} onClick={() => { setLinkProvider(null); setTgCode(""); setError(""); }}>
+          Cancel
         </button>
-        <button type="button" style={s.secondaryBtn} onClick={() => setLinkProvider(null)}>
+      </div>
+    );
+  }
+
+  if (linkProvider === "twitter") {
+    return (
+      <div style={s.section}>
+        <div style={s.infoBox}>
+          Connect X via OAuth. You will be redirected to X to authorize, then returned here.
+        </div>
+        {error && <div style={s.errorBox}>{error}</div>}
+        <button type="button" style={s.primaryBtn} disabled={saving} onClick={() => void startXLink()}>
+          {saving ? "Opening…" : "Link X account"}
+        </button>
+        <button type="button" style={s.secondaryBtn} onClick={() => { setLinkProvider(null); setError(""); }}>
           Cancel
         </button>
       </div>
@@ -274,25 +306,17 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <button
-        type="button"
-        style={s.row}
-        onClick={() => {
-          // Open a small chooser
-          const next = window.prompt("Link which account? Type telegram or x");
-          if (next === "telegram" || next === "x" || next === "twitter") {
-            setLinkProvider(next === "x" || next === "twitter" ? "twitter" : "telegram");
-            setLinkHandle("");
-          }
-        }}
-      >
+      <button type="button" style={s.row} onClick={() => { setLinkProvider("telegram"); setTgCode(""); setError(""); }}>
         <span style={s.rowIcon}><SIcon name="link" size={16} /></span>
-        <span style={s.rowLabel}>Link Account</span>
-        <span style={s.rowValue}>
-          {tg || tw
-            ? [tg && `TG @${tg.handle}`, tw && `X @${tw.handle}`].filter(Boolean).join(" · ")
-            : "Not linked"}
-        </span>
+        <span style={s.rowLabel}>Link Telegram</span>
+        <span style={s.rowValue}>{tg ? `Linked as @${tg.handle}` : "Not linked"}</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
+      <button type="button" style={s.row} onClick={() => { setLinkProvider("twitter"); setError(""); }}>
+        <span style={s.rowIcon}><SIcon name="link" size={16} /></span>
+        <span style={s.rowLabel}>Link X</span>
+        <span style={s.rowValue}>{tw ? `Linked as @${tw.handle}` : "Not linked"}</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
@@ -311,26 +335,21 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </div>
       )}
 
-      <a
-        href="https://t.me/ceomarket_bot"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ ...s.row, textDecoration: "none" }}
-      >
+      <div style={s.row}>
         <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
         <span style={s.rowLabel}>Affiliate&apos;s Community</span>
-        <span style={s.rowValue}>Join</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </a>
+        <span style={s.rowValue}>Coming soon</span>
+      </div>
 
       <a
-        href="https://t.me/ceomarket_bot"
+        href="https://t.me/CEO_EXCHANGE_OFFICIAL"
         target="_blank"
         rel="noopener noreferrer"
         style={{ ...s.row, textDecoration: "none" }}
       >
         <span style={s.rowIcon}><SIcon name="community" size={16} /></span>
         <span style={s.rowLabel}>Join Our Community</span>
+        <span style={s.rowValue}>Telegram</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </a>
 
