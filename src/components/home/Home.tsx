@@ -75,10 +75,9 @@ type Announcement = {
 
 type PlatformAnnouncement = {
   id: string;
-  title: string;
-  content: string;
-  type: string | null;
-  author_role: string | null;
+  title: string | null;
+  body: string | null;
+  posted_by: string | null;
   created_at: string | null;
 };
 
@@ -95,7 +94,7 @@ type Ticket = {
   message: string | null;
   status: string | null;
   created_at: string | null;
-  updated_at: string | null;
+  last_activity_at: string | null;
 };
 
 type TicketMessage = {
@@ -489,12 +488,20 @@ export default function Home({
   }, []);
 
   const loadPlatformAnnouncements = useCallback(async () => {
-    const { data, error: e } = await supabase.from("platform_announcements").select("id,title,content,type,author_role,created_at").eq("is_active", true).order("created_at", { ascending: false }).limit(50);
+    const { data, error: e } = await supabase
+      .from("announcements")
+      .select("id,title,body,posted_by,created_at")
+      .order("created_at", { ascending: false })
+      .limit(50);
     if (!e) setPlatformAnnouncements((data ?? []) as PlatformAnnouncement[]);
   }, []);
 
   const loadSupport = useCallback(async (id: string) => {
-    const { data, error: e } = await supabase.from("support_tickets").select("id,subject,message,status,created_at,updated_at").eq("user_id", id).order("updated_at", { ascending: false });
+    const { data, error: e } = await supabase
+      .from("support_tickets")
+      .select("id,subject,message,status,created_at,last_activity_at")
+      .eq("user_id", id)
+      .order("last_activity_at", { ascending: false });
     if (!e) setTickets((data ?? []) as Ticket[]);
   }, []);
 
@@ -590,9 +597,9 @@ export default function Home({
 
   useEffect(() => {
     if (!userId) return;
-    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarkets(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).subscribe();
+    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarkets(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => { void loadPlatformAnnouncements(); void loadNotifications(userId); }).subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [feedTab, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, userId]);
+  }, [feedTab, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, loadPlatformAnnouncements, userId]);
 
   // Backup to the realtime subscription above: if the socket ever drops silently
   // (backgrounded tab, network switch), prices shouldn't just sit frozen with no
@@ -844,7 +851,7 @@ export default function Home({
 
   const createTicket = async (subject: string, message: string, attachmentUrl: string) => {
     if (!userId || !subject.trim() || !message.trim()) return notify("Subject and message are required.");
-    const { data: ticket, error: e } = await supabase.from("support_tickets").insert({ user_id: userId, subject: subject.trim(), message: message.trim(), status: "OPEN" }).select("id,subject,message,status,created_at,updated_at").single();
+    const { data: ticket, error: e } = await supabase.from("support_tickets").insert({ user_id: userId, subject: subject.trim(), message: message.trim(), status: "OPEN" }).select("id,subject,message,status,created_at,last_activity_at").single();
     if (e || !ticket) return notify(e?.message ?? "Could not create ticket.");
     await supabase.from("ticket_messages").insert({ ticket_id: ticket.id, sender_id: userId, message: message.trim() });
     if (attachmentUrl.trim()) await supabase.from("ticket_attachments").insert({ ticket_id: ticket.id, file_url: attachmentUrl.trim() });
@@ -954,10 +961,14 @@ export default function Home({
     return requestId;
   };
 
-  const createPlatformAnnouncement = async (title: string, content: string, type: string) => {
+  const createPlatformAnnouncement = async (title: string, content: string, _type: string) => {
     if (!userId || !admin) return notify("Only administrators can publish Campaign/Announcements posts.");
     if (!title.trim() || !content.trim()) return notify("Title and content are required.");
-    const { error: e } = await supabase.from("platform_announcements").insert({ title: title.trim(), content: content.trim(), type: type.trim() || "announcement", author_role: "admin", is_active: true });
+    const { error: e } = await supabase.from("announcements").insert({
+      title: title.trim(),
+      body: content.trim(),
+      posted_by: userId,
+    });
     if (e) return notify(e.message);
     await loadPlatformAnnouncements();
     notify("Announcement published.");
@@ -1144,7 +1155,7 @@ export default function Home({
           <div style={styles.feedTabs}>{(["CEO", "Following", "Campaign", "Announcements"] as FeedTab[]).map((tab) => <button key={tab} onClick={() => { setFeedTab(tab); if (userId) void loadPosts(userId, tab); }} style={{ ...styles.feedTab, ...(feedTab === tab ? styles.feedTabActive : {}) }}>{tab}</button>)}</div>
           {(feedTab === "Campaign" || feedTab === "Announcements") && <>
             {admin && <button style={styles.createPostButton} onClick={() => setModal("announcement")}><Icon name="plus" size={19} />Create {feedTab === "Campaign" ? "campaign" : "announcement"}</button>}
-            {platformAnnouncements.filter((a) => feedTab === "Campaign" ? /campaign/i.test(a.type ?? "") : !/campaign/i.test(a.type ?? "")).map((a) => <PlatformCard key={a.id} item={a} />)}
+            {platformAnnouncements.map((a) => <PlatformCard key={a.id} item={a} />)}
           </>}
           {(feedTab === "CEO" || feedTab === "Following") && <>
             {filteredPosts.map((p) => <PostCard key={p.id} post={p} currentUserId={userId} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />)}
@@ -1315,7 +1326,7 @@ function PostCard({ post, currentUserId, onView, onLike, onComment, onRepost, on
 }
 
 function PlatformCard({ item }: { item: PlatformAnnouncement }) {
-  return <article style={styles.announcementCard}><div style={styles.announcementMeta}><span style={styles.pill}>{item.type || "Announcement"}</span><span>{timeAgo(item.created_at)}</span></div><h3 style={styles.announcementTitle}>{item.title}</h3><p style={styles.announcementBody}>{item.content}</p></article>;
+  return <article style={styles.announcementCard}><div style={styles.announcementMeta}><span style={styles.pill}>Announcement</span><span>{timeAgo(item.created_at)}</span></div><h3 style={styles.announcementTitle}>{item.title}</h3><p style={styles.announcementBody}>{item.body}</p></article>;
 }
 
 function Avatar({ url, text }: { url?: string | null; text: string }) {
@@ -2365,7 +2376,7 @@ function SupportModal({ tickets, selectedTicket, setSelectedTicket, messages, at
   const [message, setMessage] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [reply, setReply] = useState("");
-  return <ModalShell title="Support" onClose={onClose} wide><div style={styles.supportGrid}><aside style={styles.ticketList}>{tickets.map((t) => <button key={t.id} onClick={() => { setNewTicket(false); void setSelectedTicket(t.id); }} style={{ ...styles.ticketItem, ...(selectedTicket === t.id ? styles.ticketItemActive : {}) }}><b>{t.subject || "Support ticket"}</b><span>{t.status || "OPEN"}</span><small>{timeAgo(t.updated_at || t.created_at)} ago</small></button>)}<button style={styles.secondaryButtonFull} onClick={() => { setNewTicket(true); }}>New ticket</button></aside><div style={styles.ticketThread}>{newTicket ? <><h3>Open a support ticket</h3><label style={styles.label}>Subject<input style={styles.input} value={subject} onChange={(e) => setSubject(e.target.value)} /></label><label style={styles.label}>Message<textarea style={styles.textarea} value={message} onChange={(e) => setMessage(e.target.value)} /></label><label style={styles.label}>Existing attachment URL (optional)<input style={styles.input} value={attachmentUrl} onChange={(e) => setAttachmentUrl(e.target.value)} placeholder="https://…" /></label><div style={styles.warningBox}><Icon name="alert" size={18} />No support-specific storage bucket exists in the live project, so this UI does not create a new bucket or pretend file upload works. Existing ticket_attachments records are displayed.</div><button style={styles.primaryButtonFull} onClick={() => void onCreate(subject, message, attachmentUrl)}>Create ticket</button></> : <><div style={styles.threadHeader}><b>{tickets.find((t) => t.id === selectedTicket)?.subject || "Support ticket"}</b><span>{tickets.find((t) => t.id === selectedTicket)?.status || ""}</span></div><div style={styles.messages}>{messages.map((m) => <div key={m.id} style={styles.messageBubble}><div>{m.message}</div><small>{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</small></div>)}</div>{attachments.length > 0 && <div style={styles.attachments}>{attachments.map((a) => <a key={a.id} href={a.file_url} target="_blank" rel="noreferrer" style={styles.attachment}>{a.file_url}</a>)}</div>}<div style={styles.history}>{history.map((h) => <span key={h.id} style={styles.pill}>{h.status}</span>)}</div><div style={styles.otpRow}><input style={{ ...styles.input, flex: 1 }} value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Reply to support" /><button style={styles.primaryButton} onClick={() => { void onSend(reply); setReply(""); }}>Send</button></div></>}</div></div></ModalShell>;
+  return <ModalShell title="Support" onClose={onClose} wide><div style={styles.supportGrid}><aside style={styles.ticketList}>{tickets.map((t) => <button key={t.id} onClick={() => { setNewTicket(false); void setSelectedTicket(t.id); }} style={{ ...styles.ticketItem, ...(selectedTicket === t.id ? styles.ticketItemActive : {}) }}><b>{t.subject || "Support ticket"}</b><span>{t.status || "OPEN"}</span><small>{timeAgo((t as any).last_activity_at || t.created_at)} ago</small></button>)}<button style={styles.secondaryButtonFull} onClick={() => { setNewTicket(true); }}>New ticket</button></aside><div style={styles.ticketThread}>{newTicket ? <><h3>Open a support ticket</h3><label style={styles.label}>Subject<input style={styles.input} value={subject} onChange={(e) => setSubject(e.target.value)} /></label><label style={styles.label}>Message<textarea style={styles.textarea} value={message} onChange={(e) => setMessage(e.target.value)} /></label><label style={styles.label}>Existing attachment URL (optional)<input style={styles.input} value={attachmentUrl} onChange={(e) => setAttachmentUrl(e.target.value)} placeholder="https://…" /></label><div style={styles.warningBox}><Icon name="alert" size={18} />No support-specific storage bucket exists in the live project, so this UI does not create a new bucket or pretend file upload works. Existing ticket_attachments records are displayed.</div><button style={styles.primaryButtonFull} onClick={() => void onCreate(subject, message, attachmentUrl)}>Create ticket</button></> : <><div style={styles.threadHeader}><b>{tickets.find((t) => t.id === selectedTicket)?.subject || "Support ticket"}</b><span>{tickets.find((t) => t.id === selectedTicket)?.status || ""}</span></div><div style={styles.messages}>{messages.map((m) => <div key={m.id} style={styles.messageBubble}><div>{m.message}</div><small>{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</small></div>)}</div>{attachments.length > 0 && <div style={styles.attachments}>{attachments.map((a) => <a key={a.id} href={a.file_url} target="_blank" rel="noreferrer" style={styles.attachment}>{a.file_url}</a>)}</div>}<div style={styles.history}>{history.map((h) => <span key={h.id} style={styles.pill}>{h.status}</span>)}</div><div style={styles.otpRow}><input style={{ ...styles.input, flex: 1 }} value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Reply to support" /><button style={styles.primaryButton} onClick={() => { void onSend(reply); setReply(""); }}>Send</button></div></>}</div></div></ModalShell>;
 }
 
 function InviteModal({ referral, link, onClose, onCopy }: { referral: Referral | null; link: string; onClose: () => void; onCopy: () => Promise<void> }) {
@@ -2394,7 +2405,7 @@ function CreateAnnouncementModal({ defaultType, onClose, onCreate }: { defaultTy
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [type, setType] = useState(defaultType);
-  return <ModalShell title="Admin post" onClose={onClose}><p style={styles.modalHint}>Only an administrator can publish to platform_announcements. This uses the existing author_role/type/is_active columns; no new schema is created.</p><label style={styles.label}>Type<input style={styles.input} value={type} onChange={(e) => setType(e.target.value)} /></label><label style={styles.label}>Title<input style={styles.input} value={title} onChange={(e) => setTitle(e.target.value)} /></label><label style={styles.label}>Content<textarea style={styles.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label><button style={styles.primaryButtonFull} onClick={() => void onCreate(title, content, type)}>Publish</button></ModalShell>;
+  return <ModalShell title="Admin post" onClose={onClose}><p style={styles.modalHint}>Publish to the announcements table (title, body, posted_by). Appears in the home feed and notification announcements.</p><label style={styles.label}>Type<input style={styles.input} value={type} onChange={(e) => setType(e.target.value)} /></label><label style={styles.label}>Title<input style={styles.input} value={title} onChange={(e) => setTitle(e.target.value)} /></label><label style={styles.label}>Content<textarea style={styles.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label><button style={styles.primaryButtonFull} onClick={() => void onCreate(title, content, type)}>Publish</button></ModalShell>;
 }
 
 function CommentsModal({ comments, currentUserId, onClose, onAdd, onDelete }: {
