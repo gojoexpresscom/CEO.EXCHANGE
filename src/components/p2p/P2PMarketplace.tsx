@@ -116,6 +116,7 @@ export default function P2PMarketplace({ onBack }: Props) {
       .eq("status", "active")
       .eq("is_active", true)
       .eq("side", orderSide)
+      .gt("available_usdt", 0)
       // Buying: cheapest offers first. Selling: highest offers first.
       .order("price", { ascending: side === "buy" })
       .limit(50);
