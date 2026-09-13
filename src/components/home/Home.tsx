@@ -5,6 +5,7 @@ import NotificationsCenter from "./NotificationsCenter";
 import UserCenter from "./UserCenter";
 import PostComposer from "./PostComposer";
 import SocialMessages from "./SocialMessages";
+import SocialProfile from "./SocialProfile";
 import SupportChat from "./SupportChat";
 
 type Profile = {
@@ -211,7 +212,7 @@ type Comment = {
   profile?: Pick<Profile, "nickname" | "profile_picture_url">;
 };
 
-type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | "messages" | null;
+type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | "messages" | "profile" | null;
 type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
@@ -320,10 +321,18 @@ function formatPrice(value: number) {
   return value.toFixed(4);
 }
 
+function parseBackendTs(value: string): number {
+  const s = String(value).trim();
+  // Postgres often returns "YYYY-MM-DD HH:MM:SS.mmm" without timezone → treat as UTC
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s) && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    return new Date(s.replace(" ", "T") + "Z").getTime();
+  }
+  return new Date(s).getTime();
+}
+
 function timeAgo(value: string | null | undefined, nowMs: number = Date.now()) {
   if (!value) return "";
-  // Supabase timestamps are UTC; Date parses ISO correctly across timezones.
-  const t = new Date(value).getTime();
+  const t = parseBackendTs(value);
   if (!Number.isFinite(t)) return "";
   const diff = Math.max(0, nowMs - t);
   const seconds = Math.floor(diff / 1000);
@@ -336,7 +345,7 @@ function timeAgo(value: string | null | undefined, nowMs: number = Date.now()) {
   if (days < 30) return `${days}d`;
   const weeks = Math.floor(days / 7);
   if (weeks < 5) return `${weeks}w`;
-  return new Date(value).toLocaleDateString();
+  return new Date(t).toLocaleDateString();
 }
 
 function deviceName(userAgent: string | null) {
@@ -483,20 +492,34 @@ export default function Home({
     const rows = (data ?? []) as Post[];
     const userIds = [...new Set(rows.map((p) => p.user_id).filter(Boolean))] as string[];
     const postIds = rows.map((p) => p.id);
-    const [{ data: ps }, { data: likes }, repostsRes] = await Promise.all([
-      userIds.length ? supabase.from("profiles").select("id,nickname,profile_picture_url").in("id", userIds) : Promise.resolve({ data: [] as any[] }),
+    const [{ data: psRpc }, { data: likes }, repostsRes] = await Promise.all([
+      // Public-safe authors only (SECURITY DEFINER). Do not rely on profiles RLS for other users.
+      userIds.length
+        ? supabase.rpc("get_public_profiles", { p_ids: userIds })
+        : Promise.resolve({ data: [] as any[] }),
       postIds.length ? supabase.from("post_likes").select("post_id").eq("user_id", id).in("post_id", postIds) : Promise.resolve({ data: [] as any[] }),
-      // post_reposts may not exist yet — soft-fail
       postIds.length
         ? supabase.from("post_reposts").select("post_id").eq("user_id", id).in("post_id", postIds)
         : Promise.resolve({ data: [] as any[], error: null }),
     ]);
-    const pMap = new Map((ps ?? []).map((p: any) => [p.id, p]));
+    let profileRows = (psRpc as any[] | null) ?? [];
+    // Fallback only for current user own profile if RPC missing during deploy
+    if ((!profileRows || !profileRows.length) && userIds.length) {
+      const { data: own } = await supabase
+        .from("profiles")
+        .select("id,nickname,profile_picture_url")
+        .in("id", userIds);
+      profileRows = (own as any[]) ?? [];
+    }
+    const pMap = new Map<string, any>();
+    for (const p of profileRows) {
+      if (p?.id) pMap.set(p.id, p);
+    }
     const liked = new Set((likes ?? []).map((l: any) => l.post_id));
     const reposted = new Set(((repostsRes as any)?.data ?? []).map((r: any) => r.post_id));
     setPosts(rows.map((p) => ({
       ...p,
-      profile: pMap.get(p.user_id ?? ""),
+      profile: pMap.get(p.user_id ?? "") || pMap.get(p.user_id as string),
       likedByMe: liked.has(p.id),
       repostedByMe: reposted.has(p.id),
     })));
@@ -1213,7 +1236,7 @@ export default function Home({
         <div style={styles.fabWrap}>
           {fabOpen && (
             <div style={styles.fabMenu}>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setSettingsTab("My Info"); setSettingsOpen(true); }}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("profile"); }}>
                 <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
                 <span>Personal center</span>
               </button>
@@ -1284,6 +1307,9 @@ export default function Home({
           onOpenSupport={() => { closeModal(); setModal("support"); }}
           onOpenNotifications={() => { closeModal(); setModal("notifications"); }}
         />
+      )}
+      {modal === "profile" && userId && (
+        <SocialProfile profileUserId={userId} currentUserId={userId} onClose={closeModal} notify={notify} />
       )}
       {modal === "messages" && userId && (
         <SocialMessages userId={userId} onClose={closeModal} />
@@ -1368,7 +1394,7 @@ function PostCard({ post, currentUserId, nowMs, onView, onLike, onComment, onRep
   onShare: () => void;
   onDelete: () => void;
 }) {
-  const name = post.profile?.nickname || "CEO Member";
+  const name = (post.profile?.nickname && post.profile.nickname.trim()) || "User";
   const [menuOpen, setMenuOpen] = useState(false);
   const isOwner = Boolean(currentUserId && post.user_id === currentUserId);
   useEffect(() => { onView(); }, []);
@@ -2510,7 +2536,7 @@ function CommentsModal({ comments, currentUserId, onClose, onAdd, onDelete }: {
           <div key={c.id} style={styles.commentRow}>
             <Avatar url={c.profile?.profile_picture_url} text={c.profile?.nickname || "CE"} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <b>{c.profile?.nickname || "CEO Member"}</b>
+              <b>{(c.profile?.nickname && c.profile.nickname.trim()) || "User"}</b>
               <div>{c.content}</div>
               <small style={{ color: "#777" }}>{timeAgo(c.created_at)}</small>
             </div>
