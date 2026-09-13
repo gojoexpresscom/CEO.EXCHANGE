@@ -4,6 +4,7 @@ import Settings, { type SettingsTab } from "../settings/Settings";
 import NotificationsCenter from "./NotificationsCenter";
 import UserCenter from "./UserCenter";
 import PostComposer from "./PostComposer";
+import SocialMessages from "./SocialMessages";
 import SupportChat from "./SupportChat";
 
 type Profile = {
@@ -210,7 +211,7 @@ type Comment = {
   profile?: Pick<Profile, "nickname" | "profile_picture_url">;
 };
 
-type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | null;
+type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | "messages" | null;
 type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
@@ -1224,17 +1225,17 @@ export default function Home({
         <div style={styles.fabWrap}>
           {fabOpen && (
             <div style={styles.fabMenu}>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("post"); setCommentPostId(null); }}>
-                <span style={styles.fabMenuIcon}><Icon name="plus" size={16} /></span>
-                <span>Post</span>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setSettingsTab("My Info"); setSettingsOpen(true); }}>
+                <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
+                <span>Personal center</span>
               </button>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); notify("Messages coming soon."); }}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("messages"); }}>
                 <span style={styles.fabMenuIcon}><Icon name="bell" size={16} /></span>
                 <span>Message</span>
               </button>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setSettingsTab("My Info"); setSettingsOpen(true); setFabOpen(false); }}>
-                <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
-                <span>Profile</span>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("post"); setCommentPostId(null); }}>
+                <span style={styles.fabMenuIcon}><Icon name="plus" size={16} /></span>
+                <span>Post</span>
               </button>
             </div>
           )}
@@ -1295,6 +1296,9 @@ export default function Home({
           onOpenSupport={() => { closeModal(); setModal("support"); }}
           onOpenNotifications={() => { closeModal(); setModal("notifications"); }}
         />
+      )}
+      {modal === "messages" && userId && (
+        <SocialMessages userId={userId} onClose={closeModal} />
       )}
       {modal === "post" && commentPostId ? (
         <CommentsModal comments={comments} currentUserId={userId} onClose={closeModal} onAdd={addComment} onDelete={deleteComment} />
