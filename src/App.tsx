@@ -36,6 +36,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
   const [route, setRoute] = useState<AppRoute>(() => getRoute());
 
   useEffect(() => {
@@ -51,13 +52,24 @@ export default function App() {
       if (session?.user?.id) {
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, is_banned")
           .eq("id", session.user.id)
           .maybeSingle();
 
         if (!alive) return;
-        const role = profile?.role;
-        setIsAdmin(role === "admin" || role === "owner");
+
+        const banned = Boolean(profile?.is_banned);
+        setIsBanned(banned);
+
+        if (banned) {
+          // Force sign-out so the session cannot be reused
+          await supabase.auth.signOut();
+          setAuthenticated(false);
+          setIsAdmin(false);
+        } else {
+          const role = profile?.role;
+          setIsAdmin(role === "admin" || role === "owner");
+        }
       }
 
       setReady(true);
@@ -80,15 +92,26 @@ export default function App() {
       if (session?.user?.id) {
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, is_banned")
           .eq("id", session.user.id)
           .maybeSingle();
 
         if (!alive) return;
-        const role = profile?.role;
-        setIsAdmin(role === "admin" || role === "owner");
+
+        const banned = Boolean(profile?.is_banned);
+        setIsBanned(banned);
+
+        if (banned) {
+          await supabase.auth.signOut();
+          setAuthenticated(false);
+          setIsAdmin(false);
+        } else {
+          const role = profile?.role;
+          setIsAdmin(role === "admin" || role === "owner");
+        }
       } else {
         setIsAdmin(false);
+        setIsBanned(false);
       }
 
       setReady(true);
@@ -196,6 +219,71 @@ export default function App() {
           }}
         />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  // Banned users see a clean blocked screen (session already signed out)
+  if (isBanned) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 18,
+          padding: 24,
+          background: "#050505",
+          color: "#eee",
+          fontFamily:
+            "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: "50%",
+            background: "rgba(239,68,68,0.12)",
+            border: "1.5px solid rgba(239,68,68,0.35)",
+            display: "grid",
+            placeItems: "center",
+            fontSize: 28,
+          }}
+        >
+          ⛔
+        </div>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff" }}>
+          Account suspended
+        </h1>
+        <p style={{ margin: 0, maxWidth: 340, color: "#999", lineHeight: 1.55, fontSize: 14 }}>
+          This account has been suspended by the platform. If you believe this is a mistake,
+          contact support with your registered email.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setIsBanned(false);
+            window.location.href = "/";
+          }}
+          style={{
+            marginTop: 8,
+            minHeight: 44,
+            padding: "0 22px",
+            borderRadius: 12,
+            border: "1px solid #2a2110",
+            background: "transparent",
+            color: "#f5b51b",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          Back to login
+        </button>
       </div>
     );
   }
