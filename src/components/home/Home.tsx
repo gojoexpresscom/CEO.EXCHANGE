@@ -320,17 +320,20 @@ function formatPrice(value: number) {
   return value.toFixed(4);
 }
 
-function timeAgo(value: string | null) {
+function timeAgo(value: string | null | undefined, nowMs: number = Date.now()) {
   if (!value) return "";
-  const diff = Math.max(0, Date.now() - new Date(value).getTime());
+  // Supabase timestamps are UTC; Date parses ISO correctly across timezones.
+  const t = new Date(value).getTime();
+  if (!Number.isFinite(t)) return "";
+  const diff = Math.max(0, nowMs - t);
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 45) return "just now";
+  if (seconds < 45) return "now";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
+  if (days < 30) return `${days}d`;
   const weeks = Math.floor(days / 7);
   if (weeks < 5) return `${weeks}w`;
   return new Date(value).toLocaleDateString();
@@ -390,6 +393,7 @@ export default function Home({
   const [marketCategory, setMarketCategory] = useState<MarketCategory>("Spot");
   const [showFab, setShowFab] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [search, setSearch] = useState("");
   const [showBalance, setShowBalance] = useState(true);
   const [showAllMarkets, setShowAllMarkets] = useState(false);
@@ -594,6 +598,13 @@ export default function Home({
       setLoading(false);
     }
   }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements, loadFavorites]);
+
+  // Local clock for relative timestamps (posts, notifications, etc.) — no extra DB calls.
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
 
   useEffect(() => {
     let alive = true;
@@ -1187,33 +1198,9 @@ export default function Home({
             {platformAnnouncements.map((a) => <PlatformCard key={a.id} item={a} />)}
           </>}
           {(feedTab === "CEO" || feedTab === "Following") && <>
-            <button
-              type="button"
-              onClick={() => setModal("post")}
-              style={{
-                width: "100%",
-                minHeight: 48,
-                marginBottom: 12,
-                borderRadius: 14,
-                border: "1px solid #2a2110",
-                background: "#101010",
-                color: "#f5b51b",
-                fontWeight: 800,
-                fontSize: 14,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                animation: "homeFadeUp 0.35s ease-out both",
-              }}
-            >
-              <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
-              Create post
-            </button>
             {filteredPosts.map((p, idx) => (
               <div key={p.id} style={{ animation: `homeFadeUp 0.35s ease-out both`, animationDelay: `${Math.min(idx, 8) * 0.04}s` }}>
-                <PostCard post={p} currentUserId={userId} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />
+                <PostCard post={p} currentUserId={userId} nowMs={nowTick} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />
               </div>
             ))}
             {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
@@ -1221,7 +1208,8 @@ export default function Home({
         </section>
       </main>
 
-      {showFab && (
+      {/* FAB always available for Post / Message / Personal center */
+      {(true || showFab) && (
         <div style={styles.fabWrap}>
           {fabOpen && (
             <div style={styles.fabMenu}>
@@ -1369,9 +1357,10 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
   );
 }
 
-function PostCard({ post, currentUserId, onView, onLike, onComment, onRepost, onShare, onDelete }: {
+function PostCard({ post, currentUserId, nowMs, onView, onLike, onComment, onRepost, onShare, onDelete }: {
   post: Post;
   currentUserId: string | null;
+  nowMs?: number;
   onView: () => void;
   onLike: () => void;
   onComment: () => void;
@@ -1383,7 +1372,7 @@ function PostCard({ post, currentUserId, onView, onLike, onComment, onRepost, on
   const [menuOpen, setMenuOpen] = useState(false);
   const isOwner = Boolean(currentUserId && post.user_id === currentUserId);
   useEffect(() => { onView(); }, []);
-  const ts = timeAgo(post.created_at);
+  const ts = timeAgo(post.created_at, typeof nowMs === "number" ? nowMs : Date.now());
   return (
     <article style={styles.postCard}>
       <div style={styles.postHead}>
