@@ -493,9 +493,14 @@ export default function SupportChat({ onClose }: Props) {
 
       <div style={chatBody}>
         {messages.map((m) => {
-          const st = (m.sender_type || "user").toLowerCase();
-          const mine = st === "user";
-          const isAi = st === "ai";
+          // Mine = this logged-in user only. Never trust missing sender_type as "user"
+          // (admin replies often omit sender_type and were showing as gold right bubbles).
+          const st = (m.sender_type || "").toLowerCase();
+          const mine =
+            st === "user" ||
+            (!!userId && !!m.sender_id && m.sender_id === userId && st !== "ai" && st !== "admin");
+          const isAi = st === "ai" || (!m.sender_id && !mine && st !== "admin");
+          const isAgent = !mine && !isAi;
           return (
             <div
               key={m.id}
