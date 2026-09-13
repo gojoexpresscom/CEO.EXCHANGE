@@ -24,6 +24,8 @@ type ProfileRow = {
   security_level: string | null;
   warning_count: number | null;
   role: string | null;
+  vip_level: string | number | null;
+  referral_code: string | null;
 };
 
 type TwoFaRow = {
@@ -100,7 +102,7 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       supabase
         .from("profiles")
         .select(
-          "id,uid,nickname,email,phone,phone_verified,country_code,profile_picture_url,kyc_status,preferred_language,preferred_currency,withdrawal_lock_until,security_level,warning_count,role"
+          "id,uid,nickname,email,phone,phone_verified,country_code,profile_picture_url,kyc_status,preferred_language,preferred_currency,withdrawal_lock_until,security_level,warning_count,role,vip_level,referral_code"
         )
         .eq("id", uid)
         .maybeSingle(),

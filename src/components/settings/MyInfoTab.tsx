@@ -328,7 +328,32 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </button>
       )}
 
-      <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
+      <div style={s.row}>
+        <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
+        <span style={s.rowLabel}>VIP / Account Level</span>
+        <span style={s.rowValue}>{profile?.vip_level != null && profile?.vip_level !== "" ? String(profile.vip_level) : "Standard"}</span>
+      </div>
+
+      {profile?.referral_code ? (
+        <div style={s.row}>
+          <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
+          <span style={s.rowLabel}>Referral code</span>
+          <span style={s.rowValue}>{profile.referral_code}</span>
+          <button
+            type="button"
+            style={{ border: 0, background: "transparent", color: GOLD, cursor: "pointer", padding: 4 }}
+            onClick={() => {
+              void navigator.clipboard.writeText(String(profile.referral_code));
+              notify("Referral code copied.");
+            }}
+            aria-label="Copy referral code"
+          >
+            <SIcon name="copy" size={16} />
+          </button>
+        </div>
+      ) : null}
+
+            <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
         <SIcon name="logout" size={18} /> Log Out
       </button>
     </div>
