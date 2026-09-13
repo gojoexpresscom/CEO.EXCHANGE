@@ -13,12 +13,20 @@ type Props = {
 };
 
 function kycLabel(status: string | null) {
-  if (!status) return "Not started";
+  if (!status) return "Unverified";
   const v = status.toLowerCase();
-  if (v === "approved" || v === "verified") return "Lv.1 Verified";
-  if (v === "pending" || v === "submitted") return "Under review";
-  if (v === "rejected") return "Rejected";
-  return status;
+  if (v === "approved" || v === "verified") return "Your identity is verified";
+  if (v === "pending" || v === "submitted") return "Verification under review";
+  if (v === "rejected") return "Rejected — resubmit";
+  return "Unverified";
+}
+function kycIsVerified(status: string | null) {
+  const v = (status || "").toLowerCase();
+  return v === "approved" || v === "verified";
+}
+function kycIsPending(status: string | null) {
+  const v = (status || "").toLowerCase();
+  return v === "pending" || v === "submitted";
 }
 
 function kycColor(status: string | null) {
@@ -297,63 +305,32 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </button>
       </div>
 
-      <button type="button" style={s.row} onClick={() => setShowKyc(true)}>
-        <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
-        <span style={s.rowLabel}>Identity Verification</span>
-        <span style={{ ...s.rowValue, color: kycColor(profile?.kyc_status ?? null) }}>
-          {kycLabel(profile?.kyc_status ?? null)}
-        </span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </button>
-
-      <button type="button" style={s.row} onClick={() => { setLinkProvider("telegram"); setTgCode(""); setError(""); }}>
-        <span style={s.rowIcon}><SIcon name="link" size={16} /></span>
-        <span style={s.rowLabel}>Link Telegram</span>
-        <span style={s.rowValue}>{tg ? `Linked as @${tg.handle}` : "Not linked"}</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </button>
-
-      <button type="button" style={s.row} onClick={() => { setLinkProvider("twitter"); setError(""); }}>
-        <span style={s.rowIcon}><SIcon name="link" size={16} /></span>
-        <span style={s.rowLabel}>Link X</span>
-        <span style={s.rowValue}>{tw ? `Linked as @${tw.handle}` : "Not linked"}</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </button>
-
-      {(tg || tw) && (
-        <div style={{ display: "flex", gap: 8, padding: "0 4px" }}>
-          {tg && (
-            <button type="button" style={{ ...s.secondaryBtn, margin: 0, flex: 1, fontSize: 12 }} onClick={() => void unlinkSocial("telegram")}>
-              Unlink Telegram
-            </button>
-          )}
-          {tw && (
-            <button type="button" style={{ ...s.secondaryBtn, margin: 0, flex: 1, fontSize: 12 }} onClick={() => void unlinkSocial(tw.provider)}>
-              Unlink X
-            </button>
-          )}
+      {kycIsVerified(profile?.kyc_status ?? null) ? (
+        <div style={s.row}>
+          <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
+          <span style={s.rowLabel}>Identity Verification</span>
+          <span style={{ ...s.rowValue, color: "#39d98a" }}>Your identity is verified ✓</span>
         </div>
+      ) : kycIsPending(profile?.kyc_status ?? null) ? (
+        <div style={s.row}>
+          <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
+          <span style={s.rowLabel}>Identity Verification</span>
+          <span style={{ ...s.rowValue, color: GOLD }}>Verification under review</span>
+        </div>
+      ) : (
+        <button type="button" style={s.row} onClick={() => setShowKyc(true)}>
+          <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
+          <span style={s.rowLabel}>Identity Verification</span>
+          <span style={{ ...s.rowValue, color: kycColor(profile?.kyc_status ?? null) }}>
+            {kycLabel(profile?.kyc_status ?? null)}
+          </span>
+          <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+        </button>
       )}
 
-      <div style={s.row}>
-        <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
-        <span style={s.rowLabel}>Affiliate&apos;s Community</span>
-        <span style={s.rowValue}>Coming soon</span>
-      </div>
-
-      <a
-        href="https://t.me/CEO_EXCHANGE_OFFICIAL"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ ...s.row, textDecoration: "none" }}
-      >
-        <span style={s.rowIcon}><SIcon name="community" size={16} /></span>
-        <span style={s.rowLabel}>Join Our Community</span>
-        <span style={s.rowValue}>Telegram</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </a>
-
-      <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
+        </div>
+      )}
+<button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
         <SIcon name="logout" size={18} /> Log Out
       </button>
     </div>

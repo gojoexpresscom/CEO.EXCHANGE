@@ -4,10 +4,9 @@ import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 import MyInfoTab from "./MyInfoTab";
 import SecurityTab from "./SecurityTab";
-import PreferenceTab from "./PreferenceTab";
 import GeneralTab from "./GeneralTab";
 
-export type SettingsTab = "My Info" | "Security" | "Preference" | "General";
+export type SettingsTab = "My Info" | "Security" | "General";
 
 type ProfileRow = {
   id: string;
@@ -229,7 +228,7 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
 
         {/* Tabs */}
         <div style={s.tabs}>
-          {(["My Info", "Security", "Preference", "General"] as SettingsTab[]).map((t) => (
+          {(["My Info", "Security", "General"] as SettingsTab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -247,9 +246,6 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
         )}
         {tab === "Security" && (
           <SecurityTab data={data} onReload={reload} notify={notify} maskEmail={maskEmail} maskPhone={maskPhone} />
-        )}
-        {tab === "Preference" && (
-          <PreferenceTab data={data} onReload={reload} notify={notify} />
         )}
         {tab === "General" && (
           <GeneralTab

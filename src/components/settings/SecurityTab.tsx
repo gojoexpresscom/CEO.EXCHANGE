@@ -701,46 +701,6 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
       <style>{MOTION}</style>
 
-      {/* Identity Verification */}
-      <button
-        type="button"
-        style={{
-          ...s.row,
-          ...(kycVerified ? { cursor: "default" } : {}),
-        }}
-        onClick={() => {
-          if (!kycVerified) {
-            // Parent Settings / MyInfoTab already owns the full KycFlow modal.
-            // We just surface status here. If you want a direct open, wire a prop.
-            notify(
-              kycPending
-                ? "Your identity verification is under review."
-                : kycRejected
-                ? "Previous verification was rejected. Open My Info to resubmit."
-                : "Open My Info → Identity Verification to start."
-            );
-          }
-        }}
-      >
-        <span style={s.rowIcon}>
-          <SIcon name="id" size={16} />
-        </span>
-        <span style={s.rowLabel}>Identity Verification</span>
-        <span
-          style={{
-            ...s.rowValue,
-            color: kycVerified ? "#39d98a" : kycPending ? GOLD_LIGHT : kycRejected ? "#ff9aa3" : "#888",
-            fontWeight: 700,
-          }}
-        >
-          {kycVerified ? "Verified" : kycPending ? "Pending" : kycRejected ? "Rejected" : "Unverified"}
-        </span>
-        {!kycVerified && (
-          <span style={s.rowChevron}>
-            <SIcon name="chevron" size={16} />
-          </span>
-        )}
-      </button>
 
       {/* Email */}
       <button type="button" style={s.row} onClick={startEmailChange}>

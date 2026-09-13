@@ -279,7 +279,18 @@ export default function GeneralTab({
     );
   }
 
-  if (chatOpen) {
+  
+  if (sub === "notifications") {
+    return (
+      <NotificationsPrefs
+        userId={userId}
+        notify={notify}
+        onBack={() => setSub(null)}
+      />
+    );
+  }
+
+if (chatOpen) {
     return (
       <SupportChat
         userId={userId}
@@ -295,13 +306,6 @@ export default function GeneralTab({
 
   return (
     <div style={s.section}>
-      <button type="button" style={s.row} onClick={() => setSub("language")}>
-        <span style={s.rowIcon}><SIcon name="globe" size={16} /></span>
-        <span style={s.rowLabel}>Language</span>
-        <span style={s.rowValue}>{langLabel}</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </button>
-
       <button type="button" style={s.row} onClick={() => setSub("currency")}>
         <span style={s.rowIcon}><SIcon name="currency" size={16} /></span>
         <span style={s.rowLabel}>Currency Display</span>
@@ -309,50 +313,15 @@ export default function GeneralTab({
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <div style={s.row}>
-        <span style={s.rowIcon}><SIcon name="sun" size={16} /></span>
-        <span style={s.rowLabel}>Color Theme</span>
-        <span style={s.rowValue}>{localTheme === "dark" ? "Dark Mode" : "Light Mode"}</span>
-        <button
-          type="button"
-          style={{ ...s.toggle, background: localTheme === "dark" ? GOLD : "#555" }}
-          onClick={() => {
-            setLocalTheme(localTheme === "dark" ? "light" : "dark");
-            notify("Theme is session-only — no backend column yet.");
-          }}
-          aria-label="Toggle color theme"
-        >
-          <span style={{ ...s.toggleKnob, left: localTheme === "dark" ? 21 : 3 }} />
-        </button>
-      </div>
-      <p style={{ color: "#666", fontSize: 11, margin: "-6px 6px 10px" }}>
-        No dark/light column exists yet. Toggle works for this session only.
-      </p>
+      <button type="button" style={s.row} onClick={() => setSub("notifications")}>
+        <span style={s.rowIcon}><SIcon name="bell" size={16} /></span>
+        <span style={s.rowLabel}>Notifications</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
       <div style={s.row}>
-        <span style={s.rowIcon}><SIcon name="palette" size={16} /></span>
-        <span style={s.rowLabel}>Color Preferences</span>
-        <div style={{ display: "flex", gap: 5 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 2, background: greenUp ? "#1ecf8a" : "#ff5c6c" }} />
-          <span style={{ width: 12, height: 12, borderRadius: 2, background: greenUp ? "#ff5c6c" : "#1ecf8a" }} />
-        </div>
-        <button
-          type="button"
-          style={{ border: 0, background: "transparent", color: GOLD, fontSize: 12, cursor: "pointer" }}
-          disabled={busy}
-          onClick={() => {
-            const next = greenUp ? "red_up" : "green_up";
-            setCandleMode(next);
-            void upsertPrefs({ candle_color_mode: next });
-          }}
-        >
-          Swap
-        </button>
-      </div>
-
-      <div style={s.row}>
-        <span style={s.rowIcon}><SIcon name="screen" size={16} /></span>
-        <span style={s.rowLabel}>Always on (no screen lock)</span>
+        <span style={s.rowIcon}><SIcon name="phone" size={16} /></span>
+        <span style={s.rowLabel}>Keep Screen Awake</span>
         <button
           type="button"
           style={{ ...s.toggle, background: alwaysOn ? GOLD : "#333" }}
@@ -362,6 +331,7 @@ export default function GeneralTab({
             setAlwaysOn(next);
             void upsertPrefs({ screen_always_on: next });
           }}
+          aria-label="Keep Screen Awake"
         >
           <span style={{ ...s.toggleKnob, left: alwaysOn ? 21 : 3 }} />
         </button>
@@ -373,23 +343,9 @@ export default function GeneralTab({
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <button
-        type="button"
-        style={s.row}
-        onClick={() => {
-          window.history.pushState({}, "", "/");
-          window.dispatchEvent(new PopStateEvent("popstate"));
-          notify("Open markets from the home screen.");
-        }}
-      >
-        <span style={s.rowIcon}><SIcon name="chart" size={16} /></span>
-        <span style={s.rowLabel}>Trade market overview</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </button>
-
-      <button type="button" style={s.row} onClick={() => setSub("support")}>
-        <span style={s.rowIcon}><SIcon name="headset" size={16} /></span>
-        <span style={s.rowLabel}>Contact Support</span>
+      <button type="button" style={s.row} onClick={() => setSub("about")}>
+        <span style={s.rowIcon}><SIcon name="info" size={16} /></span>
+        <span style={s.rowLabel}>About CEO EXCHANGE</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
@@ -402,22 +358,103 @@ export default function GeneralTab({
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </a>
 
-      <button type="button" style={s.row} onClick={() => setSub("about")}>
-        <span style={s.rowIcon}><SIcon name="info" size={16} /></span>
-        <span style={s.rowLabel}>About Us</span>
-        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-      </button>
-
-      {/* Storage management intentionally removed per spec */}
-
-      <div style={s.row}>
-        <span style={s.rowIcon}><SIcon name="thumb" size={16} /></span>
-        <span style={s.rowLabel}>Rate Our App</span>
-        <span style={s.rowValue}>Coming Soon</span>
-      </div>
-
       <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
         <SIcon name="logout" size={18} /> Log Out
+      </button>
+    </div>
+  );
+}
+
+
+/** Notification toggles bound to profiles.* notification columns (real backend). */
+function NotificationsPrefs({
+  userId,
+  notify,
+  onBack,
+}: {
+  userId: string;
+  notify: (m: string) => void;
+  onBack: () => void;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const [flags, setFlags] = React.useState({
+    notification_push: true,
+    notification_trade: true,
+    notification_security: true,
+    notification_marketing: false,
+    email_trade: true,
+    email_security: true,
+    email_marketing: false,
+  });
+
+  React.useEffect(() => {
+    void (async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select(
+          "notification_push,notification_trade,notification_security,notification_marketing,email_trade,email_security,email_marketing"
+        )
+        .eq("id", userId)
+        .maybeSingle();
+      if (data) {
+        setFlags((f) => ({
+          notification_push: data.notification_push ?? f.notification_push,
+          notification_trade: data.notification_trade ?? f.notification_trade,
+          notification_security: data.notification_security ?? f.notification_security,
+          notification_marketing: data.notification_marketing ?? f.notification_marketing,
+          email_trade: data.email_trade ?? f.email_trade,
+          email_security: data.email_security ?? f.email_security,
+          email_marketing: data.email_marketing ?? f.email_marketing,
+        }));
+      }
+    })();
+  }, [userId]);
+
+  const toggle = async (key: keyof typeof flags) => {
+    const next = !flags[key];
+    setFlags((f) => ({ ...f, [key]: next }));
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("profiles").update({ [key]: next }).eq("id", userId);
+      if (error) throw error;
+      notify("Notification preference saved.");
+    } catch (e: any) {
+      setFlags((f) => ({ ...f, [key]: !next }));
+      notify(e?.message || "Could not save preference.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const Row = ({ label, k }: { label: string; k: keyof typeof flags }) => (
+    <div style={s.row}>
+      <span style={s.rowLabel}>{label}</span>
+      <button
+        type="button"
+        style={{ ...s.toggle, background: flags[k] ? GOLD : "#333" }}
+        disabled={busy}
+        onClick={() => void toggle(k)}
+        aria-label={label}
+      >
+        <span style={{ ...s.toggleKnob, left: flags[k] ? 21 : 3 }} />
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={s.section}>
+      <p style={{ color: "#888", fontSize: 13, margin: "0 0 14px", lineHeight: 1.4 }}>
+        Choose which alerts you receive. Changes save to your account immediately.
+      </p>
+      <Row label="Push notifications" k="notification_push" />
+      <Row label="Trading notifications" k="notification_trade" />
+      <Row label="Security notifications" k="notification_security" />
+      <Row label="Marketing notifications" k="notification_marketing" />
+      <Row label="Email — trading" k="email_trade" />
+      <Row label="Email — security" k="email_security" />
+      <Row label="Email — marketing" k="email_marketing" />
+      <button type="button" style={s.secondaryBtn} onClick={onBack}>
+        Back
       </button>
     </div>
   );

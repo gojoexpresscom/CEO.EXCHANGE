@@ -155,7 +155,7 @@ export const s = {
     right: "20%",
     bottom: 0,
     height: 2,
-    background: GOLD,
+    background: "#ffffff",
     borderRadius: 2,
   },
   section: {
