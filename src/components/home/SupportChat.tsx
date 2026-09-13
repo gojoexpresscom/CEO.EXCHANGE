@@ -1,39 +1,47 @@
 /**
- * CEO Exchange — Support Chat (user side)
- * Mobile-first full-screen chat with CEO AI + human handoff.
+ * CEO Exchange — Support / CEO AI
+ * Full-screen dark support (inspired by dedicated support UX, CEO-branded).
  *
- * Drop into: src/components/support/SupportChat.tsx
- * (or src/components/home/SupportChat.tsx — match your import)
+ * Flow:
+ * 1. Welcome screen (CEO AI + Start Asking)
+ * 2. Collect name → email (required before chat)
+ * 3. Create ticket (mode: ai) + first AI greeting
+ * 4. Chat with CEO AI; user can request human agent
+ * 5. Power button ends & deletes chat (no history)
  *
- * Backend (already live per GROK_AI_ADDENDUM):
- * - support_tickets.mode: 'ai' | 'human'
- * - ticket_messages.sender_type: 'user' | 'admin' | 'ai'
- * - edge function support-ai-reply: { ticket_id } -> { reply, handoff } | { error }
+ * Drop at: src/components/home/SupportChat.tsx
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 const GOLD = "#f5b51b";
-const GOLD_LIGHT = "#ffd45a";
-const BG = "#050505";
-const CARD = "#101010";
-const BORDER = "#2a2110";
+const BG = "#000000";
+const CARD = "#121212";
+const BORDER = "#2a2a2a";
+const MUTED = "#8a8a8a";
 
 const MOTION = `
-@keyframes scIn {
-  from { opacity: 0; transform: translateY(12px); }
+@keyframes ceoScIn {
+  from { opacity: 0; transform: translateY(14px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes scBubble {
+@keyframes ceoScBubble {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes scPulse {
-  0%, 100% { opacity: 0.4; }
+@keyframes ceoScPulse {
+  0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 }
+@keyframes ceoScGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245,181,27,0.0); }
+  50% { box-shadow: 0 0 24px 2px rgba(245,181,27,0.15); }
+}
 `;
+
+const HUMAN_KEYWORDS =
+  /\b(agent|human|real person|talk to (a )?person|speak to (a )?(human|agent)|transfer( me)? to (an? )?agent|customer service|live agent)\b/i;
 
 type Ticket = {
   id: string;
@@ -41,8 +49,11 @@ type Ticket = {
   message: string | null;
   status: string | null;
   mode?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
   created_at: string | null;
   last_activity_at?: string | null;
+  closed_at?: string | null;
 };
 
 type Msg = {
@@ -54,7 +65,7 @@ type Msg = {
   created_at: string | null;
 };
 
-const HUMAN_KEYWORDS = /\b(agent|human|real person|talk to (a )?person|speak to (a )?human|customer service)\b/i;
+type Screen = "welcome" | "gate_name" | "gate_email" | "chat";
 
 type Props = {
   onClose: () => void;
@@ -62,35 +73,51 @@ type Props = {
 
 export default function SupportChat({ onClose }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [sessionEmail, setSessionEmail] = useState("");
+  const [screen, setScreen] = useState<Screen>("welcome");
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [ticket, setTicket] = useState<Ticket | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
-  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [aiTyping, setAiTyping] = useState(false);
+  const [agentTyping, setAgentTyping] = useState(false);
   const [error, setError] = useState("");
-  const [view, setView] = useState<"list" | "chat" | "new">("list");
-  const [newSubject, setNewSubject] = useState("");
-  const [newMessage, setNewMessage] = useState("");
+  const [closedLocal, setClosedLocal] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const gateInputRef = useRef<HTMLInputElement | null>(null);
 
-  const active = tickets.find((t) => t.id === activeId) || null;
-  const mode = (active?.mode || "ai") as "ai" | "human";
+  const mode = ((ticket?.mode || "ai") as string).toLowerCase() === "human" ? "human" : "ai";
+  const isClosed =
+    closedLocal ||
+    (ticket?.status || "").toUpperCase() === "CLOSED" ||
+    !!ticket?.closed_at;
 
   const scrollBottom = () => {
     requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
   };
 
-  const loadTickets = useCallback(async (uid: string) => {
-    const { data, error: e } = await supabase
-      .from("support_tickets")
-      .select("id,subject,message,status,mode,created_at,last_activity_at")
-      .eq("user_id", uid)
-      .order("last_activity_at", { ascending: false });
-    if (e) throw e;
-    setTickets((data || []) as Ticket[]);
+  useEffect(() => {
+    let alive = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!alive) return;
+      const u = data.session?.user;
+      setUserId(u?.id ?? null);
+      const em = u?.email || "";
+      setSessionEmail(em);
+      setContactEmail(em);
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (screen === "gate_name" || screen === "gate_email") {
+      setTimeout(() => gateInputRef.current?.focus(), 120);
+    }
+  }, [screen]);
 
   const loadMessages = useCallback(async (ticketId: string) => {
     const { data, error: e } = await supabase
@@ -104,41 +131,25 @@ export default function SupportChat({ onClose }: Props) {
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!alive) return;
-      const id = data.session?.user?.id ?? null;
-      setUserId(id);
-      if (id) {
-        void loadTickets(id)
-          .catch((e) => setError(e?.message || "Failed to load tickets"))
-          .finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
-    return () => {
-      alive = false;
-    };
-  }, [loadTickets]);
+    if (!ticket?.id || isClosed) return;
+    void loadMessages(ticket.id);
 
-  // Realtime messages for active ticket
-  useEffect(() => {
-    if (!activeId) return;
-    void loadMessages(activeId);
     const channel = supabase
-      .channel(`support-chat-${activeId}`)
+      .channel(`ceo-support-${ticket.id}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "ticket_messages",
-          filter: `ticket_id=eq.${activeId}`,
+          filter: `ticket_id=eq.${ticket.id}`,
         },
         (payload) => {
           const row = payload.new as Msg;
           setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+          const st = (row.sender_type || "").toLowerCase();
+          if (st === "admin") setAgentTyping(false);
+          if (st === "ai") setAiTyping(false);
           scrollBottom();
         }
       )
@@ -148,33 +159,62 @@ export default function SupportChat({ onClose }: Props) {
           event: "UPDATE",
           schema: "public",
           table: "support_tickets",
-          filter: `id=eq.${activeId}`,
+          filter: `id=eq.${ticket.id}`,
         },
         (payload) => {
           const row = payload.new as Ticket;
-          setTickets((prev) => prev.map((t) => (t.id === row.id ? { ...t, ...row } : t)));
+          setTicket((t) => (t ? { ...t, ...row } : row));
+          if ((row.status || "").toUpperCase() === "CLOSED" || row.closed_at) {
+            setClosedLocal(true);
+          }
         }
       )
       .subscribe();
+
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [activeId, loadMessages]);
+  }, [ticket?.id, isClosed, loadMessages]);
 
-  async function openTicket(t: Ticket) {
-    setActiveId(t.id);
-    setView("chat");
-    setError("");
-  }
-
-  async function createTicket() {
-    if (!userId) return;
-    const subject = newSubject.trim() || "Support request";
-    const message = newMessage.trim();
-    if (!message) {
-      setError("Please write a message.");
+  async function endChat() {
+    if (!ticket?.id) {
+      onClose();
       return;
     }
+    try {
+      await supabase.from("ticket_messages").delete().eq("ticket_id", ticket.id);
+      await supabase.from("support_tickets").delete().eq("id", ticket.id);
+    } catch {
+      await supabase
+        .from("support_tickets")
+        .update({ status: "CLOSED", closed_at: new Date().toISOString() })
+        .eq("id", ticket.id);
+    }
+    setTicket(null);
+    setMessages([]);
+    setClosedLocal(true);
+    setScreen("welcome");
+    onClose();
+  }
+
+  async function startTicket() {
+    if (!userId) {
+      setError("Please sign in again.");
+      return;
+    }
+    const name = contactName.trim();
+    const email = contactEmail.trim();
+    if (!name) {
+      setError("Please enter your name.");
+      setScreen("gate_name");
+      return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Please enter a valid email.");
+      setScreen("gate_email");
+      return;
+    }
+
     setSending(true);
     setError("");
     try {
@@ -182,34 +222,42 @@ export default function SupportChat({ onClose }: Props) {
         .from("support_tickets")
         .insert({
           user_id: userId,
-          subject,
-          message,
+          subject: "CEO AI chat",
+          message: `Contact: ${name} <${email}>`,
           status: "OPEN",
           channel: "live_chat",
           mode: "ai",
+          contact_name: name,
+          contact_email: email,
         })
-        .select("id,subject,message,status,mode,created_at,last_activity_at")
+        .select(
+          "id,subject,message,status,mode,contact_name,contact_email,created_at,last_activity_at,closed_at"
+        )
         .single();
       if (e) throw e;
 
-      // First user message in thread
-      await supabase.from("ticket_messages").insert({
+      setTicket(data as Ticket);
+      setScreen("chat");
+      setClosedLocal(false);
+
+      const welcomeMsg = `Hi ${name}! I'm CEO AI — your 24/7 assistant for CEO Exchange. Ask me about KYC, deposits, withdrawals, security, or your account.`;
+      const welcome: Msg = {
+        id: `local-welcome-${Date.now()}`,
         ticket_id: data.id,
-        sender_id: userId,
-        sender_type: "user",
-        message,
+        sender_id: null,
+        sender_type: "ai",
+        message: welcomeMsg,
+        created_at: new Date().toISOString(),
+      };
+      setMessages([welcome]);
+
+      void supabase.from("ticket_messages").insert({
+        ticket_id: data.id,
+        sender_type: "ai",
+        message: welcomeMsg,
       });
-
-      setTickets((prev) => [data as Ticket, ...prev]);
-      setActiveId(data.id);
-      setNewSubject("");
-      setNewMessage("");
-      setView("chat");
-
-      // Kick CEO AI
-      void callAi(data.id);
     } catch (err: any) {
-      setError(err?.message || "Could not create ticket.");
+      setError(err?.message || "Could not start chat.");
     } finally {
       setSending(false);
     }
@@ -217,21 +265,22 @@ export default function SupportChat({ onClose }: Props) {
 
   async function requestHuman(ticketId: string) {
     await supabase.from("support_tickets").update({ mode: "human" }).eq("id", ticketId);
-    setTickets((prev) =>
-      prev.map((t) => (t.id === ticketId ? { ...t, mode: "human" } : t))
-    );
-    // Local system-style note (optional insert as user-visible message)
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `local-handoff-${Date.now()}`,
-        ticket_id: ticketId,
-        sender_id: null,
-        sender_type: "admin",
-        message: "Connecting you to a human agent…",
-        created_at: new Date().toISOString(),
-      },
-    ]);
+    setTicket((t) => (t ? { ...t, mode: "human" } : t));
+    const noteText = "Transferring you to a human agent… Please wait.";
+    const note: Msg = {
+      id: `local-handoff-${Date.now()}`,
+      ticket_id: ticketId,
+      sender_id: null,
+      sender_type: "ai",
+      message: noteText,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, note]);
+    void supabase.from("ticket_messages").insert({
+      ticket_id: ticketId,
+      sender_type: "ai",
+      message: noteText,
+    });
   }
 
   async function callAi(ticketId: string) {
@@ -242,53 +291,42 @@ export default function SupportChat({ onClose }: Props) {
       });
       if (e) throw e;
       if (data?.error) {
-        setError("CEO AI is temporarily unavailable — tap Talk to a human.");
+        setError("CEO AI is temporarily unavailable. You can keep messaging or ask for an agent.");
         return;
       }
-      if (data?.handoff) {
-        setTickets((prev) =>
-          prev.map((t) => (t.id === ticketId ? { ...t, mode: "human" } : t))
-        );
-      }
-      // AI message is inserted by the edge function; realtime will deliver it.
-      // If the function also returns reply text, we could optimistic-append — skip to avoid doubles.
+      // Product rule: do NOT auto-transfer on handoff unless user asked (handled in sendMessage).
     } catch {
-      setError("CEO AI is temporarily unavailable — tap Talk to a human.");
+      setError("CEO AI is temporarily unavailable.");
     } finally {
       setAiTyping(false);
     }
   }
 
   async function sendMessage() {
-    if (!userId || !activeId || !draft.trim() || sending) return;
+    if (!userId || !ticket?.id || !draft.trim() || sending || isClosed) return;
     const text = draft.trim();
     setDraft("");
     setSending(true);
     setError("");
 
     try {
-      // Keyword → human
-      if (mode === "ai" && HUMAN_KEYWORDS.test(text)) {
-        await supabase.from("ticket_messages").insert({
-          ticket_id: activeId,
-          sender_id: userId,
-          sender_type: "user",
-          message: text,
-        });
-        await requestHuman(activeId);
-        return;
-      }
+      const wantsHuman = HUMAN_KEYWORDS.test(text);
 
       const { error: e } = await supabase.from("ticket_messages").insert({
-        ticket_id: activeId,
+        ticket_id: ticket.id,
         sender_id: userId,
         sender_type: "user",
         message: text,
       });
       if (e) throw e;
 
-      if (mode === "ai") {
-        void callAi(activeId);
+      if (wantsHuman && mode === "ai") {
+        await requestHuman(ticket.id);
+      } else if (mode === "ai") {
+        void callAi(ticket.id);
+      } else {
+        setAgentTyping(true);
+        setTimeout(() => setAgentTyping(false), 12000);
       }
     } catch (err: any) {
       setError(err?.message || "Failed to send.");
@@ -298,137 +336,159 @@ export default function SupportChat({ onClose }: Props) {
     }
   }
 
-  // ─── LIST ───
-  if (view === "list") {
+  if (screen === "welcome") {
     return (
       <div style={shell}>
         <style>{MOTION}</style>
-        <header style={header}>
-          <button type="button" style={iconBtn} onClick={onClose}>
-            ✕
-          </button>
-          <h2 style={title}>Support</h2>
-          <button type="button" style={goldChip} onClick={() => setView("new")}>
-            + New
-          </button>
-        </header>
-        <div style={body}>
-          {loading && <p style={muted}>Loading…</p>}
-          {!loading && tickets.length === 0 && (
-            <div style={{ textAlign: "center", paddingTop: 48, animation: "scIn 0.3s ease-out both" }}>
-              <div style={{ fontSize: 36, marginBottom: 10 }}>🎧</div>
-              <p style={{ color: "#ccc", fontWeight: 700 }}>No conversations yet</p>
-              <p style={{ color: "#666", fontSize: 13, marginBottom: 18 }}>
-                Chat with CEO AI or our team anytime.
-              </p>
-              <button type="button" style={primaryBtn} onClick={() => setView("new")}>
-                Start chat
-              </button>
-            </div>
-          )}
-          {tickets.map((t, i) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => void openTicket(t)}
-              style={{
-                ...ticketRow,
-                animation: `scIn 0.28s ease-out both`,
-                animationDelay: `${i * 0.04}s`,
-              }}
-            >
-              <div style={{ flex: 1, textAlign: "left" }}>
-                <div style={{ fontWeight: 700, color: "#eee", marginBottom: 4 }}>
-                  {t.subject || "Support"}
-                </div>
-                <div style={{ fontSize: 12, color: "#777" }}>
-                  {(t.mode || "ai") === "ai" ? "CEO AI" : "Human agent"} ·{" "}
-                  {(t.status || "OPEN").toLowerCase()}
-                </div>
-              </div>
-              <span style={{ color: "#555", fontSize: 18 }}>›</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // ─── NEW TICKET ───
-  if (view === "new") {
-    return (
-      <div style={shell}>
-        <style>{MOTION}</style>
-        <header style={header}>
-          <button type="button" style={iconBtn} onClick={() => setView("list")}>
+        <header style={topBar}>
+          <button type="button" style={iconBtn} onClick={onClose} aria-label="Back">
             ←
           </button>
-          <h2 style={title}>New chat</h2>
-          <div style={{ width: 40 }} />
+          <div style={{ flex: 1 }} />
+          <button type="button" style={powerBtn} onClick={onClose} aria-label="Close support" title="Close">
+            ⌁
+          </button>
         </header>
-        <div style={{ ...body, animation: "scIn 0.3s ease-out both" }}>
-          <p style={{ color: "#888", fontSize: 13, marginBottom: 16, lineHeight: 1.45 }}>
-            CEO AI answers first. You can switch to a human agent anytime.
-          </p>
-          <label style={label}>
-            Subject
-            <input
-              style={input}
-              value={newSubject}
-              onChange={(e) => setNewSubject(e.target.value)}
-              placeholder="e.g. Deposit question"
-            />
-          </label>
-          <label style={label}>
-            Message
-            <textarea
-              style={textarea}
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="How can we help?"
-              rows={5}
-            />
-          </label>
+
+        <div style={welcomeBody}>
+          <div style={{ animation: "ceoScIn 0.4s ease-out both" }}>
+            <div style={botAvatarWrap}>
+              <div style={botAvatar}>AI</div>
+            </div>
+            <h1 style={welcomeTitle}>CEO AI</h1>
+            <p style={welcomeSub}>24/7 dedicated support for CEO Exchange</p>
+            <p style={welcomeLine}>Hello — how can I assist you today?</p>
+          </div>
+
           {error && <div style={errBox}>{error}</div>}
-          <button type="button" style={primaryBtn} disabled={sending} onClick={() => void createTicket()}>
-            {sending ? "Starting…" : "Start with CEO AI"}
+
+          <button
+            type="button"
+            style={startBtn}
+            onClick={() => {
+              setError("");
+              setScreen("gate_name");
+            }}
+          >
+            Start asking
           </button>
         </div>
       </div>
     );
   }
 
-  // ─── CHAT ───
+  if (screen === "gate_name") {
+    return (
+      <div style={shell}>
+        <style>{MOTION}</style>
+        <header style={topBar}>
+          <button type="button" style={iconBtn} onClick={() => setScreen("welcome")}>
+            ←
+          </button>
+          <div style={headerCenter}>
+            <div style={headerTitle}>CEO AI</div>
+            <div style={headerSub}>Almost there</div>
+          </div>
+          <button type="button" style={powerBtn} onClick={endChat} aria-label="End">
+            ⌁
+          </button>
+        </header>
+        <div style={gateBody}>
+          <p style={gatePrompt}>What should we call you?</p>
+          <input
+            ref={gateInputRef}
+            style={gateInput}
+            value={contactName}
+            onChange={(e) => setContactName(e.target.value)}
+            placeholder="Your name"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && contactName.trim()) {
+                setError("");
+                setScreen("gate_email");
+              }
+            }}
+          />
+          {error && <div style={errBox}>{error}</div>}
+          <button
+            type="button"
+            style={startBtn}
+            disabled={!contactName.trim()}
+            onClick={() => {
+              if (!contactName.trim()) return;
+              setError("");
+              setScreen("gate_email");
+            }}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (screen === "gate_email") {
+    return (
+      <div style={shell}>
+        <style>{MOTION}</style>
+        <header style={topBar}>
+          <button type="button" style={iconBtn} onClick={() => setScreen("gate_name")}>
+            ←
+          </button>
+          <div style={headerCenter}>
+            <div style={headerTitle}>CEO AI</div>
+            <div style={headerSub}>One more step</div>
+          </div>
+          <button type="button" style={powerBtn} onClick={endChat} aria-label="End">
+            ⌁
+          </button>
+        </header>
+        <div style={gateBody}>
+          <p style={gatePrompt}>What email should we use for this chat?</p>
+          <input
+            ref={gateInputRef}
+            style={gateInput}
+            type="email"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+            placeholder={sessionEmail || "you@email.com"}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void startTicket();
+            }}
+          />
+          {error && <div style={errBox}>{error}</div>}
+          <button type="button" style={startBtn} disabled={sending} onClick={() => void startTicket()}>
+            {sending ? "Starting…" : "Start chat"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={shell}>
       <style>{MOTION}</style>
-      <header style={header}>
+      <header style={topBar}>
         <button
           type="button"
           style={iconBtn}
           onClick={() => {
-            setView("list");
-            setActiveId(null);
+            setScreen("welcome");
+            setTicket(null);
             setMessages([]);
           }}
+          aria-label="Back"
         >
           ←
         </button>
-        <div style={{ flex: 1, textAlign: "center" }}>
-          <div style={{ fontWeight: 800, color: "#f5f5f5", fontSize: 15 }}>
-            {mode === "ai" ? "CEO AI" : "Support"}
-          </div>
-          <div style={{ fontSize: 11, color: mode === "ai" ? GOLD : "#6ee7a8" }}>
-            {mode === "ai" ? "Assistant online" : "Human agent"}
+        <div style={headerCenter}>
+          <div style={headerTitle}>{mode === "ai" ? "CEO AI" : "Support Agent"}</div>
+          <div style={{ ...headerSub, color: isClosed ? "#f87171" : mode === "ai" ? GOLD : "#6ee7a8" }}>
+            {isClosed ? "Chat closed" : mode === "ai" ? "Assistant online" : "Agent connected"}
           </div>
         </div>
-        {mode === "ai" ? (
-          <button type="button" style={humanBtn} onClick={() => activeId && void requestHuman(activeId)}>
-            Human
-          </button>
-        ) : (
-          <div style={{ width: 52 }} />
-        )}
+        <button type="button" style={powerBtn} onClick={() => void endChat()} aria-label="End chat" title="End chat">
+          ⌁
+        </button>
       </header>
 
       <div style={chatBody}>
@@ -442,18 +502,18 @@ export default function SupportChat({ onClose }: Props) {
               style={{
                 display: "flex",
                 justifyContent: mine ? "flex-end" : "flex-start",
-                marginBottom: 10,
-                animation: "scBubble 0.25s ease-out both",
+                marginBottom: 12,
+                animation: "ceoScBubble 0.28s ease-out both",
               }}
             >
               <div
                 style={{
-                  maxWidth: "82%",
-                  padding: "10px 14px",
-                  borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                  background: mine ? "linear-gradient(135deg,#c9970a,#f5b51b)" : isAi ? "#12100a" : CARD,
-                  border: mine ? "none" : `1px solid ${isAi ? "#3d3210" : BORDER}`,
-                  color: mine ? "#0a0a0a" : "#e8e8e8",
+                  maxWidth: "84%",
+                  padding: "12px 14px",
+                  borderRadius: mine ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                  background: mine ? GOLD : CARD,
+                  color: mine ? "#0a0a0a" : "#ececec",
+                  border: mine ? "none" : `1px solid ${BORDER}`,
                 }}
               >
                 {!mine && (
@@ -461,71 +521,94 @@ export default function SupportChat({ onClose }: Props) {
                     style={{
                       fontSize: 10,
                       fontWeight: 800,
+                      letterSpacing: 0.4,
                       color: isAi ? GOLD : "#8ab4ff",
                       marginBottom: 4,
-                      letterSpacing: 0.3,
                     }}
                   >
-                    {isAi ? "CEO AI" : "Support"}
+                    {isAi ? "CEO AI" : "Agent"}
                   </div>
                 )}
-                <div style={{ fontSize: 14, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
-                  {m.message}
-                </div>
+                <div style={{ fontSize: 14, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{m.message}</div>
                 <div
                   style={{
                     fontSize: 10,
-                    color: mine ? "rgba(0,0,0,0.45)" : "#666",
-                    marginTop: 4,
+                    marginTop: 6,
                     textAlign: "right",
+                    color: mine ? "rgba(0,0,0,0.4)" : "#666",
                   }}
                 >
-                  {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                  {m.created_at
+                    ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    : ""}
                 </div>
               </div>
             </div>
           );
         })}
 
-        {aiTyping && (
-          <div style={{ color: GOLD, fontSize: 12, fontWeight: 600, marginBottom: 8, animation: "scPulse 1s infinite" }}>
-            CEO AI is typing…
-          </div>
+        {aiTyping && !isClosed && <div style={typingLine}>CEO AI is typing…</div>}
+        {agentTyping && !isClosed && (
+          <div style={{ ...typingLine, color: "#8ab4ff" }}>Agent is typing…</div>
         )}
         {error && <div style={errBox}>{error}</div>}
+
+        {isClosed && (
+          <div style={closedBanner}>
+            This chat has ended. Start a new conversation from Support anytime.
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
-      <div style={composer}>
-        <input
-          style={composerInput}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void sendMessage();
-            }
-          }}
-          placeholder={mode === "ai" ? "Message CEO AI…" : "Message support…"}
-        />
-        <button
-          type="button"
-          style={{
-            ...sendBtn,
-            opacity: !draft.trim() || sending ? 0.45 : 1,
-          }}
-          disabled={!draft.trim() || sending}
-          onClick={() => void sendMessage()}
-        >
-          ↑
-        </button>
-      </div>
+      {!isClosed ? (
+        <div style={composer}>
+          <input
+            style={composerInput}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void sendMessage();
+              }
+            }}
+            placeholder={mode === "ai" ? "Drop your question here" : "Message agent…"}
+          />
+          <button
+            type="button"
+            style={{
+              ...sendBtn,
+              opacity: !draft.trim() || sending ? 0.4 : 1,
+            }}
+            disabled={!draft.trim() || sending}
+            onClick={() => void sendMessage()}
+            aria-label="Send"
+          >
+            ➤
+          </button>
+        </div>
+      ) : (
+        <div style={composerClosed}>
+          <button
+            type="button"
+            style={startBtn}
+            onClick={() => {
+              setClosedLocal(false);
+              setTicket(null);
+              setMessages([]);
+              setScreen("welcome");
+            }}
+          >
+            New chat
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-// styles
 const shell: React.CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -534,156 +617,221 @@ const shell: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif",
+  color: "#f5f5f5",
 };
-const header: React.CSSProperties = {
+
+const topBar: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 8,
-  padding: "12px 12px",
-  paddingTop: "calc(12px + env(safe-area-inset-top))",
-  borderBottom: "1px solid #1a1a1a",
+  padding: "10px 12px",
+  paddingTop: "calc(10px + env(safe-area-inset-top))",
+  borderBottom: "1px solid #141414",
 };
-const title: React.CSSProperties = {
-  margin: 0,
-  flex: 1,
-  textAlign: "center",
-  fontSize: 16,
-  fontWeight: 800,
-  color: "#f5f5f5",
-};
+
 const iconBtn: React.CSSProperties = {
   width: 40,
   height: 40,
   border: 0,
   borderRadius: 12,
   background: "transparent",
-  color: "#aaa",
+  color: "#ccc",
+  fontSize: 20,
+  cursor: "pointer",
+};
+
+const powerBtn: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  border: "1px solid #2a2110",
+  borderRadius: 12,
+  background: "#14100a",
+  color: GOLD,
   fontSize: 18,
   cursor: "pointer",
+  display: "grid",
+  placeItems: "center",
 };
-const goldChip: React.CSSProperties = {
-  minHeight: 32,
-  padding: "0 12px",
-  border: 0,
-  borderRadius: 10,
-  background: GOLD,
-  color: "#0a0a0a",
+
+const headerCenter: React.CSSProperties = {
+  flex: 1,
+  textAlign: "center",
+};
+
+const headerTitle: React.CSSProperties = {
   fontWeight: 800,
-  fontSize: 13,
-  cursor: "pointer",
+  fontSize: 15,
+  color: "#f5f5f5",
 };
-const humanBtn: React.CSSProperties = {
-  minHeight: 32,
-  padding: "0 10px",
-  border: `1px solid ${BORDER}`,
-  borderRadius: 10,
-  background: "#17130a",
-  color: GOLD_LIGHT,
-  fontWeight: 700,
+
+const headerSub: React.CSSProperties = {
   fontSize: 11,
-  cursor: "pointer",
+  color: MUTED,
+  marginTop: 2,
 };
-const body: React.CSSProperties = {
+
+const welcomeBody: React.CSSProperties = {
   flex: 1,
-  overflowY: "auto",
-  padding: "14px 14px calc(20px + env(safe-area-inset-bottom))",
-};
-const chatBody: React.CSSProperties = {
-  flex: 1,
-  overflowY: "auto",
-  padding: "14px 12px",
-};
-const ticketRow: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  width: "100%",
-  padding: "14px",
-  marginBottom: 8,
-  border: 0,
-  borderRadius: 14,
-  background: CARD,
-  cursor: "pointer",
-};
-const label: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 6,
-  marginBottom: 14,
-  color: "#888",
-  fontSize: 12,
-  fontWeight: 600,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "24px 24px calc(32px + env(safe-area-inset-bottom))",
+  textAlign: "center",
 };
-const input: React.CSSProperties = {
-  minHeight: 46,
-  borderRadius: 12,
-  border: `1px solid ${BORDER}`,
-  background: CARD,
+
+const botAvatarWrap: React.CSSProperties = {
+  marginBottom: 16,
+};
+
+const botAvatar: React.CSSProperties = {
+  width: 72,
+  height: 72,
+  borderRadius: "50%",
+  background: "linear-gradient(145deg,#1a1508,#0a0a0a)",
+  border: `2px solid ${GOLD}`,
+  color: GOLD,
+  fontWeight: 900,
+  fontSize: 22,
+  display: "grid",
+  placeItems: "center",
+  margin: "0 auto",
+  animation: "ceoScGlow 2.4s ease-in-out infinite",
+};
+
+const welcomeTitle: React.CSSProperties = {
+  margin: "0 0 6px",
+  fontSize: 22,
+  fontWeight: 800,
   color: "#fff",
-  padding: "0 14px",
-  fontSize: 14,
-  outline: "none",
 };
-const textarea: React.CSSProperties = {
-  borderRadius: 12,
-  border: `1px solid ${BORDER}`,
-  background: CARD,
-  color: "#fff",
-  padding: "12px 14px",
-  fontSize: 14,
-  outline: "none",
-  resize: "vertical",
-  fontFamily: "inherit",
+
+const welcomeSub: React.CSSProperties = {
+  margin: "0 0 18px",
+  fontSize: 13,
+  color: MUTED,
 };
-const primaryBtn: React.CSSProperties = {
+
+const welcomeLine: React.CSSProperties = {
+  margin: "0 0 28px",
+  fontSize: 14,
+  color: "#bbb",
+  lineHeight: 1.45,
+};
+
+const startBtn: React.CSSProperties = {
   width: "100%",
-  minHeight: 48,
+  maxWidth: 340,
+  minHeight: 50,
   border: 0,
-  borderRadius: 12,
-  background: `linear-gradient(135deg,${GOLD},#d98e00)`,
+  borderRadius: 28,
+  background: "linear-gradient(135deg,#e8a90f,#f5b51b)",
   color: "#0a0a0a",
   fontWeight: 800,
   fontSize: 15,
   cursor: "pointer",
-  marginTop: 8,
 };
-const composer: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  padding: "10px 12px",
-  paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
-  borderTop: "1px solid #1a1a1a",
-  background: "#0a0a0a",
-};
-const composerInput: React.CSSProperties = {
+
+const gateBody: React.CSSProperties = {
   flex: 1,
-  minHeight: 44,
-  borderRadius: 22,
+  padding: "28px 20px",
+  animation: "ceoScIn 0.32s ease-out both",
+};
+
+const gatePrompt: React.CSSProperties = {
+  fontSize: 18,
+  fontWeight: 700,
+  color: "#f0f0f0",
+  marginBottom: 16,
+};
+
+const gateInput: React.CSSProperties = {
+  width: "100%",
+  minHeight: 52,
+  borderRadius: 14,
   border: `1px solid ${BORDER}`,
   background: CARD,
   color: "#fff",
   padding: "0 16px",
+  fontSize: 16,
+  outline: "none",
+  marginBottom: 16,
+  boxSizing: "border-box",
+};
+
+const chatBody: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "16px 14px",
+};
+
+const typingLine: React.CSSProperties = {
+  color: GOLD,
+  fontSize: 12,
+  fontWeight: 600,
+  marginBottom: 8,
+  animation: "ceoScPulse 1.1s ease-in-out infinite",
+};
+
+const closedBanner: React.CSSProperties = {
+  marginTop: 12,
+  padding: "14px 16px",
+  borderRadius: 14,
+  background: "#1a1010",
+  border: "1px solid #3a2020",
+  color: "#ffb4b4",
+  fontSize: 13,
+  textAlign: "center",
+  lineHeight: 1.4,
+};
+
+const composer: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  alignItems: "center",
+  padding: "10px 12px",
+  paddingBottom: "calc(12px + env(safe-area-inset-bottom))",
+  borderTop: "1px solid #141414",
+  background: "#050505",
+};
+
+const composerClosed: React.CSSProperties = {
+  padding: "12px 16px calc(16px + env(safe-area-inset-bottom))",
+  borderTop: "1px solid #141414",
+};
+
+const composerInput: React.CSSProperties = {
+  flex: 1,
+  minHeight: 46,
+  borderRadius: 24,
+  border: `1px solid ${BORDER}`,
+  background: CARD,
+  color: "#fff",
+  padding: "0 18px",
   fontSize: 14,
   outline: "none",
 };
+
 const sendBtn: React.CSSProperties = {
-  width: 44,
-  height: 44,
+  width: 46,
+  height: 46,
   borderRadius: "50%",
   border: 0,
   background: GOLD,
   color: "#0a0a0a",
   fontWeight: 900,
-  fontSize: 18,
+  fontSize: 16,
   cursor: "pointer",
+  flexShrink: 0,
 };
+
 const errBox: React.CSSProperties = {
   padding: "10px 12px",
-  borderRadius: 10,
+  borderRadius: 12,
   background: "#1d0c0e",
   border: "1px solid #4c2025",
   color: "#ff9aa3",
   fontSize: 12,
-  marginBottom: 8,
+  marginBottom: 12,
+  textAlign: "left",
 };
-const muted: React.CSSProperties = { color: "#666", textAlign: "center", paddingTop: 40 };
