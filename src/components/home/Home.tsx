@@ -1208,7 +1208,7 @@ export default function Home({
         </section>
       </main>
 
-      {/* FAB always available for Post / Message / Personal center */
+      {/* FAB always available for Post / Message / Personal center */}
       {(true || showFab) && (
         <div style={styles.fabWrap}>
           {fabOpen && (
