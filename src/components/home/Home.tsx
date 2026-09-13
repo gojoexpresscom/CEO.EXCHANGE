@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import Settings, { type SettingsTab } from "../settings/Settings";
+import NotificationsCenter from "./NotificationsCenter";
+import UserCenter from "./UserCenter";
+import PostComposer from "./PostComposer";
 
 type Profile = {
   id: string;
@@ -218,6 +221,26 @@ const BG = "#050505";
 const CARD = "#101010";
 const BORDER = "#2a2110";
 
+const HOME_MOTION = `
+@keyframes homeFadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes homeFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes homeScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes homeSlideRight {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+`;
+
+
 // Active provider for NEW "Deposit Crypto" transactions.
 // "wallet_address" shows the user's real, backend-provisioned deposit address for the
 // selected asset/network (sourced from the `wallet_addresses` table, populated via the
@@ -400,7 +423,8 @@ export default function Home({
     if (we) throw we;
     setProfile(p as Profile | null);
     setWallets((w ?? []) as Wallet[]);
-    setAdmin((p as Profile | null)?.role === "admin");
+    const role = (p as Profile | null)?.role;
+    setAdmin(role === "admin" || role === "owner");
     return p as Profile | null;
   }, []);
 
@@ -664,7 +688,9 @@ export default function Home({
   const unreadAnnouncements = announcements.filter((a) => !a.read).length;
   const unreadTransactions = notifications.filter((n) => !n.is_read && /deposit|withdraw/i.test(n.type ?? "")).length;
   const warningCountDelta = Math.max(0, Number(profile?.warning_count ?? 0) - Number(localStorage.getItem(`ceo-warning-count:${userId}`) ?? 0));
-  const unreadSecurity = notifications.filter((n) => !n.is_read && /security|login|warning|2fa/i.test(n.type ?? "")).length + warningCountDelta;
+  const unreadSecurity = notifications.filter(
+    (n) => !n.is_read && /ban|ban_lifted|warning|kyc|security|2FA_ENABLED|GENERAL|login|2fa/i.test(n.type ?? "")
+  ).length + warningCountDelta;
   const unreadTotal = unreadAnnouncements + unreadTransactions + unreadSecurity;
 
   const closeModal = () => { setModal(null); if (modal === "deposit") setDepositResult(null); };
@@ -1037,6 +1063,7 @@ export default function Home({
           {isRefreshing && <div style={styles.brandedSpinner} />}
         </div>
       )}
+      <style>{HOME_MOTION}</style>
       <header style={styles.header}>
         <button type="button" style={styles.profileBtn} onClick={() => setModal("menu")} aria-label="Profile">
           <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
@@ -1158,7 +1185,35 @@ export default function Home({
             {platformAnnouncements.map((a) => <PlatformCard key={a.id} item={a} />)}
           </>}
           {(feedTab === "CEO" || feedTab === "Following") && <>
-            {filteredPosts.map((p) => <PostCard key={p.id} post={p} currentUserId={userId} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />)}
+            <button
+              type="button"
+              onClick={() => setModal("post")}
+              style={{
+                width: "100%",
+                minHeight: 48,
+                marginBottom: 12,
+                borderRadius: 14,
+                border: "1px solid #2a2110",
+                background: "#101010",
+                color: "#f5b51b",
+                fontWeight: 800,
+                fontSize: 14,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                animation: "homeFadeUp 0.35s ease-out both",
+              }}
+            >
+              <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+              Create post
+            </button>
+            {filteredPosts.map((p, idx) => (
+              <div key={p.id} style={{ animation: `homeFadeUp 0.35s ease-out both`, animationDelay: `${Math.min(idx, 8) * 0.04}s` }}>
+                <PostCard post={p} currentUserId={userId} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />
+              </div>
+            ))}
             {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
           </>}
         </section>
@@ -1199,20 +1254,45 @@ export default function Home({
       {toast && <div style={styles.toast}>{toast}</div>}
       {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
       {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onGetQuote={getWithdrawalQuote} onWithdraw={submitWithdrawal} />}
-      {modal === "notifications" && <NotificationsModal tab={notificationTab} setTab={setNotificationTab} announcements={announcements} notifications={notifications} logins={logins} warnings={adminWarnings} unread={{ Announcements: unreadAnnouncements, Transactions: unreadTransactions, "Security/Login": unreadSecurity }} onAnnouncementRead={markAnnouncementRead} onNotificationRead={markNotificationRead} onRememberWarning={rememberWarningCount} onClose={closeModal} />}
+      {modal === "notifications" && (
+        <NotificationsCenter
+          announcements={announcements}
+          notifications={notifications}
+          logins={logins}
+          warnings={adminWarnings}
+          profile={profile}
+          onAnnouncementRead={markAnnouncementRead}
+          onNotificationRead={markNotificationRead}
+          onRememberWarning={rememberWarningCount}
+          onOpenSupport={() => { closeModal(); setModal("support"); }}
+          onClose={closeModal}
+        />
+      )}
       {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
       {modal === "rewards" && <RewardsModal referral={referral} onClose={closeModal} />}
       {modal === "giveaway" && <GiveawayModal giveaways={giveaways} onClose={closeModal} />}
       {modal === "menu" && (
-        <MenuModal
+        <UserCenter
           profile={profile}
           onClose={closeModal}
           onLogout={async () => { await supabase.auth.signOut(); onLogout?.(); }}
-          onOpenSettings={(tab) => { closeModal(); setSettingsTab(tab); setSettingsOpen(true); }}
+          onOpenSettings={(tab) => { closeModal(); setSettingsTab((tab as SettingsTab) || "My Info"); setSettingsOpen(true); }}
+          onOpenSupport={() => { closeModal(); setModal("support"); }}
+          onOpenNotifications={() => { closeModal(); setModal("notifications"); }}
         />
       )}
-      {modal === "post" && commentPostId ? <CommentsModal comments={comments} currentUserId={userId} onClose={closeModal} onAdd={addComment} onDelete={deleteComment} /> : modal === "post" ? <CreatePostModal onClose={closeModal} onCreate={createPost} /> : null}
+      {modal === "post" && commentPostId ? (
+        <CommentsModal comments={comments} currentUserId={userId} onClose={closeModal} onAdd={addComment} onDelete={deleteComment} />
+      ) : modal === "post" ? (
+        <PostComposer
+          onClose={closeModal}
+          onPublished={() => {
+            closeModal();
+            if (userId) void loadPosts(userId, feedTab);
+          }}
+        />
+      ) : null}
       {modal === "announcement" && <CreateAnnouncementModal defaultType={feedTab === "Campaign" ? "campaign" : "announcement"} onClose={closeModal} onCreate={createPlatformAnnouncement} />}
       {settingsOpen && (
         <Settings
