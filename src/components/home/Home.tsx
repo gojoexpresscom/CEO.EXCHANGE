@@ -4,6 +4,7 @@ import Settings, { type SettingsTab } from "../settings/Settings";
 import NotificationsCenter from "./NotificationsCenter";
 import UserCenter from "./UserCenter";
 import PostComposer from "./PostComposer";
+import SupportChat from "./SupportChat";
 
 type Profile = {
   id: string;
@@ -1065,7 +1066,7 @@ export default function Home({
       )}
       <style>{HOME_MOTION}</style>
       <header style={styles.header}>
-        <button type="button" style={styles.profileBtn} onClick={() => setModal("menu")} aria-label="Profile">
+        <button type="button" style={styles.profileBtn} onClick={() => { setSettingsTab("My Info"); setSettingsOpen(true); }} aria-label="Profile">
           <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
         </button>
         <div style={styles.topSearch}>
@@ -1076,7 +1077,7 @@ export default function Home({
         <div style={styles.headerActions}>
           <button type="button" style={styles.iconRound} onClick={() => setModal("support")} aria-label="Support"><Icon name="headset" size={22} /></button>
           <button type="button" style={styles.iconRound} onClick={() => setModal("notifications")} aria-label="Notifications"><Icon name="bell" size={22} />{unreadTotal > 0 && <span style={styles.badge}>{unreadTotal > 99 ? "99+" : unreadTotal}</span>}</button>
-          <button type="button" style={styles.iconRound} onClick={() => setModal("menu")} aria-label="Menu"><Icon name="menu" size={22} /></button>
+          <button type="button" style={styles.iconRound} onClick={() => { setSettingsTab("My Info"); setSettingsOpen(true); }} aria-label="Menu"><Icon name="menu" size={22} /></button>
         </div>
       </header>
 
@@ -1231,7 +1232,7 @@ export default function Home({
                 <span style={styles.fabMenuIcon}><Icon name="bell" size={16} /></span>
                 <span>Message</span>
               </button>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("menu"); }}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setSettingsTab("My Info"); setSettingsOpen(true); setFabOpen(false); }}>
                 <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
                 <span>Profile</span>
               </button>
@@ -1265,10 +1266,23 @@ export default function Home({
           onNotificationRead={markNotificationRead}
           onRememberWarning={rememberWarningCount}
           onOpenSupport={() => { closeModal(); setModal("support"); }}
+          onMarkAllRead={async () => {
+            try {
+              await supabase.rpc("mark_all_notifications_read");
+            } catch {
+              // fallback: mark loaded notifications read
+              const ids = notifications.filter((n) => !n.is_read).map((n) => n.id);
+              if (ids.length) {
+                await supabase.from("user_notifications").update({ is_read: true }).in("id", ids);
+              }
+            }
+            setNotifications((items) => items.map((n) => ({ ...n, is_read: true })));
+            setAnnouncements((items) => items.map((a) => ({ ...a, read: true })));
+          }}
           onClose={closeModal}
         />
       )}
-      {modal === "support" && <SupportModal tickets={tickets} selectedTicket={selectedTicket} setSelectedTicket={async (id) => { setSelectedTicket(id); await loadSelectedTicket(id); }} messages={ticketMessages} attachments={ticketAttachments} history={ticketStatusHistory} onClose={closeModal} onCreate={createTicket} onSend={sendTicketMessage} />}
+      {modal === "support" && <SupportChat onClose={closeModal} />}
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
       {modal === "rewards" && <RewardsModal referral={referral} onClose={closeModal} />}
       {modal === "giveaway" && <GiveawayModal giveaways={giveaways} onClose={closeModal} />}

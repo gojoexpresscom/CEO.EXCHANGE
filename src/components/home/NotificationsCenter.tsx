@@ -100,6 +100,7 @@ type Props = {
   onNotificationRead: (n: Notification) => Promise<void>;
   onRememberWarning: () => void;
   onOpenSupport: () => void;
+  onMarkAllRead?: () => Promise<void> | void;
   onClose: () => void;
 };
 
@@ -134,9 +135,21 @@ export default function NotificationsCenter({
   onNotificationRead,
   onRememberWarning,
   onOpenSupport,
+  onMarkAllRead,
   onClose,
 }: Props) {
   const [view, setView] = useState<CategoryId>("overview");
+  const [marking, setMarking] = useState(false);
+
+  async function handleMarkAll() {
+    if (!onMarkAllRead || marking) return;
+    setMarking(true);
+    try {
+      await onMarkAllRead();
+    } finally {
+      setMarking(false);
+    }
+  }
 
   // Grouped data
   // Exact type strings confirmed by Claude + safe fallbacks
@@ -435,9 +448,23 @@ export default function NotificationsCenter({
           ←
         </button>
         <h2 style={title}>Inbox</h2>
-        <button type="button" style={closeBtn} onClick={onClose} aria-label="Close">
-          ✕
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {totalUnread > 0 && onMarkAllRead && (
+            <button
+              type="button"
+              style={markAllBtn}
+              onClick={() => void handleMarkAll()}
+              disabled={marking}
+              aria-label="Mark all as read"
+              title="Mark all as read"
+            >
+              {marking ? "…" : "✓"}
+            </button>
+          )}
+          <button type="button" style={closeBtn} onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
       </header>
 
       <div style={{ ...body, animation: "ceoNotifIn 0.32s ease-out both" }}>
@@ -445,7 +472,25 @@ export default function NotificationsCenter({
           <span style={{ color: GOLD_LIGHT, fontWeight: 800, fontSize: 15 }}>
             {totalUnread > 0 ? `${totalUnread} unread` : "All caught up"}
           </span>
-          <span style={{ color: "#666", fontSize: 12 }}>CEO Exchange</span>
+          {totalUnread > 0 && onMarkAllRead ? (
+            <button
+              type="button"
+              onClick={() => void handleMarkAll()}
+              disabled={marking}
+              style={{
+                border: 0,
+                background: "transparent",
+                color: GOLD,
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {marking ? "Clearing…" : "Mark all read"}
+            </button>
+          ) : (
+            <span style={{ color: "#666", fontSize: 12 }}>CEO Exchange</span>
+          )}
         </div>
 
         {categories.map((c, i) => (
@@ -553,6 +598,20 @@ const closeBtn: React.CSSProperties = {
   background: "transparent",
   color: "#888",
   fontSize: 18,
+  cursor: "pointer",
+  display: "grid",
+  placeItems: "center",
+};
+
+const markAllBtn: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  border: "1px solid #2a2110",
+  borderRadius: 12,
+  background: "#17130a",
+  color: GOLD,
+  fontSize: 16,
+  fontWeight: 800,
   cursor: "pointer",
   display: "grid",
   placeItems: "center",
