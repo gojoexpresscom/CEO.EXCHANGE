@@ -19,6 +19,7 @@ type Msg = {
   id: string;
   ticket_id: string | null;
   sender_id: string | null;
+  sender_type?: string | null;
   message: string;
   created_at: string | null;
 };
@@ -103,7 +104,7 @@ export default function Tickets() {
     setMsgLoading(true);
     const { data, error } = await supabase
       .from("ticket_messages")
-      .select("id,ticket_id,sender_id,message,created_at")
+      .select("id,ticket_id,sender_id,sender_type,message,created_at")
       .eq("ticket_id", ticketId)
       .order("created_at", { ascending: true });
     if (!error) setMessages((data as Msg[]) ?? []);
@@ -158,8 +159,14 @@ export default function Tickets() {
       const { error } = await supabase.from("ticket_messages").insert({
         ticket_id: selectedId,
         sender_id: adminId,
+        sender_type: "admin",
         message: body,
       });
+      // Ensure ticket is in human mode when agent replies
+      await supabase
+        .from("support_tickets")
+        .update({ mode: "human", assigned_admin_id: adminId })
+        .eq("id", selectedId);
       if (error) throw error;
       // last_activity_at updated by backend trigger — do not invent another mechanism
       setReply("");
@@ -338,7 +345,8 @@ export default function Tickets() {
                 </div>
               )}
               {messages.map((m) => {
-                const mine = m.sender_id === adminId;
+                const st = (m.sender_type || "").toLowerCase();
+                const mine = st === "admin" || (!st && m.sender_id === adminId);
                 return (
                   <div
                     key={m.id}
