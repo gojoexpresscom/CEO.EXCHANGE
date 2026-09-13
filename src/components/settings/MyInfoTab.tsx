@@ -328,9 +328,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </button>
       )}
 
-        </div>
-      )}
-<button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
+      <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
         <SIcon name="logout" size={18} /> Log Out
       </button>
     </div>
