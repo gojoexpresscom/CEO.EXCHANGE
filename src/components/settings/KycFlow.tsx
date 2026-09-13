@@ -88,6 +88,8 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
 
   const frontRef = useRef<HTMLInputElement>(null);
   const backRef = useRef<HTMLInputElement>(null);
+  const frontGalleryRef = useRef<HTMLInputElement>(null);
+  const backGalleryRef = useRef<HTMLInputElement>(null);
 
   const needsBack = docType !== "passport";
   const idLabel =
@@ -337,14 +339,22 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
 
         {step === "docs" && (
           <>
-            <h3 style={kyc.stepTitle}>Photograph your document</h3>
-            <p style={kyc.stepSubtitle}>Place it on a flat, well-lit surface. Avoid glare and shadows.</p>
+            <h3 style={kyc.stepTitle}>Document photos</h3>
+            <p style={kyc.stepSubtitle}>Use the camera or upload a clear photo. Good lighting helps verification.</p>
 
+            {/* Camera (capture) + gallery (no capture) — separate so both work on mobile */}
             <input
               ref={frontRef}
               type="file"
               accept="image/*"
               capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => void handleDocFile(e.target.files?.[0] ?? null, "front")}
+            />
+            <input
+              ref={frontGalleryRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/*"
               style={{ display: "none" }}
               onChange={(e) => void handleDocFile(e.target.files?.[0] ?? null, "front")}
             />
@@ -356,29 +366,49 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
               style={{ display: "none" }}
               onChange={(e) => void handleDocFile(e.target.files?.[0] ?? null, "back")}
             />
+            <input
+              ref={backGalleryRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/*"
+              style={{ display: "none" }}
+              onChange={(e) => void handleDocFile(e.target.files?.[0] ?? null, "back")}
+            />
 
+            <h3 style={{ ...kyc.stepTitle, fontSize: 16, marginTop: 4 }}>Front of your ID</h3>
+            <p style={kyc.stepSubtitle}>Take a photo of the front of your ID. All four corners must be visible.</p>
             <DocUploadTile
               label="Front of document"
               preview={frontPreview}
               checking={checkingFront}
               ok={!!frontFile}
-              onChoose={() => frontRef.current?.click()}
+              onTakePhoto={() => frontRef.current?.click()}
+              onUpload={() => frontGalleryRef.current?.click()}
               onRetake={() => clearDoc("front")}
             />
+
             {needsBack && (
-              <DocUploadTile
-                label="Back of document"
-                preview={backPreview}
-                checking={checkingBack}
-                ok={!!backFile}
-                onChoose={() => backRef.current?.click()}
-                onRetake={() => clearDoc("back")}
-              />
+              <>
+                <h3 style={{ ...kyc.stepTitle, fontSize: 16, marginTop: 16 }}>Back of your ID</h3>
+                <p style={kyc.stepSubtitle}>Take a photo of the back of your ID. Keep text readable and avoid glare.</p>
+                <DocUploadTile
+                  label="Back of document"
+                  preview={backPreview}
+                  checking={checkingBack}
+                  ok={!!backFile}
+                  onTakePhoto={() => backRef.current?.click()}
+                  onUpload={() => backGalleryRef.current?.click()}
+                  onRetake={() => clearDoc("back")}
+                />
+              </>
             )}
 
-            <p style={{ color: "#666", fontSize: 12, margin: "10px 0 0", textAlign: "center" }}>
-              Photos are checked for blur and readability as soon as you choose them.
-            </p>
+            <ul style={{ color: "#777", fontSize: 12, margin: "14px 0 0", paddingLeft: 18, lineHeight: 1.55 }}>
+              <li>All four corners visible</li>
+              <li>Document flat — no folds covering text</li>
+              <li>Avoid glare and heavy shadows</li>
+              <li>Text must be readable</li>
+              <li>Do not upload screenshots of documents</li>
+            </ul>
 
             {error && <div style={s.errorBox}>{error}</div>}
             {busy && <div style={s.infoBox}>Submitting verification…</div>}
@@ -433,31 +463,27 @@ function DocUploadTile({
   preview,
   checking,
   ok,
-  onChoose,
+  onTakePhoto,
+  onUpload,
   onRetake,
 }: {
   label: string;
   preview: string | null;
   checking: boolean;
   ok: boolean;
-  onChoose: () => void;
+  onTakePhoto: () => void;
+  onUpload: () => void;
   onRetake: () => void;
 }) {
   return (
     <div style={kyc.uploadTile}>
-      <button
-        type="button"
-        style={{ ...kyc.uploadThumb, cursor: preview ? "default" : "pointer" }}
-        onClick={() => {
-          if (!preview) onChoose();
-        }}
-      >
+      <div style={{ ...kyc.uploadThumb, cursor: "default" }}>
         {preview ? (
           <img src={preview} alt={label} style={kyc.uploadImg} />
         ) : (
-          <span style={{ color: "#666", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "#555", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
             <SIcon name="camera" size={22} />
-            <span style={{ fontSize: 12 }}>Tap to capture</span>
+            <span style={{ fontSize: 11 }}>Preview</span>
           </span>
         )}
         {checking && (
@@ -470,17 +496,36 @@ function DocUploadTile({
             <SIcon name="check" size={14} />
           </div>
         )}
-      </button>
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: "#eee" }}>{label}</div>
         <div style={{ fontSize: 12, color: checking ? GOLD_LIGHT : ok ? "#39d98a" : "#777", marginTop: 2 }}>
-          {checking ? "Checking image quality…" : ok ? "Looks good" : "Not selected"}
+          {checking ? "Checking image quality…" : ok ? "Looks good — confirm or retake" : "Required"}
         </div>
-        {preview && (
-          <button type="button" onClick={onRetake} style={kyc.retakeBtn}>
-            Retake
-          </button>
-        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          {!preview ? (
+            <>
+              <button type="button" onClick={onTakePhoto} style={kyc.actionBtn}>
+                📷 Take Photo
+              </button>
+              <button type="button" onClick={onUpload} style={kyc.actionBtnSecondary}>
+                📁 Upload Photo
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={onRetake} style={kyc.retakeBtn}>
+                Retake / Replace
+              </button>
+              <button type="button" onClick={onTakePhoto} style={kyc.actionBtnSecondary}>
+                Camera
+              </button>
+              <button type="button" onClick={onUpload} style={kyc.actionBtnSecondary}>
+                Upload
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -655,6 +700,26 @@ const kyc: Record<string, React.CSSProperties> = {
     display: "grid",
     placeItems: "center",
     animation: "kycCheckPop 0.25s ease-out both",
+  },
+  actionBtn: {
+    border: 0,
+    borderRadius: 10,
+    padding: "8px 12px",
+    background: GOLD,
+    color: "#0a0a0a",
+    fontWeight: 700,
+    fontSize: 12,
+    cursor: "pointer",
+  },
+  actionBtnSecondary: {
+    border: `1px solid ${BORDER}`,
+    borderRadius: 10,
+    padding: "8px 12px",
+    background: "#141414",
+    color: "#ddd",
+    fontWeight: 600,
+    fontSize: 12,
+    cursor: "pointer",
   },
   retakeBtn: {
     marginTop: 6,
