@@ -299,7 +299,11 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
   const stage = STAGES[Math.min(stageIdx, STAGES.length - 1)];
 
   return (
-    <div style={s.section}>
+    <div style={{ ...s.section, background: "#000" }}>
+      <style>{`
+        @keyframes lcStageIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes lcFrameGlow { 0% { box-shadow: 0 0 0 0 rgba(245,181,27,0.25); } 100% { box-shadow: 0 0 0 14px rgba(245,181,27,0); } }
+      `}</style>
       <h3 style={{ margin: "0 0 6px", color: "#fff", fontSize: 17, textAlign: "center" }}>
         Verify your identity
       </h3>
@@ -311,12 +315,14 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
         <div style={s.errorBox}>{permError}</div>
       ) : (
         <>
-          <p style={{ color: GOLD_LIGHT, fontWeight: 700, textAlign: "center", margin: "0 0 4px", fontSize: 15 }}>
-            {stage.title}
-          </p>
-          <p style={{ color: "#666", textAlign: "center", margin: "0 0 12px", fontSize: 12 }}>
-            Step {Math.min(stageIdx + 1, STAGES.length)} of {STAGES.length}
-          </p>
+          <div key={stageIdx} style={{ animation: "lcStageIn 0.3s cubic-bezier(0.16,1,0.3,1) both" }}>
+            <p style={{ color: GOLD_LIGHT, fontWeight: 700, textAlign: "center", margin: "0 0 4px", fontSize: 15 }}>
+              {stage.title}
+            </p>
+            <p style={{ color: "#666", textAlign: "center", margin: "0 0 12px", fontSize: 12 }}>
+              Step {Math.min(stageIdx + 1, STAGES.length)} of {STAGES.length}
+            </p>
+          </div>
 
           <div
             style={{
@@ -326,9 +332,10 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
               aspectRatio: "3 / 4",
               borderRadius: 20,
               overflow: "hidden",
-              background: "#0a0a0a",
+              background: "#000",
               border: `1.5px solid ${GOLD}`,
-              boxShadow: `0 0 24px rgba(245,181,27,0.12)`,
+              boxShadow: "0 0 30px rgba(245,181,27,0.14)",
+              animation: holdProgress > 0 ? "lcFrameGlow 1.1s ease-out infinite" : "none",
             }}
           >
             <video
@@ -342,22 +349,47 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                 transform: "scaleX(-1)",
               }}
             />
-            {/* Oval face guide */}
-            <div
-              style={{
-                position: "absolute",
-                left: "50%",
-                top: "42%",
-                width: "68%",
-                height: "48%",
-                transform: "translate(-50%, -50%)",
-                borderRadius: "50%",
-                border: `2px solid ${holdProgress > 0 ? GOLD_LIGHT : "rgba(245,181,27,0.55)"}`,
-                boxShadow: holdProgress > 0 ? `0 0 0 9999px rgba(0,0,0,0.45), 0 0 20px ${GOLD}` : "0 0 0 9999px rgba(0,0,0,0.4)",
-                pointerEvents: "none",
-                transition: "border-color 0.2s, box-shadow 0.2s",
-              }}
-            />
+            {/* Dark scrim with a real face-silhouette cutout (not a plain oval) */}
+            <svg
+              viewBox="0 0 300 400"
+              preserveAspectRatio="none"
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+            >
+              <defs>
+                <mask id="kycFaceMask">
+                  <rect width="300" height="400" fill="white" />
+                  <path
+                    d="M150 46 C100 46 70 96 70 160 C70 208 82 236 96 262 C108 284 122 306 136 322 C142 330 158 330 164 322 C178 306 192 284 204 262 C218 236 230 208 230 160 C230 96 200 46 150 46 Z"
+                    fill="black"
+                  />
+                </mask>
+              </defs>
+              <rect width="300" height="400" fill="rgba(0,0,0,0.55)" mask="url(#kycFaceMask)" />
+              <path
+                d="M150 46 C100 46 70 96 70 160 C70 208 82 236 96 262 C108 284 122 306 136 322 C142 330 158 330 164 322 C178 306 192 284 204 262 C218 236 230 208 230 160 C230 96 200 46 150 46 Z"
+                fill="none"
+                stroke={holdProgress > 0 ? GOLD_LIGHT : "rgba(245,181,27,0.65)"}
+                strokeWidth={holdProgress > 0 ? 3 : 2}
+                style={{ transition: "stroke 0.2s, stroke-width 0.2s" }}
+              />
+              {/* Corner scan brackets */}
+              {[
+                { x: 14, y: 14, dx: 1, dy: 1 },
+                { x: 286, y: 14, dx: -1, dy: 1 },
+                { x: 14, y: 386, dx: 1, dy: -1 },
+                { x: 286, y: 386, dx: -1, dy: -1 },
+              ].map((c, i) => (
+                <path
+                  key={i}
+                  d={`M${c.x} ${c.y + c.dy * 18} L${c.x} ${c.y} L${c.x + c.dx * 18} ${c.y}`}
+                  fill="none"
+                  stroke={GOLD}
+                  strokeWidth={3}
+                  strokeLinecap="round"
+                  opacity={0.85}
+                />
+              ))}
+            </svg>
             {/* Hold progress ring base */}
             {holdProgress > 0 && (
               <div
@@ -384,7 +416,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
               </div>
             )}
             {(!ready || modelState === "loading") && (
-              <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#777", background: "#0a0a0a" }}>
+              <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#777", background: "#000" }}>
                 {!ready ? "Starting camera…" : "Loading face detection…"}
               </div>
             )}
