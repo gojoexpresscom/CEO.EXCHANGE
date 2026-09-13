@@ -67,20 +67,35 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     streamRef.current = null;
   }, []);
 
-  // Load the on-device face detection model once.
+  // Load the on-device face detection model once (GPU → CPU → heuristic fallback).
   useEffect(() => {
     let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      if (!cancelled && !faceDetectorRef.current) {
+        setModelState("unavailable");
+      }
+    }, 12000);
+
+    async function createDetector(delegate: "GPU" | "CPU") {
+      const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+      return FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: MODEL_URL,
+          delegate,
+        },
+        runningMode: "VIDEO",
+        minDetectionConfidence: MIN_CONFIDENCE,
+      });
+    }
+
     async function initDetector() {
       try {
-        const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-        const detector = await FaceDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: MODEL_URL,
-            delegate: "GPU",
-          },
-          runningMode: "VIDEO",
-          minDetectionConfidence: MIN_CONFIDENCE,
-        });
+        let detector: FaceDetector;
+        try {
+          detector = await createDetector("GPU");
+        } catch {
+          detector = await createDetector("CPU");
+        }
         if (cancelled) {
           detector.close();
           return;
@@ -88,14 +103,16 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
         faceDetectorRef.current = detector;
         setModelState("ready");
       } catch {
-        // Offline, blocked CDN, or unsupported device — fall back to the
-        // brightness/motion heuristic rather than blocking verification entirely.
+        // Offline, blocked CDN, or unsupported device — heuristic fallback.
         if (!cancelled) setModelState("unavailable");
+      } finally {
+        window.clearTimeout(timeout);
       }
     }
     void initDetector();
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
       faceDetectorRef.current?.close();
       faceDetectorRef.current = null;
     };
@@ -103,25 +120,74 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
 
   useEffect(() => {
     let cancelled = false;
-    async function start() {
+    async function attachStream(stream: MediaStream) {
+      const video = videoRef.current;
+      if (!video) return false;
+      video.setAttribute("playsinline", "true");
+      video.muted = true;
+      video.srcObject = stream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 960 } },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+        await video.play();
+      } catch {
+        // Autoplay policies — try again after a tick
+        await new Promise((r) => setTimeout(r, 50));
+        await video.play().catch(() => undefined);
+      }
+      return true;
+    }
+
+    async function start() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setPermError(
+          "This browser does not support camera access. Please use Chrome or Safari over HTTPS."
+        );
+        return;
+      }
+      const attempts: MediaStreamConstraints[] = [
+        { audio: false, video: { facingMode: { ideal: "user" }, width: { ideal: 720 }, height: { ideal: 960 } } },
+        { audio: false, video: { facingMode: "user" } },
+        { audio: false, video: true },
+      ];
+      let lastErr: unknown = null;
+      for (const constraints of attempts) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          if (cancelled) {
+            stream.getTracks().forEach((tr) => tr.stop());
+            return;
+          }
+          streamRef.current = stream;
+          // Video element may not be mounted on first paint — retry briefly
+          let attached = await attachStream(stream);
+          if (!attached) {
+            for (let i = 0; i < 10 && !cancelled && !attached; i++) {
+              await new Promise((r) => setTimeout(r, 80));
+              attached = await attachStream(stream);
+            }
+          }
+          if (cancelled) return;
+          if (!attached) {
+            setPermError("Camera started but preview could not attach. Close and try again.");
+            return;
+          }
           setReady(true);
           setStatus("Position your face in the circle");
+          return;
+        } catch (e) {
+          lastErr = e;
         }
-      } catch {
-        setPermError("Camera permission is required for identity verification.");
+      }
+      const name = (lastErr as { name?: string } | null)?.name || "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setPermError(
+          "Camera access is required for identity verification. Please allow camera access in your browser settings and try again."
+        );
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        setPermError("No camera was found on this device.");
+      } else {
+        setPermError(
+          "Could not open the camera. Use HTTPS, allow permissions, and try again on Chrome or Safari."
+        );
       }
     }
     void start();
@@ -342,6 +408,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
               ref={videoRef}
               playsInline
               muted
+              autoPlay
               style={{
                 width: "100%",
                 height: "100%",
@@ -415,9 +482,38 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                 />
               </div>
             )}
-            {(!ready || modelState === "loading") && (
-              <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#777", background: "#000" }}>
-                {!ready ? "Starting camera…" : "Loading face detection…"}
+            {!ready && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#aaa",
+                  background: "rgba(0,0,0,0.72)",
+                  fontSize: 13,
+                  padding: 16,
+                  textAlign: "center",
+                }}
+              >
+                Starting camera…
+              </div>
+            )}
+            {ready && modelState === "loading" && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  padding: "8px 10px",
+                  background: "rgba(0,0,0,0.55)",
+                  color: "#ccc",
+                  fontSize: 11,
+                  textAlign: "center",
+                }}
+              >
+                Loading face detection…
               </div>
             )}
           </div>

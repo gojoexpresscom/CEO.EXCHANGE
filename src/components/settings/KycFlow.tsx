@@ -125,7 +125,13 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
     const objectUrl = URL.createObjectURL(file);
     setPreview(objectUrl);
     setChecking(true);
-    const result = await checkDocumentImageQuality(file);
+    // Never leave the UI on "Checking image quality..." for minutes
+    const result = await Promise.race([
+      checkDocumentImageQuality(file),
+      new Promise<{ ok: true }>((resolve) =>
+        window.setTimeout(() => resolve({ ok: true }), 10000)
+      ),
+    ]);
     setChecking(false);
 
     if (!result.ok) {

@@ -84,8 +84,17 @@ export async function checkDocumentImageQuality(file: File): Promise<DocQualityR
       };
     }
 
-    const { data: ocrData } = await Tesseract.recognize(canvas, "eng", { logger: () => {} });
-    const text = (ocrData.text || "").replace(/[^a-zA-Z0-9]/g, "");
+    // OCR can hang a long time on mobile while downloading the worker — hard timeout.
+    const ocrPromise = Tesseract.recognize(canvas, "eng", { logger: () => {} });
+    const timeoutPromise = new Promise<null>((resolve) => {
+      window.setTimeout(() => resolve(null), 8000);
+    });
+    const ocrResult = await Promise.race([ocrPromise, timeoutPromise]);
+    if (!ocrResult) {
+      // Timed out — accept photo after blur passed so UX is not stuck for minutes.
+      return { ok: true, blurScore, textLength: 0 };
+    }
+    const text = (ocrResult.data.text || "").replace(/[^a-zA-Z0-9]/g, "");
     if (text.length < MIN_TEXT_CHARS) {
       return {
         ok: false,
