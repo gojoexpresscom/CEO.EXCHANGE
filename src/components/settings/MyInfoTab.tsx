@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { s, GOLD } from "./settingsStyles";
+import { s, GOLD, GOLD_LIGHT, BORDER, CARD } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 import type { SettingsData } from "./Settings";
 import KycFlow from "./KycFlow";
@@ -15,8 +15,8 @@ type Props = {
 function kycLabel(status: string | null) {
   if (!status) return "Unverified";
   const v = status.toLowerCase();
-  if (v === "approved" || v === "verified") return "Your identity is verified";
-  if (v === "pending" || v === "submitted") return "Verification under review";
+  if (v === "approved" || v === "verified") return "Lv.1 Verified";
+  if (v === "pending" || v === "submitted") return "Under review";
   if (v === "rejected") return "Rejected — resubmit";
   return "Unverified";
 }
@@ -28,7 +28,6 @@ function kycIsPending(status: string | null) {
   const v = (status || "").toLowerCase();
   return v === "pending" || v === "submitted";
 }
-
 function kycColor(status: string | null) {
   const v = (status || "").toLowerCase();
   if (v === "approved" || v === "verified") return "#39d98a";
@@ -44,11 +43,13 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
   const [nick, setNick] = useState(profile?.nickname || "");
   const [saving, setSaving] = useState(false);
   const [showKyc, setShowKyc] = useState(false);
-  const [linkProvider, setLinkProvider] = useState<"telegram" | "twitter" | null>(null);
-  const [linkHandle, setLinkHandle] = useState("");
+  const [linkView, setLinkView] = useState<"list" | "telegram" | "x" | "x-consent" | "x-redirect" | null>(null);
   const [tgCode, setTgCode] = useState("");
   const [tgExpires, setTgExpires] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [xAgree, setXAgree] = useState(false);
+  const [xRedirectAgree, setXRedirectAgree] = useState(false);
+  const [closePending, setClosePending] = useState(false);
 
   const tg = socials.find((x) => x.provider === "telegram");
   const tw = socials.find((x) => x.provider === "twitter" || x.provider === "x");
@@ -158,6 +159,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
       const msg = e?.message || "X linking is not configured yet.";
       setError(msg);
       notify(msg);
+      setLinkView("list");
     } finally {
       setSaving(false);
     }
@@ -174,6 +176,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
       if (error) throw error;
       notify("Account unlinked.");
       await onReload();
+      setLinkView(null);
     } catch (e: any) {
       notify(e?.message || "Could not unlink.");
     } finally {
@@ -197,7 +200,121 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     );
   }
 
-  if (linkProvider === "telegram") {
+  // ── Link Account screens (reference style) ──
+  if (linkView === "list") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setLinkView(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 6px", color: "#fff", fontSize: 17, textAlign: "center" }}>Link Account</h3>
+        <p style={{ margin: "0 0 16px", color: "#777", fontSize: 12, textAlign: "center", lineHeight: 1.45 }}>
+          Connect a third-party account for quick login or event access.
+        </p>
+
+        {/* Telegram */}
+        <div style={{ ...s.row, marginBottom: 8 }}>
+          <span style={{ ...s.rowIcon, background: "#1a2a3a", borderColor: "#234" }}>
+            <span style={{ fontSize: 14 }}>✈</span>
+          </span>
+          <span style={s.rowLabel}>Telegram</span>
+          {tg ? (
+            <button
+              type="button"
+              style={{
+                border: `1px solid ${BORDER}`,
+                borderRadius: 99,
+                background: "transparent",
+                color: GOLD_LIGHT,
+                fontWeight: 700,
+                fontSize: 12,
+                padding: "6px 14px",
+                cursor: "pointer",
+              }}
+              disabled={saving}
+              onClick={() => void unlinkSocial("telegram")}
+            >
+              Unlink
+            </button>
+          ) : (
+            <button
+              type="button"
+              style={{
+                border: 0,
+                borderRadius: 99,
+                background: `linear-gradient(135deg,${GOLD},#d98e00)`,
+                color: "#090909",
+                fontWeight: 800,
+                fontSize: 12,
+                padding: "6px 14px",
+                cursor: "pointer",
+              }}
+              onClick={() => setLinkView("telegram")}
+            >
+              Link
+            </button>
+          )}
+        </div>
+        {tg && (
+          <p style={{ color: "#666", fontSize: 11, margin: "-4px 4px 12px" }}>
+            Linked{tg.handle ? `: ${tg.handle}` : ""}. How to Unlink — use Unlink above.
+          </p>
+        )}
+
+        {/* X */}
+        <p style={{ margin: "16px 0 8px", color: "#777", fontSize: 12, lineHeight: 1.4 }}>
+          Connect your X account to interact and earn event rewards.
+        </p>
+        <div style={{ ...s.row, marginBottom: 8 }}>
+          <span style={s.rowIcon}>
+            <span style={{ fontWeight: 900, fontSize: 13 }}>𝕏</span>
+          </span>
+          <span style={s.rowLabel}>{tw ? tw.handle || "Linked" : "Not yet configured"}</span>
+          {tw ? (
+            <button
+              type="button"
+              style={{
+                border: `1px solid ${BORDER}`,
+                borderRadius: 99,
+                background: "transparent",
+                color: GOLD_LIGHT,
+                fontWeight: 700,
+                fontSize: 12,
+                padding: "6px 14px",
+                cursor: "pointer",
+              }}
+              disabled={saving}
+              onClick={() => void unlinkSocial(tw.provider)}
+            >
+              Unlink
+            </button>
+          ) : (
+            <button
+              type="button"
+              style={{
+                border: 0,
+                borderRadius: 99,
+                background: `linear-gradient(135deg,${GOLD},#d98e00)`,
+                color: "#090909",
+                fontWeight: 800,
+                fontSize: 12,
+                padding: "6px 14px",
+                cursor: "pointer",
+              }}
+              onClick={() => {
+                setXAgree(false);
+                setLinkView("x-consent");
+              }}
+            >
+              Unconfigured
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (linkView === "telegram") {
     return (
       <div style={s.section}>
         <div style={s.infoBox}>
@@ -212,29 +329,171 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
             {saving ? "Requesting…" : "Get Telegram link code"}
           </button>
         ) : (
-          <button type="button" style={s.primaryBtn} disabled={saving} onClick={async () => { await onReload(); notify("Refreshed linked accounts."); }}>
+          <button
+            type="button"
+            style={s.primaryBtn}
+            disabled={saving}
+            onClick={async () => {
+              await onReload();
+              notify("Refreshed linked accounts.");
+            }}
+          >
             I&apos;ve done it — refresh
           </button>
         )}
-        <button type="button" style={s.secondaryBtn} onClick={() => { setLinkProvider(null); setTgCode(""); setError(""); }}>
+        <button
+          type="button"
+          style={s.secondaryBtn}
+          onClick={() => {
+            setLinkView("list");
+            setTgCode("");
+            setError("");
+          }}
+        >
           Cancel
         </button>
       </div>
     );
   }
 
-  if (linkProvider === "twitter") {
+  if (linkView === "x-consent") {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 90,
+          background: "rgba(0,0,0,0.75)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+        }}
+      >
+        <div
+          style={{
+            width: "min(100%, 360px)",
+            background: CARD,
+            borderRadius: 16,
+            border: `1px solid ${BORDER}`,
+            padding: "22px 18px",
+          }}
+        >
+          <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Connect to X</h3>
+          <p style={{ margin: "0 0 12px", color: "#aaa", fontSize: 13, lineHeight: 1.5 }}>
+            You&apos;ll be redirected to the X homepage to complete authorization for linking your account.
+            By connecting your X account to CEO Exchange, you allow us to access:
+          </p>
+          <ul style={{ margin: "0 0 14px", paddingLeft: 18, color: "#999", fontSize: 12, lineHeight: 1.6 }}>
+            <li>X profile information</li>
+            <li>Posts from your timeline (including protected posts)</li>
+            <li>Lists and collections (accounts you follow, mute or block)</li>
+          </ul>
+          <p style={{ margin: "0 0 14px", color: "#777", fontSize: 12 }}>You can unlink your account any time.</p>
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 16, color: "#ccc", fontSize: 13 }}>
+            <input type="checkbox" checked={xAgree} onChange={(e) => setXAgree(e.target.checked)} style={{ marginTop: 3 }} />
+            I agree to the terms stated above.
+          </label>
+          <button
+            type="button"
+            style={{
+              ...s.primaryBtn,
+              marginTop: 0,
+              opacity: xAgree ? 1 : 0.45,
+            }}
+            disabled={!xAgree || saving}
+            onClick={() => {
+              setXRedirectAgree(false);
+              setLinkView("x-redirect");
+            }}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            style={{ ...s.secondaryBtn, marginTop: 10 }}
+            onClick={() => setLinkView("list")}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (linkView === "x-redirect") {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 90,
+          background: "rgba(0,0,0,0.75)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+        }}
+      >
+        <div
+          style={{
+            width: "min(100%, 360px)",
+            background: CARD,
+            borderRadius: 16,
+            border: `1px solid ${BORDER}`,
+            padding: "22px 18px",
+          }}
+        >
+          <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Redirect Notice</h3>
+          <p style={{ margin: "0 0 14px", color: "#aaa", fontSize: 13, lineHeight: 1.5 }}>
+            You are about to access products and services provided by third parties through a web browser.
+            These services are not operated or endorsed by CEO Exchange. CEO Exchange is not responsible for
+            your access to or use of any third-party websites or applications.
+          </p>
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 16, color: "#ccc", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={xRedirectAgree}
+              onChange={(e) => setXRedirectAgree(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            I understand and accept full responsibility for all associated risks.
+          </label>
+          <button
+            type="button"
+            style={{
+              ...s.primaryBtn,
+              marginTop: 0,
+              opacity: xRedirectAgree ? 1 : 0.45,
+            }}
+            disabled={!xRedirectAgree || saving}
+            onClick={() => void startXLink()}
+          >
+            {saving ? "Opening…" : "Confirm"}
+          </button>
+          <button
+            type="button"
+            style={{ ...s.secondaryBtn, marginTop: 10 }}
+            onClick={() => setLinkView("list")}
+          >
+            Cancel
+          </button>
+          {error && <div style={{ ...s.errorBox, marginTop: 12 }}>{error}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (closePending) {
     return (
       <div style={s.section}>
         <div style={s.infoBox}>
-          Connect X via OAuth. You will be redirected to X to authorize, then returned here.
+          Account closure is not available as a self-service action yet. Exchange accounts hold financial
+          records, KYC data, and compliance history that require a formal retention policy before permanent
+          closure can be enabled. Contact support if you need to restrict access to your account.
         </div>
-        {error && <div style={s.errorBox}>{error}</div>}
-        <button type="button" style={s.primaryBtn} disabled={saving} onClick={() => void startXLink()}>
-          {saving ? "Opening…" : "Link X account"}
-        </button>
-        <button type="button" style={s.secondaryBtn} onClick={() => { setLinkProvider(null); setError(""); }}>
-          Cancel
+        <button type="button" style={s.secondaryBtn} onClick={() => setClosePending(false)}>
+          Back
         </button>
       </div>
     );
@@ -258,6 +517,13 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         <span style={s.rowIcon}><SIcon name="user" size={16} /></span>
         <span style={s.rowLabel}>Profile Picture</span>
         <span style={s.rowValue}>{saving ? "Uploading…" : ""}</span>
+        {profile?.profile_picture_url ? (
+          <img
+            src={profile.profile_picture_url}
+            alt=""
+            style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", border: `1px solid ${BORDER}` }}
+          />
+        ) : null}
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
@@ -277,7 +543,14 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
             <button type="button" style={{ ...s.primaryBtn, margin: 0, flex: 1 }} disabled={saving} onClick={() => void saveNickname()}>
               Save changes
             </button>
-            <button type="button" style={{ ...s.secondaryBtn, margin: 0, flex: 1 }} onClick={() => { setEditingNick(false); setNick(profile?.nickname || ""); }}>
+            <button
+              type="button"
+              style={{ ...s.secondaryBtn, margin: 0, flex: 1 }}
+              onClick={() => {
+                setEditingNick(false);
+                setNick(profile?.nickname || "");
+              }}
+            >
               Cancel
             </button>
           </div>
@@ -309,13 +582,13 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         <div style={s.row}>
           <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
           <span style={s.rowLabel}>Identity Verification</span>
-          <span style={{ ...s.rowValue, color: "#39d98a" }}>Your identity is verified ✓</span>
+          <span style={{ ...s.rowValue, color: "#39d98a" }}>Lv.1 Verified</span>
         </div>
       ) : kycIsPending(profile?.kyc_status ?? null) ? (
         <div style={s.row}>
           <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
           <span style={s.rowLabel}>Identity Verification</span>
-          <span style={{ ...s.rowValue, color: GOLD }}>Verification under review</span>
+          <span style={{ ...s.rowValue, color: GOLD }}>Under review</span>
         </div>
       ) : (
         <button type="button" style={s.row} onClick={() => setShowKyc(true)}>
@@ -330,9 +603,21 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
 
       <div style={s.row}>
         <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
-        <span style={s.rowLabel}>VIP / Account Level</span>
-        <span style={s.rowValue}>{profile?.vip_level != null && profile?.vip_level !== "" ? String(profile.vip_level) : "Standard"}</span>
+        <span style={s.rowLabel}>VIP level</span>
+        <span style={s.rowValue}>
+          {profile?.vip_level != null && profile?.vip_level !== "" ? String(profile.vip_level) : "Non-VIP"}
+        </span>
       </div>
+
+      <button type="button" style={s.row} onClick={() => setLinkView("list")}>
+        <span style={s.rowIcon}><SIcon name="link" size={16} /></span>
+        <span style={s.rowLabel}>Link Account</span>
+        <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {tg && <span style={{ fontSize: 12, color: "#4ea1ff" }}>✈</span>}
+          {tw && <span style={{ fontSize: 12, color: "#eee" }}>𝕏</span>}
+        </span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
       {profile?.referral_code ? (
         <div style={s.row}>
@@ -353,7 +638,14 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </div>
       ) : null}
 
-            <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
+      <button type="button" style={s.row} onClick={() => setClosePending(true)}>
+        <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
+        <span style={s.rowLabel}>Close Account</span>
+        <span style={s.rowValue}>Pending policy</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
+      <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
         <SIcon name="logout" size={18} /> Log Out
       </button>
     </div>

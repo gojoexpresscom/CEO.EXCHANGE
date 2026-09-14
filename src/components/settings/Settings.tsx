@@ -5,8 +5,9 @@ import { SIcon } from "./SettingsIcons";
 import MyInfoTab from "./MyInfoTab";
 import SecurityTab from "./SecurityTab";
 import GeneralTab from "./GeneralTab";
+import PreferenceTab from "./PreferenceTab";
 
-export type SettingsTab = "My Info" | "Security" | "General";
+export type SettingsTab = "My Info" | "Security" | "Preference" | "General";
 
 type ProfileRow = {
   id: string;
@@ -174,11 +175,17 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
   }
 
   const p = data.profile;
-  const securityLabel = (p?.security_level || "Medium").toString();
-  const isHigh = /high/i.test(securityLabel);
+  const displayName = p?.nickname || maskEmail(p?.email ?? null);
 
   return (
     <div style={s.overlay} className="ceo-fullscreen-overlay">
+      <style>{`
+        @keyframes ceoFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes ucTabIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @media (prefers-reduced-motion: reduce) {
+          * { animation: none !important; transition: none !important; }
+        }
+      `}</style>
       <div style={s.header}>
         <button type="button" style={s.headerBtn} onClick={onClose} aria-label="Back">
           <SIcon name="back" size={22} />
@@ -201,7 +208,7 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       </div>
 
       <div style={s.body}>
-        {/* Profile header */}
+        {/* Profile header — reference style */}
         <div style={s.profileBlock}>
           <div style={s.avatarWrap}>
             {p?.profile_picture_url ? (
@@ -211,26 +218,16 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
                 {(p?.nickname || "CE").slice(0, 2).toUpperCase()}
               </div>
             )}
-            <div style={s.cameraBadge} title="Change photo in My Info">
-              <SIcon name="camera" size={12} />
-            </div>
           </div>
           <div style={s.profileMeta}>
-            <div style={s.profileEmail}>{maskEmail(p?.email ?? null)}</div>
-            <div style={s.securityRow}>
-              Security Level{" "}
-              <span style={isHigh ? s.securityHigh : { color: GOLD_LIGHT, fontWeight: 700 }}>
-                {securityLabel}
-              </span>
-              <span style={{ color: isHigh ? "#39d98a" : GOLD, letterSpacing: 1 }}>■■■</span>
-            </div>
+            <div style={s.profileEmail}>{displayName}</div>
             <span style={s.sitePill}>Site: CEO Exchange</span>
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs — My info · Security · Preference · General */}
         <div style={s.tabs}>
-          {(["My Info", "Security", "General"] as SettingsTab[]).map((t) => (
+          {(["My Info", "Security", "Preference", "General"] as SettingsTab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -243,28 +240,68 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
           ))}
         </div>
 
-        {tab === "My Info" && (
-          <MyInfoTab data={data} onReload={reload} notify={notify} onLogout={handleLogout} />
-        )}
-        {tab === "Security" && (
-          <SecurityTab data={data} onReload={reload} notify={notify} maskEmail={maskEmail} maskPhone={maskPhone} />
-        )}
-        {tab === "General" && (
-          <GeneralTab
-            data={data}
-            onReload={reload}
-            notify={notify}
-            localTheme={localTheme}
-            setLocalTheme={setLocalTheme}
-            onLogout={handleLogout}
-          />
-        )}
+        <div key={tab} style={{ animation: "ucTabIn 0.28s ease-out both" }}>
+          {tab === "My Info" && (
+            <MyInfoTab data={data} onReload={reload} notify={notify} onLogout={handleLogout} />
+          )}
+          {tab === "Security" && (
+            <SecurityTab
+              data={data}
+              onReload={reload}
+              notify={notify}
+              maskEmail={maskEmail}
+              maskPhone={maskPhone}
+            />
+          )}
+          {tab === "Preference" && (
+            <PreferenceTab data={data} onReload={reload} notify={notify} />
+          )}
+          {tab === "General" && (
+            <GeneralTab
+              data={data}
+              onReload={reload}
+              notify={notify}
+              localTheme={localTheme}
+              setLocalTheme={setLocalTheme}
+              onLogout={handleLogout}
+            />
+          )}
+        </div>
       </div>
 
       {showLangPicker && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "flex-end" }} onClick={() => setShowLangPicker(false)}>
-          <div style={{ width: "100%", maxHeight: "70%", overflowY: "auto", background: "#0a0a0a", borderTop: "1px solid #2a2110", borderRadius: "16px 16px 0 0", padding: "16px 14px calc(20px + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ width: 42, height: 4, borderRadius: 99, background: "#3a3220", margin: "0 auto 14px" }} />
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "flex-end",
+          }}
+          onClick={() => setShowLangPicker(false)}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxHeight: "70%",
+              overflowY: "auto",
+              background: "#0a0a0a",
+              borderTop: "1px solid #2a2110",
+              borderRadius: "16px 16px 0 0",
+              padding: "16px 14px calc(20px + env(safe-area-inset-bottom))",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: 42,
+                height: 4,
+                borderRadius: 99,
+                background: "#3a3220",
+                margin: "0 auto 14px",
+              }}
+            />
             <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 16 }}>Language</h3>
             {(languages.length ? languages : [{ code: "en", name: "English" }]).map((l) => (
               <button
@@ -278,7 +315,9 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
                 {data.profile?.preferred_language === l.code && <SIcon name="check" size={16} />}
               </button>
             ))}
-            <button type="button" style={s.secondaryBtn} onClick={() => setShowLangPicker(false)}>Close</button>
+            <button type="button" style={s.secondaryBtn} onClick={() => setShowLangPicker(false)}>
+              Close
+            </button>
           </div>
         </div>
       )}

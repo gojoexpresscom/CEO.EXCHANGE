@@ -1,123 +1,237 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
 
 type Props = {
   userId: string;
-  onComplete: (urls: string[]) => void;
+  onComplete: (urls: string[], evidence: LivenessEvidence) => void;
   onCancel: () => void;
   notify: (msg: string) => void;
 };
 
+/** Meaningful directional evidence sent with KYC submission (no new DB columns required). */
+export type LivenessStepEvidence = {
+  stage: string;
+  yaw: number;
+  pitch: number;
+  baseline_yaw: number;
+  baseline_pitch: number;
+  delta_yaw: number;
+  delta_pitch: number;
+  confirmed_at: string;
+  path: string;
+};
+
+export type LivenessEvidence = {
+  version: 1;
+  method: "mediapipe_face_landmarker_pose";
+  steps: LivenessStepEvidence[];
+  completed_at: string;
+};
+
+type StageId = "forward" | "left" | "right" | "up" | "down";
+
 type Stage = {
-  id: string;
+  id: StageId;
   title: string;
   hint: string;
+  failHint: string;
 };
 
 const STAGES: Stage[] = [
-  { id: "forward", title: "Look at the camera", hint: "Center your face in the circle" },
-  { id: "left", title: "Turn left slowly", hint: "Turn your head to the left" },
-  { id: "right", title: "Turn right slowly", hint: "Turn your head to the right" },
-  { id: "up", title: "Look up slowly", hint: "Tilt your chin upward" },
-  { id: "down", title: "Look down slowly", hint: "Tilt your chin downward" },
+  {
+    id: "forward",
+    title: "Look at the camera",
+    hint: "Center your face and look straight ahead",
+    failHint: "Look straight at the camera with your face centered",
+  },
+  {
+    id: "left",
+    title: "Turn slowly to the left",
+    hint: "Turn your head to the left",
+    failHint: "Please turn your head to the left",
+  },
+  {
+    id: "right",
+    title: "Turn slowly to the right",
+    hint: "Turn your head to the right",
+    failHint: "Please turn your head to the right",
+  },
+  {
+    id: "up",
+    title: "Look up slowly",
+    hint: "Tilt your chin upward",
+    failHint: "Please tilt your head upward",
+  },
+  {
+    id: "down",
+    title: "Look down slowly",
+    hint: "Tilt your chin downward",
+    failHint: "Please tilt your head downward",
+  },
 ];
 
-const HOLD_MS = 3000;
-const SAMPLE_MS = 150;
-const MIN_CONFIDENCE = 0.6;
+/** Radians — tuned for phone front-camera distance; adjustable. */
+const YAW_THRESHOLD = 0.22;
+const PITCH_THRESHOLD = 0.16;
+const NEUTRAL_YAW_MAX = 0.12;
+const NEUTRAL_PITCH_MAX = 0.12;
+const STABILITY_SAMPLES = 4;
+const SAMPLE_MS = 80;
+const MIN_FACE_SCORE = 0.5;
 
-// MediaPipe hosts these publicly for free — no API key, no account, no per-call cost.
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+const LANDMARKER_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
 /**
- * Auto-capture liveness (5 poses). No manual Capture button.
- * Uses a real on-device face-detection model (MediaPipe BlazeFace) to confirm an
- * actual face is present, centered and reasonably sized — not just "something bright
- * and still" like a brightness/motion heuristic would allow.
- * Uploads private paths to kyc-documents bucket.
+ * Head-pose from Face Landmarker 478-point mesh.
+ * Yaw: horizontal offset of nose tip relative to cheek midpoints (mirrored preview aware).
+ * Pitch: vertical position of nose vs eye / mouth landmarks.
+ * Video is mirrored (scaleX -1); landmark x is already in image space — we flip for user-facing directions.
+ */
+function estimatePose(landmarks: { x: number; y: number; z?: number }[]): { yaw: number; pitch: number } | null {
+  if (!landmarks || landmarks.length < 300) return null;
+
+  // MediaPipe indices
+  const nose = landmarks[1];
+  const leftCheek = landmarks[234];
+  const rightCheek = landmarks[454];
+  const leftEye = landmarks[33];
+  const rightEye = landmarks[263];
+  const chin = landmarks[152];
+  const forehead = landmarks[10];
+
+  if (!nose || !leftCheek || !rightCheek || !leftEye || !rightEye || !chin || !forehead) return null;
+
+  const midX = (leftCheek.x + rightCheek.x) / 2;
+  const faceWidth = Math.abs(rightCheek.x - leftCheek.x) || 0.01;
+  // Image space: larger nose.x means nose is toward the right of the frame.
+  // Mirrored preview: user turns their left → face appears to move right on screen.
+  // We define yaw positive = user's head turned to their left (matches "Turn left").
+  const rawYaw = (nose.x - midX) / faceWidth;
+  const yaw = -rawYaw; // flip so positive = user left
+
+  const eyeY = (leftEye.y + rightEye.y) / 2;
+  const faceHeight = Math.abs(chin.y - forehead.y) || 0.01;
+  // Positive pitch = chin up (user looking up)
+  const pitch = (eyeY - nose.y) / faceHeight;
+
+  return { yaw, pitch };
+}
+
+type PoseSample = { yaw: number; pitch: number };
+
+function stageSatisfied(
+  stageId: StageId,
+  baseline: PoseSample,
+  current: PoseSample
+): boolean {
+  const dy = current.yaw - baseline.yaw;
+  const dp = current.pitch - baseline.pitch;
+
+  switch (stageId) {
+    case "forward":
+      return (
+        Math.abs(current.yaw) < NEUTRAL_YAW_MAX &&
+        Math.abs(current.pitch) < NEUTRAL_PITCH_MAX
+      );
+    case "left":
+      return dy >= YAW_THRESHOLD;
+    case "right":
+      return dy <= -YAW_THRESHOLD;
+    case "up":
+      return dp >= PITCH_THRESHOLD;
+    case "down":
+      return dp <= -PITCH_THRESHOLD;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Directional liveness with MediaPipe Face Landmarker.
+ * No countdown. No capture on face-presence alone.
+ * Capture only after the required head movement is confirmed.
  */
 export default function LivenessCapture({ userId, onComplete, onCancel, notify }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
-  const holdStartRef = useRef<number | null>(null);
-  const lastSampleRef = useRef<number>(0);
-  const prevLumaRef = useRef<number | null>(null);
-  const faceDetectorRef = useRef<FaceDetector | null>(null);
+  const landmarkerRef = useRef<FaceLandmarker | null>(null);
+  const baselineRef = useRef<PoseSample | null>(null);
+  const stableCountRef = useRef(0);
+  const lastSampleRef = useRef(0);
+  const capturingRef = useRef(false);
+  const stageIdxRef = useRef(0);
+  const pathsRef = useRef<string[]>([]);
+  const evidenceRef = useRef<LivenessStepEvidence[]>([]);
 
   const [stageIdx, setStageIdx] = useState(0);
-  const [paths, setPaths] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
   const [permError, setPermError] = useState("");
   const [status, setStatus] = useState("Allow camera access");
-  const [holdProgress, setHoldProgress] = useState(0);
   const [capturing, setCapturing] = useState(false);
   const [done, setDone] = useState(false);
   const [modelState, setModelState] = useState<"loading" | "ready" | "unavailable">("loading");
-  const capturingRef = useRef(false);
+  const [poseDebug, setPoseDebug] = useState({ yaw: 0, pitch: 0 });
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   }, []);
 
-  // Load the on-device face detection model once (GPU → CPU → heuristic fallback).
+  // Load Face Landmarker
   useEffect(() => {
     let cancelled = false;
     const timeout = window.setTimeout(() => {
-      if (!cancelled && !faceDetectorRef.current) {
-        setModelState("unavailable");
-      }
-    }, 12000);
+      if (!cancelled && !landmarkerRef.current) setModelState("unavailable");
+    }, 15000);
 
-    async function createDetector(delegate: "GPU" | "CPU") {
-      const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-      return FaceDetector.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: MODEL_URL,
-          delegate,
-        },
-        runningMode: "VIDEO",
-        minDetectionConfidence: MIN_CONFIDENCE,
-      });
-    }
-
-    async function initDetector() {
+    async function init() {
       try {
-        let detector: FaceDetector;
+        const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+        let lm: FaceLandmarker;
         try {
-          detector = await createDetector("GPU");
+          lm = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: LANDMARKER_MODEL, delegate: "GPU" },
+            runningMode: "VIDEO",
+            numFaces: 1,
+            outputFaceBlendshapes: false,
+            outputFacialTransformationMatrixes: false,
+          });
         } catch {
-          detector = await createDetector("CPU");
+          lm = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: LANDMARKER_MODEL, delegate: "CPU" },
+            runningMode: "VIDEO",
+            numFaces: 1,
+          });
         }
         if (cancelled) {
-          detector.close();
+          lm.close();
           return;
         }
-        faceDetectorRef.current = detector;
+        landmarkerRef.current = lm;
         setModelState("ready");
       } catch {
-        // Offline, blocked CDN, or unsupported device — heuristic fallback.
         if (!cancelled) setModelState("unavailable");
       } finally {
         window.clearTimeout(timeout);
       }
     }
-    void initDetector();
+    void init();
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
-      faceDetectorRef.current?.close();
-      faceDetectorRef.current = null;
+      landmarkerRef.current?.close();
+      landmarkerRef.current = null;
     };
   }, []);
 
+  // Camera
   useEffect(() => {
     let cancelled = false;
     async function attachStream(stream: MediaStream) {
@@ -129,7 +243,6 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       try {
         await video.play();
       } catch {
-        // Autoplay policies — try again after a tick
         await new Promise((r) => setTimeout(r, 50));
         await video.play().catch(() => undefined);
       }
@@ -144,7 +257,10 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
         return;
       }
       const attempts: MediaStreamConstraints[] = [
-        { audio: false, video: { facingMode: { ideal: "user" }, width: { ideal: 720 }, height: { ideal: 960 } } },
+        {
+          audio: false,
+          video: { facingMode: { ideal: "user" }, width: { ideal: 720 }, height: { ideal: 960 } },
+        },
         { audio: false, video: { facingMode: "user" } },
         { audio: false, video: true },
       ];
@@ -157,7 +273,6 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
             return;
           }
           streamRef.current = stream;
-          // Video element may not be mounted on first paint — retry briefly
           let attached = await attachStream(stream);
           if (!attached) {
             for (let i = 0; i < 10 && !cancelled && !attached; i++) {
@@ -171,7 +286,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
             return;
           }
           setReady(true);
-          setStatus("Position your face in the circle");
+          setStatus(STAGES[0].hint);
           return;
         } catch (e) {
           lastErr = e;
@@ -197,77 +312,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     };
   }, [stopCamera]);
 
-  // Fallback heuristic — only used if the real face-detection model failed to load.
-  const sampleCenter = useCallback((): { ok: boolean; luma: number; motion: number } => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) return { ok: false, luma: 0, motion: 999 };
-    const w = 64;
-    const h = 64;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return { ok: false, luma: 0, motion: 999 };
-    const vw = video.videoWidth || 640;
-    const vh = video.videoHeight || 480;
-    const sx = vw * 0.25;
-    const sy = vh * 0.2;
-    const sw = vw * 0.5;
-    const sh = vh * 0.55;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
-    const data = ctx.getImageData(0, 0, w, h).data;
-    let sum = 0;
-    let count = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const y = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      sum += y;
-      count++;
-    }
-    const luma = sum / count;
-    const prev = prevLumaRef.current;
-    const motion = prev == null ? 0 : Math.abs(luma - prev);
-    prevLumaRef.current = luma;
-    const ok = luma > 35 && luma < 230 && motion < 8;
-    return { ok, luma, motion };
-  }, []);
-
-  const detectFace = useCallback((): boolean => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return false;
-
-    const detector = faceDetectorRef.current;
-    if (detector) {
-      try {
-        const result = detector.detectForVideo(video, performance.now());
-        const detections = result?.detections ?? [];
-        if (!detections.length) return false;
-        const top = detections[0];
-        const box = top.boundingBox;
-        if (!box) return false;
-        const score = top.categories?.[0]?.score ?? 0;
-        if (score < MIN_CONFIDENCE) return false;
-
-        const vw = video.videoWidth || 1;
-        const vh = video.videoHeight || 1;
-        // Mirrored preview: flip the x-origin to match what the user sees on screen.
-        const originX = vw - box.originX - box.width;
-        const cx = originX + box.width / 2;
-        const cy = box.originY + box.height / 2;
-        const centered = Math.abs(cx - vw / 2) < vw * 0.24 && Math.abs(cy - vh * 0.42) < vh * 0.22;
-        const sized = box.width > vw * 0.16 && box.width < vw * 0.78;
-        return centered && sized;
-      } catch {
-        return false;
-      }
-    }
-
-    // Model never loaded (offline / blocked) — degrade to the old heuristic
-    // rather than trapping the user in an unusable flow.
-    const { ok } = sampleCenter();
-    return ok;
-  }, [sampleCenter]);
-
-  const captureFrame = useCallback(async (): Promise<string> => {
+  const captureFrame = useCallback(async (stageId: string): Promise<string> => {
     const video = videoRef.current;
     if (!video) throw new Error("Camera not ready");
     const c = document.createElement("canvas");
@@ -279,19 +324,20 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     const blob: Blob = await new Promise((resolve, reject) => {
       c.toBlob((b) => (b ? resolve(b) : reject(new Error("Capture failed"))), "image/jpeg", 0.88);
     });
-    const path = `${userId}/liveness/${Date.now()}_${STAGES[stageIdx].id}.jpg`;
+    const path = `${userId}/liveness/${Date.now()}_${stageId}.jpg`;
     const { error: upErr } = await supabase.storage
       .from("kyc-documents")
       .upload(path, blob, { contentType: "image/jpeg", upsert: false });
     if (upErr) throw upErr;
     return path;
-  }, [userId, stageIdx]);
+  }, [userId]);
 
-  // Detection loop — waits for the model to finish loading (or fail) before starting.
+  // Detection loop — directional state machine
   useEffect(() => {
-    if (!ready || done || capturingRef.current || permError || modelState === "loading") return;
+    if (!ready || done || capturingRef.current || permError || modelState !== "ready") return;
 
     let alive = true;
+    stageIdxRef.current = stageIdx;
 
     const tick = () => {
       if (!alive || capturingRef.current) return;
@@ -302,52 +348,131 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       }
       lastSampleRef.current = now;
 
-      const faceOk = detectFace();
+      const video = videoRef.current;
+      const lm = landmarkerRef.current;
+      if (!video || !lm || video.readyState < 2) {
+        rafRef.current = requestAnimationFrame(() => void tick());
+        return;
+      }
 
-      if (faceOk) {
-        if (holdStartRef.current == null) {
-          holdStartRef.current = now;
-          setStatus("Face detected — hold still…");
+      let pose: PoseSample | null = null;
+      try {
+        const result = lm.detectForVideo(video, now);
+        const faces = result?.faceLandmarks ?? [];
+        if (faces.length > 0) {
+          pose = estimatePose(faces[0]);
         }
-        const elapsed = now - holdStartRef.current;
-        const p = Math.min(1, elapsed / HOLD_MS);
-        setHoldProgress(p);
-        if (elapsed >= HOLD_MS) {
+      } catch {
+        pose = null;
+      }
+
+      const idx = stageIdxRef.current;
+      const stage = STAGES[idx];
+
+      if (!pose) {
+        stableCountRef.current = 0;
+        setStatus("Position your face in the frame");
+        if (alive && !capturingRef.current) {
+          rafRef.current = requestAnimationFrame(() => void tick());
+        }
+        return;
+      }
+
+      setPoseDebug({ yaw: pose.yaw, pitch: pose.pitch });
+
+      // Establish neutral baseline on the first (forward) stage or when missing
+      if (!baselineRef.current && stage.id === "forward") {
+        if (
+          Math.abs(pose.yaw) < NEUTRAL_YAW_MAX &&
+          Math.abs(pose.pitch) < NEUTRAL_PITCH_MAX
+        ) {
+          stableCountRef.current += 1;
+          setStatus("Hold still — calibrating…");
+          if (stableCountRef.current >= STABILITY_SAMPLES) {
+            baselineRef.current = { yaw: pose.yaw, pitch: pose.pitch };
+            stableCountRef.current = 0;
+            setStatus("Look straight — face confirmed");
+          }
+        } else {
+          stableCountRef.current = 0;
+          setStatus(stage.failHint);
+        }
+      }
+
+      const baseline = baselineRef.current;
+      if (!baseline) {
+        if (stage.id !== "forward") {
+          // Should not happen; re-calibrate
+          setStatus("Look straight at the camera first");
+        }
+        if (alive && !capturingRef.current) {
+          rafRef.current = requestAnimationFrame(() => void tick());
+        }
+        return;
+      }
+
+      const ok = stageSatisfied(stage.id, baseline, pose);
+
+      if (ok) {
+        stableCountRef.current += 1;
+        setStatus(
+          stage.id === "forward"
+            ? "Face centered — hold still…"
+            : "Movement detected — hold…"
+        );
+        if (stableCountRef.current >= STABILITY_SAMPLES) {
           capturingRef.current = true;
           setCapturing(true);
           setStatus("Captured ✓");
           void (async () => {
             try {
-              const path = await captureFrame();
-              const nextPaths = [...paths, path];
-              setPaths(nextPaths);
-              holdStartRef.current = null;
-              setHoldProgress(0);
-              prevLumaRef.current = null;
-              if (nextPaths.length >= STAGES.length) {
+              const path = await captureFrame(stage.id);
+              const stepEv: LivenessStepEvidence = {
+                stage: stage.id,
+                yaw: pose!.yaw,
+                pitch: pose!.pitch,
+                baseline_yaw: baseline.yaw,
+                baseline_pitch: baseline.pitch,
+                delta_yaw: pose!.yaw - baseline.yaw,
+                delta_pitch: pose!.pitch - baseline.pitch,
+                confirmed_at: new Date().toISOString(),
+                path,
+              };
+              evidenceRef.current = [...evidenceRef.current, stepEv];
+              pathsRef.current = [...pathsRef.current, path];
+              stableCountRef.current = 0;
+
+              if (pathsRef.current.length >= STAGES.length) {
                 setDone(true);
                 setStatus("Verification captures complete");
                 stopCamera();
-                onComplete(nextPaths);
+                const evidence: LivenessEvidence = {
+                  version: 1,
+                  method: "mediapipe_face_landmarker_pose",
+                  steps: evidenceRef.current,
+                  completed_at: new Date().toISOString(),
+                };
+                onComplete(pathsRef.current, evidence);
               } else {
-                setStageIdx(nextPaths.length);
-                setStatus(STAGES[nextPaths.length].hint);
-                notify(`Captured ${nextPaths.length}/${STAGES.length}`);
+                const next = pathsRef.current.length;
+                stageIdxRef.current = next;
+                setStageIdx(next);
+                setStatus(STAGES[next].hint);
+                notify(`Step ${next}/${STAGES.length} complete`);
               }
             } catch (e: any) {
               setStatus(e?.message || "Capture failed — try again");
-              holdStartRef.current = null;
-              setHoldProgress(0);
+              stableCountRef.current = 0;
             } finally {
               capturingRef.current = false;
               setCapturing(false);
             }
           })();
+          return;
         }
       } else {
-        holdStartRef.current = null;
-        setHoldProgress(0);
-        setStatus(STAGES[stageIdx].hint);
+        stableCountRef.current = 0;
+        setStatus(stage.failHint);
       }
 
       if (alive && !capturingRef.current && !done) {
@@ -360,7 +485,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       alive = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [ready, stageIdx, paths, done, permError, modelState, detectFace, captureFrame, onComplete, notify, stopCamera]);
+  }, [ready, stageIdx, done, permError, modelState, captureFrame, onComplete, notify, stopCamera]);
 
   const stage = STAGES[Math.min(stageIdx, STAGES.length - 1)];
 
@@ -374,11 +499,15 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
         Verify your identity
       </h3>
       <p style={{ margin: "0 0 14px", color: "#888", fontSize: 13, textAlign: "center", lineHeight: 1.45 }}>
-        Make sure your face is clearly visible. Move to a well-lit place. Remove anything covering your face.
+        Follow each instruction. The camera only captures after you complete the required head movement.
       </p>
 
       {permError ? (
         <div style={s.errorBox}>{permError}</div>
+      ) : modelState === "unavailable" ? (
+        <div style={s.errorBox}>
+          Face pose model could not load. Check your connection and try again on a supported browser (Chrome / Safari).
+        </div>
       ) : (
         <>
           <div key={stageIdx} style={{ animation: "lcStageIn 0.3s cubic-bezier(0.16,1,0.3,1) both" }}>
@@ -400,8 +529,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
               overflow: "hidden",
               background: "#000",
               border: `1.5px solid ${GOLD}`,
-              boxShadow: "0 0 30px rgba(245,181,27,0.14)",
-              animation: holdProgress > 0 ? "lcFrameGlow 1.1s ease-out infinite" : "none",
+              boxShadow: capturing ? "0 0 30px rgba(57,217,138,0.25)" : "0 0 30px rgba(245,181,27,0.14)",
             }}
           >
             <video
@@ -416,7 +544,6 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                 transform: "scaleX(-1)",
               }}
             />
-            {/* Dark scrim with a real face-silhouette cutout (not a plain oval) */}
             <svg
               viewBox="0 0 300 400"
               preserveAspectRatio="none"
@@ -435,53 +562,10 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
               <path
                 d="M150 46 C100 46 70 96 70 160 C70 208 82 236 96 262 C108 284 122 306 136 322 C142 330 158 330 164 322 C178 306 192 284 204 262 C218 236 230 208 230 160 C230 96 200 46 150 46 Z"
                 fill="none"
-                stroke={holdProgress > 0 ? GOLD_LIGHT : "rgba(245,181,27,0.65)"}
-                strokeWidth={holdProgress > 0 ? 3 : 2}
-                style={{ transition: "stroke 0.2s, stroke-width 0.2s" }}
+                stroke={capturing ? "#39d98a" : "rgba(245,181,27,0.65)"}
+                strokeWidth={2.5}
               />
-              {/* Corner scan brackets */}
-              {[
-                { x: 14, y: 14, dx: 1, dy: 1 },
-                { x: 286, y: 14, dx: -1, dy: 1 },
-                { x: 14, y: 386, dx: 1, dy: -1 },
-                { x: 286, y: 386, dx: -1, dy: -1 },
-              ].map((c, i) => (
-                <path
-                  key={i}
-                  d={`M${c.x} ${c.y + c.dy * 18} L${c.x} ${c.y} L${c.x + c.dx * 18} ${c.y}`}
-                  fill="none"
-                  stroke={GOLD}
-                  strokeWidth={3}
-                  strokeLinecap="round"
-                  opacity={0.85}
-                />
-              ))}
             </svg>
-            {/* Hold progress ring base */}
-            {holdProgress > 0 && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: "50%",
-                  bottom: 16,
-                  transform: "translateX(-50%)",
-                  width: "70%",
-                  height: 4,
-                  borderRadius: 99,
-                  background: "#222",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width: `${holdProgress * 100}%`,
-                    height: "100%",
-                    background: `linear-gradient(90deg, ${GOLD}, ${GOLD_LIGHT})`,
-                    transition: "width 0.15s linear",
-                  }}
-                />
-              </div>
-            )}
             {!ready && (
               <div
                 style={{
@@ -513,25 +597,40 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                   textAlign: "center",
                 }}
               >
-                Loading face detection…
+                Loading face pose model…
               </div>
             )}
           </div>
 
-          <p style={{ textAlign: "center", color: capturing ? "#39d98a" : "#ccc", fontSize: 13, minHeight: 20, margin: "0 0 8px" }}>
+          <p
+            style={{
+              textAlign: "center",
+              color: capturing ? "#39d98a" : "#ccc",
+              fontSize: 13,
+              minHeight: 20,
+              margin: "0 0 8px",
+              fontWeight: capturing ? 700 : 400,
+            }}
+          >
             {status}
           </p>
-          {holdProgress > 0 && holdProgress < 1 && (
-            <p style={{ textAlign: "center", color: GOLD, fontSize: 22, fontWeight: 800, margin: 0 }}>
-              {Math.ceil((1 - holdProgress) * 3)}
+          {/* Subtle debug only while developing — remove or gate if preferred */}
+          {modelState === "ready" && import.meta.env.DEV && (
+            <p style={{ textAlign: "center", color: "#444", fontSize: 10, margin: 0 }}>
+              yaw {poseDebug.yaw.toFixed(2)} · pitch {poseDebug.pitch.toFixed(2)}
             </p>
           )}
         </>
       )}
 
-      <canvas ref={canvasRef} style={{ display: "none" }} />
-
-      <button type="button" style={{ ...s.secondaryBtn, marginTop: 12 }} onClick={() => { stopCamera(); onCancel(); }}>
+      <button
+        type="button"
+        style={{ ...s.secondaryBtn, marginTop: 12 }}
+        onClick={() => {
+          stopCamera();
+          onCancel();
+        }}
+      >
         Cancel
       </button>
     </div>

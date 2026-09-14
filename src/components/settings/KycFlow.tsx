@@ -2,7 +2,7 @@ import React, { useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT, BG, CARD, BORDER } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
-import LivenessCapture from "./LivenessCapture";
+import LivenessCapture, { type LivenessEvidence } from "./LivenessCapture";
 import { checkDocumentImageQuality } from "./docQuality";
 
 type Props = {
@@ -152,7 +152,7 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
     void handleDocFile(null, side);
   };
 
-  const submit = async (livenessPaths: string[]) => {
+  const submit = async (livenessPaths: string[], evidence: LivenessEvidence | null) => {
     setError("");
     if (!fullName.trim() || !idNumber.trim() || !dob) {
       setError("Fill in full legal name, ID number, and date of birth.");
@@ -188,6 +188,8 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
           selfie_url: null,
           liveness_passed: true,
           liveness_capture_urls: livenessPaths,
+          // Directional pose evidence (yaw/pitch per step). Server may store or ignore.
+          liveness_evidence: evidence,
         },
       });
       if (fnErr) throw fnErr;
@@ -207,9 +209,9 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
     return (
       <LivenessCapture
         userId={userId}
-        onComplete={(urls) => {
+        onComplete={(urls, evidence) => {
           setLivenessUrls(urls);
-          void submit(urls);
+          void submit(urls, evidence);
         }}
         onCancel={() => setStep("docs")}
         notify={notify}
