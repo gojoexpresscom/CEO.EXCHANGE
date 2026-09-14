@@ -1085,32 +1085,30 @@ export default function Home({
 
   return (
     <div style={styles.page}>
-      {/* Bybit-style pull-to-refresh: compact logo at top, content stays visible */}
+      {/* Bybit-style pull-to-refresh: floating logo only, no background plate */}
       {(isRefreshing || pullY > 8) && (
         <div
           style={{
             ...styles.pullRefresh,
-            height: isRefreshing ? 52 : Math.max(pullY, 0),
             opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1),
-            background: "transparent",
-            backgroundColor: "transparent",
+            transform: isRefreshing
+              ? "translateX(-50%) translateY(0)"
+              : `translateX(-50%) translateY(${Math.min(pullY * 0.35, 18)}px)`,
           }}
           aria-busy={isRefreshing}
           aria-label={isRefreshing ? "Refreshing" : undefined}
         >
-          <div style={styles.pullLogoWrap}>
-            <img
-              src="/ceo-auth-reference-transparent.png"
-              alt="CEO"
-              style={{
-                ...styles.pullLogo,
-                transform: isRefreshing
-                  ? undefined
-                  : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
-              }}
-            />
-            {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
-          </div>
+          <img
+            src="/ceo-auth-reference-transparent.png"
+            alt="CEO"
+            style={{
+              ...styles.pullLogo,
+              transform: isRefreshing
+                ? undefined
+                : `scale(${0.7 + Math.min(pullY / 64, 1) * 0.3})`,
+            }}
+          />
+          {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
         </div>
       )}
       <style>{HOME_MOTION}</style>
@@ -2924,39 +2922,29 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 16,
   },
   pullRefresh: {
-    position: "sticky",
-    top: 0,
-    zIndex: 30,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 0,
-    overflow: "visible",
-    transition: "height 0.2s ease-out",
-    background: "transparent",
-    backgroundColor: "transparent",
-    boxShadow: "none",
-    border: "none",
-    pointerEvents: "none",
-  },
-  pullLogoWrap: {
-    position: "relative",
+    position: "fixed",
+    top: "max(10px, env(safe-area-inset-top))",
+    left: "50%",
+    zIndex: 100,
     width: 48,
     height: 48,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    margin: 0,
+    padding: 0,
     overflow: "visible",
     background: "transparent",
     backgroundColor: "transparent",
-    border: "none",
-    borderRadius: 0,
     boxShadow: "none",
+    border: "none",
+    outline: "none",
+    pointerEvents: "none",
+    transition: "opacity 0.15s ease-out, transform 0.15s ease-out",
   },
   pullLogo: {
-    width: 42,
-    height: 42,
+    width: 40,
+    height: 40,
     objectFit: "contain",
     display: "block",
     position: "relative",
@@ -2966,17 +2954,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: 0,
     boxShadow: "none",
-    // Knock out any residual dark square baked into the PNG
-    mixBlendMode: "screen" as const,
+    outline: "none",
   },
   pullShine: {
     position: "absolute",
-    top: "10%",
-    bottom: "10%",
-    width: 12,
-    left: -18,
+    top: "8%",
+    bottom: "8%",
+    width: 11,
+    left: -16,
     zIndex: 2,
-    background: "linear-gradient(90deg, transparent, rgba(245,181,27,0.65), transparent)",
+    background: "linear-gradient(90deg, transparent, rgba(245,181,27,0.7), transparent)",
     transform: "skewX(-18deg)",
     animation: "ceoPullShine 1.1s ease-in-out infinite",
     pointerEvents: "none",
