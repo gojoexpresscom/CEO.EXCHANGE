@@ -1041,15 +1041,16 @@ export default function Home({
   const runRefresh = useCallback(async () => {
     if (!userId || isRefreshing) return;
     setIsRefreshing(true);
-    const started = Date.now();
+    setPullY(0);
+    // Safety net: hide refresh overlay if video never ends/errors
+    window.setTimeout(() => {
+      setIsRefreshing(false);
+      setPullY(0);
+    }, 12000);
     try {
       await loadAll(userId);
-    } finally {
-      const wait = Math.max(0, 3000 - (Date.now() - started));
-      window.setTimeout(() => {
-        setIsRefreshing(false);
-        setPullY(0);
-      }, wait);
+    } catch {
+      // load errors already handled inside loadAll
     }
   }, [userId, isRefreshing, loadAll]);
 
@@ -1070,41 +1071,62 @@ export default function Home({
   };
 
   if (!userId && loading) {
-    // Use the same branding video as the app startup splash (no CSS logo recreation).
-    // Video already finished in App.tsx on full reload; this covers in-app re-mounts.
-    // Fail-open: if the video cannot play, still show a minimal dark screen (no stuck spinner).
-    const reduced =
-      typeof window !== "undefined" &&
-      window.matchMedia &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
     return (
-      <div
-        style={{
-          ...styles.brandedLoader,
-          position: "fixed",
-          inset: 0,
-          zIndex: 9999,
-          width: "100%",
-          maxWidth: "100vw",
-          height: "100%",
-          maxHeight: "100dvh",
-          margin: 0,
-          padding: 0,
-          overflow: "hidden",
-          overscrollBehavior: "none",
-          touchAction: "none",
-        }}
-        aria-busy="true"
-        aria-label="CEO Exchange loading"
-      >
-        {!reduced && (
+      <div style={styles.brandedLoader}>
+        <div style={styles.brandedSpinner} />
+        <span style={styles.brandedLoaderText}>Loading…</span>
+      </div>
+    );
+  }
+  if (!userId) return <div style={styles.center}>Please sign in to continue.</div>;
+
+  return (
+    <div style={styles.page}>
+      {/* Pull indicator (gesture only) */}
+      {!isRefreshing && pullY > 8 && (
+        <div style={{ ...styles.pullRefresh, height: Math.max(pullY, 0), opacity: Math.min(pullY / 64, 1) }}>
+          <div style={styles.brandedSpinner} />
+        </div>
+      )}
+      {/* Pull-to-refresh: play branding video once */}
+      {isRefreshing && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 200,
+            width: "100%",
+            maxWidth: "100vw",
+            height: "100%",
+            maxHeight: "100dvh",
+            margin: 0,
+            padding: 0,
+            overflow: "hidden",
+            overscrollBehavior: "none",
+            background: "#050505",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            touchAction: "none",
+          }}
+          aria-busy="true"
+          aria-label="Refreshing"
+        >
           <video
+            key="ceo-refresh-video"
             src="/branding/ceo-exchange-refresh.mp4"
             autoPlay
             muted
             playsInline
             preload="auto"
+            onEnded={() => {
+              setIsRefreshing(false);
+              setPullY(0);
+            }}
+            onError={() => {
+              setIsRefreshing(false);
+              setPullY(0);
+            }}
             style={{
               width: "100%",
               height: "100%",
@@ -1117,26 +1139,6 @@ export default function Home({
               pointerEvents: "none",
             }}
           />
-        )}
-      </div>
-    );
-  }
-  if (!userId) return <div style={styles.center}>Please sign in to continue.</div>;
-
-  return (
-    <div style={styles.page}>
-      {(isRefreshing || pullY > 8) && (
-        <div style={{ ...styles.pullRefresh, height: isRefreshing ? 80 : Math.max(pullY, 0), opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1) }}>
-          <img
-            src="/ceo-auth-reference-transparent.png"
-            alt="CEO"
-            style={{
-              ...styles.pullLogo,
-              transform: isRefreshing ? undefined : `scale(${0.7 + Math.min(pullY / 64, 1) * 0.3})`,
-              animation: isRefreshing ? "ceoShake 0.55s ease-in-out infinite" : undefined,
-            }}
-          />
-          {isRefreshing && <div style={styles.brandedSpinner} />}
         </div>
       )}
       <style>{HOME_MOTION}</style>
