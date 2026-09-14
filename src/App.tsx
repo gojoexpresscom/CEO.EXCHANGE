@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
@@ -10,14 +10,6 @@ type AppRoute =
   | { page: "home" }
   | { page: "trade"; symbol: string }
   | { page: "p2p" };
-
-const SPLASH_VIDEO_SRC = "/branding/ceo-exchange-refresh.mp4";
-const SPLASH_MAX_MS = 12000;
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 function getRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -42,19 +34,10 @@ function getRoute(): AppRoute {
 
 export default function App() {
   const [ready, setReady] = useState(false);
-  const [splashDone, setSplashDone] = useState(() => prefersReducedMotion());
   const [authenticated, setAuthenticated] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
   const [route, setRoute] = useState<AppRoute>(() => getRoute());
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const splashFinishedRef = useRef(false);
-
-  const finishSplash = () => {
-    if (splashFinishedRef.current) return;
-    splashFinishedRef.current = true;
-    setSplashDone(true);
-  };
 
   useEffect(() => {
     let alive = true;
@@ -140,28 +123,6 @@ export default function App() {
     };
   }, []);
 
-  // Splash video: play once on load/refresh; never block the app if it fails
-  useEffect(() => {
-    if (splashDone) return;
-
-    const timeout = window.setTimeout(finishSplash, SPLASH_MAX_MS);
-
-    const video = videoRef.current;
-    if (video) {
-      const tryPlay = () => {
-        const p = video.play();
-        if (p && typeof p.catch === "function") {
-          p.catch(() => finishSplash());
-        }
-      };
-      tryPlay();
-    }
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [splashDone]);
-
   useEffect(() => {
     const handlePopState = () => {
       setRoute(getRoute());
@@ -220,56 +181,36 @@ export default function App() {
     });
   }
 
-  // Startup / refresh splash: play the branding video once, then hand off to the app.
-  // Never leave the user stuck if the video fails to load or play.
-  if (!splashDone || !ready) {
+  if (!ready) {
     return (
       <div
         style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 9999,
-          width: "100%",
-          maxWidth: "100vw",
-          height: "100%",
-          maxHeight: "100dvh",
-          margin: 0,
-          padding: 0,
-          overflow: "hidden",
-          overscrollBehavior: "none",
-          background: "#050505",
+          minHeight: "100vh",
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          touchAction: "none",
+          gap: 14,
+          background: "#050505",
+          color: "#c9a227",
+          fontFamily:
+            "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
         }}
-        aria-busy="true"
-        aria-label="CEO Exchange loading"
       >
-        {!splashDone && (
-          <video
-            ref={videoRef}
-            src={SPLASH_VIDEO_SRC}
-            autoPlay
-            muted
-            playsInline
-            preload="auto"
-            onEnded={finishSplash}
-            onError={finishSplash}
-            onStalled={finishSplash}
-            style={{
-              width: "100%",
-              height: "100%",
-              maxWidth: "100vw",
-              maxHeight: "100dvh",
-              objectFit: "contain",
-              objectPosition: "center",
-              display: "block",
-              background: "#050505",
-              pointerEvents: "none",
-            }}
-          />
-        )}
+        <div
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: "50%",
+            border: "2.5px solid #2a2110",
+            borderTopColor: "#f5b51b",
+            animation: "spin 0.85s linear infinite",
+          }}
+        />
+        <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "0.02em" }}>
+          Loading…
+        </span>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
