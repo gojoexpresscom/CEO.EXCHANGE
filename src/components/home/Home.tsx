@@ -1070,14 +1070,54 @@ export default function Home({
   };
 
   if (!userId && loading) {
+    // Use the same branding video as the app startup splash (no CSS logo recreation).
+    // Video already finished in App.tsx on full reload; this covers in-app re-mounts.
+    // Fail-open: if the video cannot play, still show a minimal dark screen (no stuck spinner).
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
     return (
-      <div style={styles.brandedLoader}>
-        <div style={styles.brandedLogoWrap}>
-          <img src="/ceo-auth-reference-transparent.png" alt="CEO" style={{ ...styles.brandedLogo, animation: "ceoShake 1.8s ease-in-out infinite" }} />
-          <div style={styles.brandedPulse} />
-        </div>
-        <div style={styles.brandedSpinner} />
-        <span style={styles.brandedLoaderText}>Loading CEO Exchange…</span>
+      <div
+        style={{
+          ...styles.brandedLoader,
+          position: "fixed",
+          inset: 0,
+          zIndex: 9999,
+          width: "100%",
+          maxWidth: "100vw",
+          height: "100%",
+          maxHeight: "100dvh",
+          margin: 0,
+          padding: 0,
+          overflow: "hidden",
+          overscrollBehavior: "none",
+          touchAction: "none",
+        }}
+        aria-busy="true"
+        aria-label="CEO Exchange loading"
+      >
+        {!reduced && (
+          <video
+            src="/branding/ceo-exchange-refresh.mp4"
+            autoPlay
+            muted
+            playsInline
+            preload="auto"
+            style={{
+              width: "100%",
+              height: "100%",
+              maxWidth: "100vw",
+              maxHeight: "100dvh",
+              objectFit: "contain",
+              objectPosition: "center",
+              display: "block",
+              background: "#050505",
+              pointerEvents: "none",
+            }}
+          />
+        )}
       </div>
     );
   }
