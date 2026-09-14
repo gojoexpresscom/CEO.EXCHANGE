@@ -1042,15 +1042,18 @@ export default function Home({
     if (!userId || isRefreshing) return;
     setIsRefreshing(true);
     setPullY(0);
-    // Safety net: hide refresh overlay if video never ends/errors
-    window.setTimeout(() => {
-      setIsRefreshing(false);
-      setPullY(0);
-    }, 12000);
+    const started = Date.now();
     try {
       await loadAll(userId);
     } catch {
       // load errors already handled inside loadAll
+    } finally {
+      // Keep the Bybit-style top logo visible briefly so the motion reads
+      const wait = Math.max(0, 1400 - (Date.now() - started));
+      window.setTimeout(() => {
+        setIsRefreshing(false);
+        setPullY(0);
+      }, wait);
     }
   }, [userId, isRefreshing, loadAll]);
 
@@ -1082,63 +1085,30 @@ export default function Home({
 
   return (
     <div style={styles.page}>
-      {/* Pull indicator (gesture only) */}
-      {!isRefreshing && pullY > 8 && (
-        <div style={{ ...styles.pullRefresh, height: Math.max(pullY, 0), opacity: Math.min(pullY / 64, 1) }}>
-          <div style={styles.brandedSpinner} />
-        </div>
-      )}
-      {/* Pull-to-refresh: play branding video once */}
-      {isRefreshing && (
+      {/* Bybit-style pull-to-refresh: compact logo at top, content stays visible */}
+      {(isRefreshing || pullY > 8) && (
         <div
           style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 200,
-            width: "100%",
-            maxWidth: "100vw",
-            height: "100%",
-            maxHeight: "100dvh",
-            margin: 0,
-            padding: 0,
-            overflow: "hidden",
-            overscrollBehavior: "none",
-            background: "#050505",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            touchAction: "none",
+            ...styles.pullRefresh,
+            height: isRefreshing ? 56 : Math.max(pullY, 0),
+            opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1),
           }}
-          aria-busy="true"
-          aria-label="Refreshing"
+          aria-busy={isRefreshing}
+          aria-label={isRefreshing ? "Refreshing" : undefined}
         >
-          <video
-            key="ceo-refresh-video"
-            src="/branding/ceo-exchange-refresh.mp4"
-            autoPlay
-            muted
-            playsInline
-            preload="auto"
-            onEnded={() => {
-              setIsRefreshing(false);
-              setPullY(0);
-            }}
-            onError={() => {
-              setIsRefreshing(false);
-              setPullY(0);
-            }}
-            style={{
-              width: "100%",
-              height: "100%",
-              maxWidth: "100vw",
-              maxHeight: "100dvh",
-              objectFit: "contain",
-              objectPosition: "center",
-              display: "block",
-              background: "#050505",
-              pointerEvents: "none",
-            }}
-          />
+          <div style={styles.pullLogoWrap}>
+            <img
+              src="/ceo-auth-reference-transparent.png"
+              alt="CEO"
+              style={{
+                ...styles.pullLogo,
+                transform: isRefreshing
+                  ? undefined
+                  : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
+              }}
+            />
+            {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
+          </div>
         </div>
       )}
       <style>{HOME_MOTION}</style>
@@ -2958,18 +2928,40 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 8,
+    justifyContent: "center",
+    gap: 0,
     overflow: "hidden",
-    transition: "height 0.15s ease-out",
+    transition: "height 0.2s ease-out",
     background: "transparent",
     pointerEvents: "none",
   },
+  pullLogoWrap: {
+    position: "relative",
+    width: 44,
+    height: 44,
+    display: "grid",
+    placeItems: "center",
+    overflow: "hidden",
+  },
   pullLogo: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     objectFit: "contain",
-    borderRadius: 10,
+    display: "block",
+    position: "relative",
+    zIndex: 1,
+  },
+  pullShine: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 14,
+    left: -20,
+    zIndex: 2,
+    background: "linear-gradient(90deg, transparent, rgba(245,181,27,0.55), transparent)",
+    transform: "skewX(-18deg)",
+    animation: "ceoPullShine 1.1s ease-in-out infinite",
+    pointerEvents: "none",
   },
 };
 
@@ -2999,6 +2991,12 @@ if (typeof document !== "undefined") {
         40% { transform: rotate(3deg) scale(1.02); }
         60% { transform: rotate(-2deg) scale(1.01); }
         80% { transform: rotate(1.5deg) scale(1.01); }
+      }
+      @keyframes ceoPullShine {
+        0% { left: -24px; opacity: 0; }
+        20% { opacity: 1; }
+        80% { opacity: 1; }
+        100% { left: 52px; opacity: 0; }
       }
       @keyframes ceoFadeIn {
         from { opacity: 0; }
