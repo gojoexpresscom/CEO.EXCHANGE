@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
+import { s, GOLD, GOLD_LIGHT, BORDER } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 
 type Props = {
@@ -45,7 +45,7 @@ export default function SupportChat({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollBottom = () => {
     requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
@@ -73,7 +73,6 @@ export default function SupportChat({
     scrollBottom();
   }, []);
 
-  // Create or resume ticket
   useEffect(() => {
     let alive = true;
     async function init() {
@@ -82,7 +81,6 @@ export default function SupportChat({
       try {
         let id = ticketId;
         if (!id) {
-          // Reuse open ticket for this user if any
           const { data: existing } = await supabase
             .from("support_tickets")
             .select("id,status,closed_at,subject")
@@ -134,7 +132,6 @@ export default function SupportChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime + poll fallback
   useEffect(() => {
     if (!ticketId) return;
     const channel = supabase
@@ -190,6 +187,7 @@ export default function SupportChat({
         .eq("id", ticketId);
       setText("");
       await loadMessages(ticketId);
+      inputRef.current?.focus();
     } catch (e: any) {
       setError(e?.message || "Message couldn't be sent. Try again.");
     } finally {
@@ -211,12 +209,28 @@ export default function SupportChat({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 90,
+        zIndex: 95,
         background: "#050505",
         display: "flex",
         flexDirection: "column",
       }}
     >
+      {/* Force visible text in inputs (fixes iOS/Android autofill / dark-mode fill) */}
+      <style>{`
+        .ceo-chat-input, .ceo-chat-input::placeholder {
+          color: #ffffff !important;
+          -webkit-text-fill-color: #ffffff !important;
+          caret-color: ${GOLD};
+        }
+        .ceo-chat-input::placeholder {
+          color: #777 !important;
+          -webkit-text-fill-color: #777 !important;
+          opacity: 1;
+        }
+        .ceo-chat-bubble-mine { color: #fff !important; }
+        .ceo-chat-bubble-other { color: #f0f0f0 !important; }
+      `}</style>
+
       <div
         style={{
           display: "flex",
@@ -226,6 +240,7 @@ export default function SupportChat({
           paddingTop: "calc(12px + env(safe-area-inset-top))",
           borderBottom: "1px solid #1a1a1a",
           flexShrink: 0,
+          background: "#0a0a0a",
         }}
       >
         <button
@@ -238,7 +253,7 @@ export default function SupportChat({
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>CEO Exchange Support</div>
-          <div style={{ color: "#777", fontSize: 11 }}>
+          <div style={{ color: "#888", fontSize: 11 }}>
             {closed ? "Chat ended" : "Live Support"} · Ticket #{shortId}
           </div>
         </div>
@@ -254,19 +269,19 @@ export default function SupportChat({
       </div>
 
       <div
-        ref={listRef}
         style={{
           flex: 1,
           overflowY: "auto",
           padding: "14px 14px 8px",
           WebkitOverflowScrolling: "touch",
+          background: "#050505",
         }}
       >
         {loading && <p style={{ color: "#777", textAlign: "center" }}>Opening chat…</p>}
         {error && <div style={s.errorBox}>{error}</div>}
 
         {!loading && messages.length === 0 && !closed && (
-          <div style={{ ...s.infoBox, textAlign: "center" }}>
+          <div style={{ ...s.infoBox, textAlign: "center" as const }}>
             Waiting for an agent… You can send a message anytime.
           </div>
         )}
@@ -283,21 +298,22 @@ export default function SupportChat({
               }}
             >
               <div
+                className={mine ? "ceo-chat-bubble-mine" : "ceo-chat-bubble-other"}
                 style={{
                   maxWidth: "82%",
                   padding: "10px 12px",
                   borderRadius: 14,
-                  background: mine ? "#1a1508" : "#151515",
-                  border: mine ? `1px solid ${GOLD}` : "1px solid #222",
-                  color: "#eee",
+                  background: mine ? "#1a1508" : "#161616",
+                  border: mine ? `1px solid ${GOLD}` : "1px solid #2a2a2a",
+                  color: "#fff",
                   fontSize: 14,
                   lineHeight: 1.45,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
+                  whiteSpace: "pre-wrap" as const,
+                  wordBreak: "break-word" as const,
                 }}
               >
                 {m.message}
-                <div style={{ color: "#666", fontSize: 10, marginTop: 6 }}>
+                <div style={{ color: "#888", fontSize: 10, marginTop: 6 }}>
                   {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}
                 </div>
               </div>
@@ -308,7 +324,7 @@ export default function SupportChat({
       </div>
 
       {closed ? (
-        <div style={{ padding: 14, paddingBottom: "calc(14px + env(safe-area-inset-bottom))" }}>
+        <div style={{ padding: 14, paddingBottom: "calc(14px + env(safe-area-inset-bottom))", background: "#0a0a0a" }}>
           <div style={s.infoBox}>This conversation has ended.</div>
           <button
             type="button"
@@ -318,7 +334,6 @@ export default function SupportChat({
               setTicket(null);
               setMessages([]);
               setLoading(true);
-              // Force new ticket by clearing and re-running create path
               window.setTimeout(() => {
                 void (async () => {
                   try {
@@ -358,28 +373,34 @@ export default function SupportChat({
             gap: 8,
             alignItems: "flex-end",
             padding: "10px 12px",
-            paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
+            paddingBottom: "calc(12px + env(safe-area-inset-bottom))",
             borderTop: "1px solid #1a1a1a",
             background: "#0a0a0a",
           }}
         >
           <textarea
+            ref={inputRef}
+            className="ceo-chat-input"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Write your message…"
             rows={1}
+            autoComplete="off"
+            autoCorrect="on"
             style={{
               flex: 1,
               minHeight: 44,
               maxHeight: 140,
               resize: "none",
-              border: `1px solid #2a2110`,
+              border: `1px solid ${BORDER}`,
               borderRadius: 12,
               background: "#101010",
-              color: "#fff",
+              color: "#ffffff",
+              WebkitTextFillColor: "#ffffff",
+              caretColor: GOLD,
               padding: "12px 14px",
-              fontSize: 15,
+              fontSize: 16,
               lineHeight: 1.4,
               outline: 0,
               overflowY: "auto",
@@ -397,9 +418,10 @@ export default function SupportChat({
               background: `linear-gradient(135deg,${GOLD},#d98e00)`,
               color: "#090909",
               fontWeight: 800,
-              cursor: "pointer",
+              cursor: sending || !text.trim() ? "not-allowed" : "pointer",
               flexShrink: 0,
-              opacity: sending || !text.trim() ? 0.5 : 1,
+              opacity: sending || !text.trim() ? 0.45 : 1,
+              fontSize: 18,
             }}
             aria-label="Send"
           >

@@ -93,6 +93,8 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
 
   // Withdrawal
   const [whitelistAddr, setWhitelistAddr] = useState("");
+  const [infoKey, setInfoKey] = useState<string | null>(null);
+  const [appLock, setAppLock] = useState(Boolean((profile as any)?.app_lock_enabled));
 
   const lockUntil = profile?.withdrawal_lock_until
     ? new Date(profile.withdrawal_lock_until)
@@ -696,6 +698,47 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     );
   }
 
+
+  if (infoKey) {
+    const copy: Record<string, { title: string; body: string }> = {
+      passkeys: {
+        title: "Passkeys",
+        body: "Passkeys are available as step-up authentication on this platform. They are not used as passwordless primary login. Wire the existing WebAuthn registration/assertion endpoints to enable enrollment from this screen.",
+      },
+      antiphish: {
+        title: "Anti-phishing Code",
+        body: "Set a personal code that appears in official emails so you can spot phishing. Use the set_anti_phishing_code() RPC when you are ready to change it from this screen.",
+      },
+      fundpass: {
+        title: "Fund Password",
+        body: "Fund password protects sensitive fund actions. Use the existing secure fund-password backend flow. Do not store this password in the frontend.",
+      },
+      securetx: {
+        title: "Secure Transaction Approval",
+        body: "Backend enforcement is not active yet. Enabling a toggle here would not protect transactions. This remains unavailable until the server enforces it.",
+      },
+      devices: {
+        title: "Trusted Devices",
+        body: "Trusted devices and session history are stored in the backend (user_devices / user_login_history). Connect those tables here to list and revoke devices.",
+      },
+      account: {
+        title: "Account Settings",
+        body: "Account closure and deactivation are not available as self-service actions. Contact support if you need access restricted.",
+      },
+    };
+    const item = copy[infoKey] || { title: "Info", body: "" };
+    return (
+      <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
+        <style>{MOTION}</style>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setInfoKey(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>{item.title}</h3>
+        <div style={s.infoBox}>{item.body}</div>
+      </div>
+    );
+  }
+
   // ───────────────── Main list ─────────────────
   return (
     <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
@@ -736,32 +779,36 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
         </button>
       </div>
 
-      <div style={s.rowStatic}>
+      <button type="button" style={s.row} onClick={() => setInfoKey("passkeys")}>
         <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
         <span style={s.rowLabel}>Passkeys</span>
         <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Step-up only</span>
-      </div>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
-      <div style={s.rowStatic}>
+      <button type="button" style={s.row} onClick={() => setInfoKey("antiphish")}>
         <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
         <span style={s.rowLabel}>Anti-phishing Code</span>
-        <span style={s.rowValue}>{profile?.anti_phishing_code || "Not set"}</span>
-      </div>
+        <span style={s.rowValue}>{(profile as any)?.anti_phishing_code || "Not set"}</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
       <div style={s.sectionHeader}>Advanced Protect</div>
       <p style={s.sectionDesc}>Additional protection for key fund actions.</p>
 
-      <div style={s.rowStatic}>
+      <button type="button" style={s.row} onClick={() => setInfoKey("fundpass")}>
         <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
         <span style={s.rowLabel}>Fund Password</span>
-        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Use existing flow</span>
-      </div>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Info</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
-      <div style={s.rowStatic}>
+      <button type="button" style={s.row} onClick={() => setInfoKey("securetx")}>
         <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
         <span style={s.rowLabel}>Secure Transaction Approval</span>
         <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Not active</span>
-      </div>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
       <div style={s.sectionHeader}>Scenario-based protection</div>
       <p style={s.sectionDesc}>Extra protection for specific scenarios.</p>
@@ -781,22 +828,43 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <div style={s.rowStatic}>
+      <button type="button" style={s.row} onClick={() => setInfoKey("devices")}>
         <span style={s.rowIcon}><SIcon name="phone" size={16} /></span>
         <span style={s.rowLabel}>Trusted Devices</span>
-        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Available via backend</span>
-      </div>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Info</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
-      <div style={s.rowStatic}>
+      <button type="button" style={s.row} onClick={() => setInfoKey("account")}>
         <span style={s.rowIcon}><SIcon name="user" size={16} /></span>
         <span style={s.rowLabel}>Account Settings</span>
-        <span style={s.rowValue}>Overview only</span>
-      </div>
+        <span style={s.rowValue}>Overview</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
-      <div style={s.rowStatic}>
+      <div style={s.row}>
         <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
         <span style={s.rowLabel}>App Lock</span>
-        <span style={s.rowValue}>{profile?.app_lock_enabled ? "On" : "Off"}</span>
+        <button
+          type="button"
+          style={{ ...s.toggle, background: appLock ? GOLD : "#333" }}
+          onClick={async () => {
+            const next = !appLock;
+            setAppLock(next);
+            try {
+              const { error } = await supabase.from("profiles").update({ app_lock_enabled: next }).eq("id", userId);
+              if (error) throw error;
+              notify(next ? "App Lock enabled." : "App Lock disabled.");
+              await onReload();
+            } catch (e: any) {
+              setAppLock(!next);
+              notify(e?.message || "Could not update App Lock.");
+            }
+          }}
+          aria-label="App Lock"
+        >
+          <span style={{ ...s.toggleKnob, left: appLock ? 21 : 3 }} />
+        </button>
       </div>
     </div>
   );

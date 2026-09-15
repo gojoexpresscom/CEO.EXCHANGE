@@ -153,6 +153,8 @@ export default function GeneralTab({ data, onReload, notify, onLogout }: Props) 
       notify("Enter your name and email first.");
       return;
     }
+    // Must clear sub BEFORE/with chatOpen so the chatOpen branch wins render
+    setSub(null);
     setChatOpen(true);
   };
 
@@ -177,6 +179,24 @@ export default function GeneralTab({ data, onReload, notify, onLogout }: Props) 
   const curLabel = profile?.preferred_currency || "USD";
   const themeLabel = THEMES.find((t) => t.value === (profile?.color_theme || "dark"))?.label || "Dark Mode";
   const greenUp = candleMode === "green_up" || candleMode === "green";
+
+  // Live chat must win over every sub-view (was inverted: Cancel opened chat)
+  if (chatOpen) {
+    return (
+      <SupportChat
+        userId={userId}
+        ticketId={activeTicketId}
+        contactName={supportName.trim()}
+        contactEmail={supportEmail.trim()}
+        onClose={() => {
+          setChatOpen(false);
+          setActiveTicketId(null);
+        }}
+        onTicketCreated={(id) => setActiveTicketId(id)}
+        notify={notify}
+      />
+    );
+  }
 
   if (sub === "language") {
     return (
@@ -415,22 +435,7 @@ export default function GeneralTab({ data, onReload, notify, onLogout }: Props) 
       </div>
     );
   }
-
-  if (chatOpen) {
-    return (
-      <SupportChat
-        userId={userId}
-        ticketId={activeTicketId}
-        contactName={supportName.trim()}
-        contactEmail={supportEmail.trim()}
-        onClose={() => setChatOpen(false)}
-        onTicketCreated={(id) => setActiveTicketId(id)}
-        notify={notify}
-      />
-    );
-  }
-
-  return (
+return (
     <div style={s.section}>
       <button type="button" style={s.row} onClick={() => setSub("language")}>
         <span style={s.rowIcon}><SIcon name="globe" size={16} /></span>
