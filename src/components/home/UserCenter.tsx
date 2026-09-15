@@ -52,7 +52,7 @@ type Props = {
   onOpenSettings: (tab?: string) => void;
   onOpenSupport: () => void;
   onOpenNotifications: () => void;
-  /** Opens the promotional page (App.tsx "/experience" route → PromotionsPage) */
+  /** Optional entry into the promotional visual experience */
   onOpenPromo?: () => void;
 };
 
@@ -103,9 +103,9 @@ export default function UserCenter({
     ...(onOpenPromo
       ? [
           {
-            label: "Join Our Community",
-            sub: "Official channels & the CEO Exchange experience",
-            icon: "👥",
+            label: "Join our community",
+            sub: "See what CEO Exchange is about",
+            icon: "◈",
             action: onOpenPromo,
           },
         ]
