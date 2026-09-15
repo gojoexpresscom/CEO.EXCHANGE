@@ -84,15 +84,15 @@ const STAGES: Stage[] = [
   },
 ];
 
-// Tuned for front-camera phone distance; slightly forgiving for real users
-const YAW_THRESHOLD = 0.18;
-const PITCH_THRESHOLD = 0.14;
-const NEUTRAL_YAW_MAX = 0.14;
-const NEUTRAL_PITCH_MAX = 0.14;
-const STABILITY_SAMPLES = 3;
-const COOLDOWN_MS = 700;
-const SAMPLE_MS = 70;
-const MIN_FACE_SCORE = 0.45;
+// Tuned for real front-camera use — forward is face-stable, not perfect zero pose
+const YAW_THRESHOLD = 0.15;
+const PITCH_THRESHOLD = 0.12;
+const NEUTRAL_YAW_MAX = 0.35;
+const NEUTRAL_PITCH_MAX = 0.35;
+const STABILITY_SAMPLES = 2;
+const COOLDOWN_MS = 550;
+const SAMPLE_MS = 60;
+const MIN_FACE_SCORE = 0.35;
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const LANDMARKER_MODEL =
@@ -337,6 +337,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     return path;
   }, [userId]);
 
+
   // Tracking loop — only while phase === tracking
   useEffect(() => {
     if (phase !== "tracking" || !ready || modelState !== "ready" || permError) return;
@@ -356,6 +357,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
         video &&
         lm &&
         video.readyState >= 2 &&
+        video.videoWidth > 0 &&
         now - lastSampleRef.current >= SAMPLE_MS &&
         !capturingRef.current &&
         now >= cooldownUntilRef.current
@@ -364,11 +366,8 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
         try {
           const result = lm.detectForVideo(video, now);
           const face = result?.faceLandmarks?.[0];
-          const score =
-            (result as any)?.faceBlendshapes?.[0]?.categories?.[0]?.score ??
-            (face ? 1 : 0);
 
-          if (!face || (typeof score === "number" && score < MIN_FACE_SCORE && score !== 0)) {
+          if (!face || face.length < 200) {
             setFaceFound(false);
             stableCountRef.current = 0;
             setStatus("Position your face inside the frame");
@@ -379,44 +378,81 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
             if (!pose) {
               setStatus("Center your face");
               setStatusKind("warn");
+              stableCountRef.current = 0;
             } else {
               const stage = STAGES[stageIdxRef.current];
 
-              // Establish baseline on forward stage
-              if (!baselineRef.current) {
-                if (
+              // --- FORWARD: stable face in frame = capture (set baseline) ---
+              if (stage.id === "forward") {
+                // Accept any reasonable head pose as "looking at camera"
+                const reasonable =
                   Math.abs(pose.yaw) < NEUTRAL_YAW_MAX &&
-                  Math.abs(pose.pitch) < NEUTRAL_PITCH_MAX
-                ) {
+                  Math.abs(pose.pitch) < NEUTRAL_PITCH_MAX;
+                if (!reasonable) {
+                  stableCountRef.current = 0;
+                  setStatus("Center your face inside the frame");
+                  setStatusKind("warn");
+                } else {
                   stableCountRef.current += 1;
-                  setStatus("Perfect — hold still");
+                  setStatus("Face detected — hold still");
                   setStatusKind("ok");
                   if (stableCountRef.current >= STABILITY_SAMPLES) {
                     baselineRef.current = { yaw: pose.yaw, pitch: pose.pitch };
-                    // If current stage is forward, capture it immediately after baseline
-                    if (stage.id === "forward") {
-                      stableCountRef.current = STABILITY_SAMPLES;
-                    } else {
-                      stableCountRef.current = 0;
-                      setStatus(stage.instruction);
-                      setStatusKind("neutral");
-                    }
+                    capturingRef.current = true;
+                    setCapturing(true);
+                    setFlash(true);
+                    setStatus("Captured ✓");
+                    setStatusKind("capture");
+                    void (async () => {
+                      try {
+                        const path = await captureFrame("forward");
+                        const baseline = baselineRef.current!;
+                        const stepEv: LivenessStepEvidence = {
+                          stage: "forward",
+                          yaw: pose.yaw,
+                          pitch: pose.pitch,
+                          baseline_yaw: baseline.yaw,
+                          baseline_pitch: baseline.pitch,
+                          delta_yaw: 0,
+                          delta_pitch: 0,
+                          confirmed_at: new Date().toISOString(),
+                          path,
+                        };
+                        evidenceRef.current = [stepEv];
+                        pathsRef.current = [path];
+                        stableCountRef.current = 0;
+                        cooldownUntilRef.current = performance.now() + COOLDOWN_MS;
+                        stageIdxRef.current = 1;
+                        setStageIdx(1);
+                        setStatus(STAGES[1].instruction);
+                        setStatusKind("neutral");
+                        notify("Step 2/5");
+                      } catch (e: any) {
+                        setStatus(e?.message || "Capture failed — try again");
+                        setStatusKind("warn");
+                        stableCountRef.current = 0;
+                        baselineRef.current = null;
+                      } finally {
+                        capturingRef.current = false;
+                        setCapturing(false);
+                        window.setTimeout(() => setFlash(false), 350);
+                      }
+                    })();
                   }
-                } else {
-                  stableCountRef.current = 0;
-                  setStatus("Center your face and look straight");
-                  setStatusKind("warn");
                 }
-              }
+              } else {
+                // --- DIRECTIONAL STEPS: require real movement from baseline ---
+                let baseline = baselineRef.current;
+                if (!baseline) {
+                  // Safety: set baseline from current if missing
+                  baseline = { yaw: pose.yaw, pitch: pose.pitch };
+                  baselineRef.current = baseline;
+                }
 
-              const baseline = baselineRef.current;
-              if (baseline) {
                 const ok = stageSatisfied(stage.id, baseline, pose);
                 if (ok) {
                   stableCountRef.current += 1;
-                  setStatus(
-                    stage.id === "forward" ? "Perfect — hold still" : "Movement detected — hold…"
-                  );
+                  setStatus("Movement detected — hold…");
                   setStatusKind("ok");
                   if (stableCountRef.current >= STABILITY_SAMPLES) {
                     capturingRef.current = true;
@@ -427,14 +463,15 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                     void (async () => {
                       try {
                         const path = await captureFrame(stage.id);
+                        const b = baselineRef.current!;
                         const stepEv: LivenessStepEvidence = {
                           stage: stage.id,
                           yaw: pose.yaw,
                           pitch: pose.pitch,
-                          baseline_yaw: baseline.yaw,
-                          baseline_pitch: baseline.pitch,
-                          delta_yaw: pose.yaw - baseline.yaw,
-                          delta_pitch: pose.pitch - baseline.pitch,
+                          baseline_yaw: b.yaw,
+                          baseline_pitch: b.pitch,
+                          delta_yaw: pose.yaw - b.yaw,
+                          delta_pitch: pose.pitch - b.pitch,
                           confirmed_at: new Date().toISOString(),
                           path,
                         };
@@ -454,10 +491,9 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                             steps: evidenceRef.current,
                             completed_at: new Date().toISOString(),
                           };
-                          // Brief pause so user sees success
                           window.setTimeout(() => {
                             onComplete(pathsRef.current, evidence);
-                          }, 650);
+                          }, 600);
                         } else {
                           const next = pathsRef.current.length;
                           stageIdxRef.current = next;
@@ -502,6 +538,27 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       rafRef.current = null;
     };
   }, [phase, ready, modelState, permError, stageIdx, captureFrame, stopCamera, onComplete, notify]);
+
+
+  // Auto-start tracking once camera + model are ready (avoids "I looked straight but nothing happened")
+  useEffect(() => {
+    if (phase !== "intro") return;
+    if (!ready || modelState !== "ready" || permError) return;
+    const t = window.setTimeout(() => {
+      baselineRef.current = null;
+      stableCountRef.current = 0;
+      stageIdxRef.current = 0;
+      pathsRef.current = [];
+      evidenceRef.current = [];
+      capturingRef.current = false;
+      cooldownUntilRef.current = 0;
+      setStageIdx(0);
+      setPhase("tracking");
+      setStatus(STAGES[0].instruction);
+      setStatusKind("neutral");
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [phase, ready, modelState, permError]);
 
   const startTracking = () => {
     if (!ready) {
@@ -988,7 +1045,13 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
             : modelState === "unavailable"
               ? "Face tracking model could not load. Check your connection and try again."
               : phase === "intro"
-                ? "Please follow the instructions. If you don't turn your head, we won't be able to verify your identity."
+                ? (ready && modelState === "ready"
+                    ? "Starting face tracking…"
+                    : !ready
+                      ? "Starting camera…"
+                      : modelState === "loading"
+                        ? "Loading face tracker…"
+                        : "Please follow the instructions. If you don't turn your head, we won't be able to verify your identity.")
                 : status}
         </span>
       </div>
