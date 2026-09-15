@@ -18,6 +18,7 @@ import Withdrawals from "./finance/Withdrawals";
 import DepositRecords from "./finance/DepositRecords";
 import FeesCharges from "./finance/FeesCharges";
 import P2PDisputes from "./P2PDisputes";
+import Promotions from "./Promotions";
 
 const NAV_ITEMS: { id: AdminSection; label: string; icon: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: "⊞" },
@@ -28,6 +29,7 @@ const NAV_ITEMS: { id: AdminSection; label: string; icon: string }[] = [
   { id: "tickets", label: "Tickets", icon: "🎫" },
   { id: "announcements", label: "Announcements", icon: "📢" },
   { id: "giveaways", label: "Giveaways", icon: "🎁" },
+  { id: "promotions", label: "Promotions", icon: "◈" },
   { id: "reports", label: "Reports", icon: "📊" },
   { id: "settings", label: "Settings", icon: "⚙" },
   { id: "roles", label: "Roles & Permissions", icon: "🔑" },
@@ -92,6 +94,7 @@ export default function AdminPortal() {
       case "tickets": return <Tickets />;
       case "announcements": return <Announcements />;
       case "giveaways": return <Giveaways />;
+      case "promotions": return <Promotions />;
       case "reports": return <Reports />;
       case "settings": return <Settings />;
       case "roles": return <RolesPermissions />;
