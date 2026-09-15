@@ -1130,7 +1130,7 @@ export default function Home({
         <div style={styles.headerActions}>
           <button type="button" style={styles.iconRound} onClick={() => setModal("support")} aria-label="Support"><Icon name="headset" size={22} /></button>
           <button type="button" style={styles.iconRound} onClick={() => setModal("notifications")} aria-label="Notifications"><Icon name="bell" size={22} />{unreadTotal > 0 && <span style={styles.badge}>{unreadTotal > 99 ? "99+" : unreadTotal}</span>}</button>
-          <button type="button" style={styles.iconRound} onClick={() => setModal("menu")} aria-label="Menu"><Icon name="menu" size={22} /></button>
+          <button type="button" style={styles.iconRound} onClick={() => { setSettingsTab("My Info"); setSettingsOpen(true); }} aria-label="Menu"><Icon name="menu" size={22} /></button>
         </div>
       </header>
 
