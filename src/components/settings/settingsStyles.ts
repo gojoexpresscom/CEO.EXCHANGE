@@ -1,11 +1,15 @@
 // Shared visual tokens + list-row styles for User Center.
-// Matches Home.tsx tokens exactly so the overlay feels native.
+// Refined to match reference video: pure dark, gold/orange accents, tight hierarchy.
 
 export const GOLD = "#f5b51b";
 export const GOLD_LIGHT = "#ffd45a";
 export const BG = "#050505";
 export const CARD = "#101010";
+export const CARD_ALT = "#0c0c0c";
 export const BORDER = "#2a2110";
+export const MUTED = "#777";
+export const TEXT = "#eee";
+export const TEXT_DIM = "#888";
 
 export const s = {
   overlay: {
@@ -100,7 +104,7 @@ export const s = {
   },
   profileMeta: { flex: 1, minWidth: 0 },
   profileEmail: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 700,
     color: "#fff",
     marginBottom: 4,
@@ -108,15 +112,6 @@ export const s = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const,
   },
-  securityRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12,
-    color: "#aaa",
-    marginBottom: 6,
-  },
-  securityHigh: { color: "#39d98a", fontWeight: 700 },
   sitePill: {
     display: "inline-block",
     padding: "3px 8px",
@@ -131,7 +126,7 @@ export const s = {
     display: "flex",
     gap: 0,
     borderBottom: "1px solid #1e1e1e",
-    marginBottom: 12,
+    marginBottom: 8,
     overflowX: "auto" as const,
   },
   tab: {
@@ -139,7 +134,7 @@ export const s = {
     border: 0,
     background: "transparent",
     color: "#777",
-    padding: "12px 6px",
+    padding: "12px 4px",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -147,22 +142,36 @@ export const s = {
     whiteSpace: "nowrap" as const,
   },
   tabActive: {
-    color: GOLD_LIGHT,
+    color: "#fff",
   },
   tabUnderline: {
     position: "absolute" as const,
-    left: "20%",
-    right: "20%",
+    left: "18%",
+    right: "18%",
     bottom: 0,
     height: 2,
     background: "#ffffff",
     borderRadius: 2,
   },
+  sectionHeader: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: MUTED,
+    letterSpacing: 0.3,
+    margin: "16px 4px 8px",
+    textTransform: "none" as const,
+  },
+  sectionDesc: {
+    fontSize: 11,
+    color: "#555",
+    margin: "-4px 4px 10px",
+    lineHeight: 1.4,
+  },
   section: {
     display: "flex",
     flexDirection: "column" as const,
-    gap: 8,
-    marginBottom: 16,
+    gap: 6,
+    marginBottom: 12,
   },
   row: {
     display: "flex",
@@ -172,11 +181,24 @@ export const s = {
     minHeight: 52,
     padding: "12px 14px",
     border: 0,
-    borderRadius: 14,
+    borderRadius: 12,
     background: CARD,
     color: "#ddd",
     textAlign: "left" as const,
     cursor: "pointer",
+  },
+  rowStatic: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    minHeight: 52,
+    padding: "12px 14px",
+    border: 0,
+    borderRadius: 12,
+    background: CARD,
+    color: "#ddd",
+    textAlign: "left" as const,
   },
   rowIcon: {
     width: 28,
@@ -210,7 +232,7 @@ export const s = {
   },
   logoutBtn: {
     width: "100%",
-    marginTop: 8,
+    marginTop: 16,
     marginBottom: 12,
     minHeight: 48,
     border: `1px solid ${BORDER}`,
@@ -240,7 +262,6 @@ export const s = {
     boxShadow: "0 12px 30px rgba(0,0,0,.5)",
     fontSize: 13,
   },
-  // Sub-screen common
   subBody: {
     flex: 1,
     overflowY: "auto" as const,
@@ -317,6 +338,17 @@ export const s = {
     lineHeight: 1.45,
     margin: "8px 0 14px",
   },
+  comingSoonPill: {
+    display: "inline-block",
+    padding: "4px 10px",
+    borderRadius: 99,
+    background: "#1a1508",
+    border: `1px solid ${BORDER}`,
+    color: GOLD_LIGHT,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 0.4,
+  },
   statusPill: {
     display: "inline-block",
     padding: "3px 9px",
@@ -342,5 +374,34 @@ export const s = {
     borderRadius: "50%",
     background: "#fff",
     transition: "left 0.2s",
+  },
+  divider: {
+    height: 1,
+    background: "#1a1a1a",
+    margin: "8px 0",
+  },
+  sheetOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 80,
+    background: "rgba(0,0,0,0.72)",
+    display: "flex",
+    alignItems: "flex-end",
+  },
+  sheet: {
+    width: "100%",
+    maxHeight: "78%",
+    overflowY: "auto" as const,
+    background: "#0a0a0a",
+    borderTop: `1px solid ${BORDER}`,
+    borderRadius: "16px 16px 0 0",
+    padding: "16px 14px calc(20px + env(safe-area-inset-bottom))",
+  },
+  sheetHandle: {
+    width: 42,
+    height: 4,
+    borderRadius: 99,
+    background: "#3a3220",
+    margin: "0 auto 14px",
   },
 };

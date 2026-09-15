@@ -9,25 +9,8 @@ type Props = {
   data: SettingsData;
   onReload: () => Promise<void>;
   notify: (msg: string) => void;
-  localTheme: "dark" | "light";
-  setLocalTheme: (t: "dark" | "light") => void;
   onLogout: () => void;
 };
-
-const LANGUAGES = [
-  { code: "en", label: "English" },
-  { code: "zh", label: "中文" },
-  { code: "es", label: "Español" },
-  { code: "pt", label: "Português" },
-  { code: "ru", label: "Русский" },
-  { code: "ar", label: "العربية" },
-  { code: "fr", label: "Français" },
-  { code: "de", label: "Deutsch" },
-  { code: "ja", label: "日本語" },
-  { code: "ko", label: "한국어" },
-  { code: "vi", label: "Tiếng Việt" },
-  { code: "tr", label: "Türkçe" },
-];
 
 type CurrencyRow = { code: string; name: string | null };
 
@@ -35,18 +18,33 @@ type Sub =
   | null
   | "language"
   | "currency"
+  | "theme"
+  | "colors"
   | "help"
   | "support"
-  | "about";
+  | "about"
+  | "storage"
+  | "feedback";
 
-export default function GeneralTab({
-  data,
-  onReload,
-  notify,
-  localTheme,
-  setLocalTheme,
-  onLogout,
-}: Props) {
+const THEMES = [
+  { value: "dark", label: "Dark Mode" },
+  { value: "light", label: "Light Mode" },
+  { value: "classic", label: "Classic" },
+  { value: "system", label: "System" },
+];
+
+function applyThemeClass(theme: string) {
+  const root = document.documentElement;
+  root.classList.remove("theme-light", "theme-dark", "theme-classic");
+  if (theme === "light") root.classList.add("theme-light");
+  else if (theme === "classic") root.classList.add("theme-classic");
+  else if (theme === "system") {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    if (!prefersDark) root.classList.add("theme-light");
+  }
+}
+
+export default function GeneralTab({ data, onReload, notify, onLogout }: Props) {
   const { profile, userId, prefs } = data;
   const [sub, setSub] = useState<Sub>(null);
   const [currencies, setCurrencies] = useState<CurrencyRow[]>([]);
@@ -54,14 +52,13 @@ export default function GeneralTab({
   const [supportName, setSupportName] = useState("");
   const [supportEmail, setSupportEmail] = useState(profile?.email || "");
   const [candleMode, setCandleMode] = useState(prefs?.candle_color_mode || "green_up");
-  const [alwaysOn, setAlwaysOn] = useState(Boolean(prefs?.screen_always_on));
   const [chatOpen, setChatOpen] = useState(false);
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [dbLanguages, setDbLanguages] = useState<{ code: string; name: string }[]>([]);
+  const [storageInfo, setStorageInfo] = useState("Calculating…");
 
   useEffect(() => {
     setCandleMode(prefs?.candle_color_mode || "green_up");
-    setAlwaysOn(Boolean(prefs?.screen_always_on));
   }, [prefs]);
 
   useEffect(() => {
@@ -84,7 +81,6 @@ export default function GeneralTab({
       setSub(null);
       await onReload();
     } catch (e: any) {
-      // Fallback if RPC missing
       try {
         const { error: e2 } = await supabase.from("profiles").update({ preferred_language: code }).eq("id", userId);
         if (e2) throw e2;
@@ -102,11 +98,12 @@ export default function GeneralTab({
   const saveCurrency = async (code: string) => {
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ preferred_currency: code })
-        .eq("id", userId);
-      if (error) throw error;
+      // Prefer RPC if present
+      const { error: rpcErr } = await supabase.rpc("set_preferred_currency", { p_currency: code });
+      if (rpcErr) {
+        const { error } = await supabase.from("profiles").update({ preferred_currency: code }).eq("id", userId);
+        if (error) throw error;
+      }
       notify("Changes saved.");
       setSub(null);
       await onReload();
@@ -117,14 +114,31 @@ export default function GeneralTab({
     }
   };
 
-  const upsertPrefs = async (patch: { candle_color_mode?: string; screen_always_on?: boolean }) => {
+  const saveTheme = async (theme: string) => {
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("profiles").update({ color_theme: theme }).eq("id", userId);
+      if (error) throw error;
+      applyThemeClass(theme);
+      notify("Theme saved.");
+      setSub(null);
+      await onReload();
+    } catch (e: any) {
+      notify(e?.message || "Could not save theme.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const upsertCandle = async (mode: string) => {
     setBusy(true);
     try {
       const { error } = await supabase.from("user_preferences").upsert(
-        { user_id: userId, ...patch, updated_at: new Date().toISOString() },
+        { user_id: userId, candle_color_mode: mode, updated_at: new Date().toISOString() },
         { onConflict: "user_id" }
       );
       if (error) throw error;
+      setCandleMode(mode);
       notify("Changes saved.");
       await onReload();
     } catch (e: any) {
@@ -142,37 +156,53 @@ export default function GeneralTab({
     setChatOpen(true);
   };
 
+  const estimateStorage = () => {
+    setSub("storage");
+    try {
+      let total = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k) total += (localStorage.getItem(k) || "").length;
+      }
+      setStorageInfo(`Approx. client storage: ${(total / 1024).toFixed(1)} KB (localStorage only). Cache/clear is device-side.`);
+    } catch {
+      setStorageInfo("Unable to measure client storage in this browser.");
+    }
+  };
+
   const langLabel =
-    LANGUAGES.find((l) => l.code === (profile?.preferred_language || "en"))?.label || "English";
+    dbLanguages.find((l) => l.code === (profile?.preferred_language || "en"))?.name ||
+    profile?.preferred_language ||
+    "English";
   const curLabel = profile?.preferred_currency || "USD";
+  const themeLabel = THEMES.find((t) => t.value === (profile?.color_theme || "dark"))?.label || "Dark Mode";
   const greenUp = candleMode === "green_up" || candleMode === "green";
 
   if (sub === "language") {
     return (
       <div style={s.section}>
-        <div style={s.infoBox}>
-          Language is stored on your profile. String tables / i18n library can be added later without redesigning this picker.
-        </div>
-        {(dbLanguages.length ? dbLanguages.map((l) => ({ code: l.code, label: l.name })) : LANGUAGES).map((l) => (
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Language</h3>
+        {(dbLanguages.length
+          ? dbLanguages.map((l) => ({ code: l.code, label: l.name }))
+          : [{ code: "en", label: "English" }]
+        ).map((l) => (
           <button
             key={l.code}
             type="button"
             style={{
               ...s.row,
-              borderColor: profile?.preferred_language === l.code ? GOLD : "transparent",
+              border: profile?.preferred_language === l.code ? `1px solid ${GOLD}` : "0",
             }}
             disabled={busy}
             onClick={() => void saveLang(l.code)}
           >
             <span style={s.rowLabel}>{l.label}</span>
-            {profile?.preferred_language === l.code && (
-              <SIcon name="check" size={16} />
-            )}
+            {profile?.preferred_language === l.code && <SIcon name="check" size={16} />}
           </button>
         ))}
-        <button type="button" style={s.secondaryBtn} onClick={() => setSub(null)}>
-          Back
-        </button>
       </div>
     );
   }
@@ -180,25 +210,87 @@ export default function GeneralTab({
   if (sub === "currency") {
     return (
       <div style={s.section}>
-        <div style={s.infoBox}>
-          Display currency only. Balances stay in USD; conversion uses the live{" "}
-          <code style={{ color: GOLD }}>convert_usd_amount</code> RPC.
-        </div>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Currency Display</h3>
+        <div style={s.infoBox}>Display currency only. Balances remain in native units.</div>
         {(currencies.length ? currencies : [{ code: "USD", name: "US Dollar" }]).map((c) => (
-          <button
-            key={c.code}
-            type="button"
-            style={s.row}
-            disabled={busy}
-            onClick={() => void saveCurrency(c.code)}
-          >
+          <button key={c.code} type="button" style={s.row} disabled={busy} onClick={() => void saveCurrency(c.code)}>
             <span style={s.rowLabel}>{c.code}</span>
             <span style={s.rowValue}>{c.name || ""}</span>
+            {profile?.preferred_currency === c.code && <SIcon name="check" size={16} />}
           </button>
         ))}
-        <button type="button" style={s.secondaryBtn} onClick={() => setSub(null)}>
-          Back
+      </div>
+    );
+  }
+
+  if (sub === "theme") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
         </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Color Theme</h3>
+        <div style={s.infoBox}>Theme is persisted on your profile and survives refresh and login.</div>
+        {THEMES.map((t) => (
+          <button
+            key={t.value}
+            type="button"
+            style={{
+              ...s.row,
+              border: (profile?.color_theme || "dark") === t.value ? `1px solid ${GOLD}` : "0",
+            }}
+            disabled={busy}
+            onClick={() => void saveTheme(t.value)}
+          >
+            <span style={s.rowLabel}>{t.label}</span>
+            {(profile?.color_theme || "dark") === t.value && <SIcon name="check" size={16} />}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (sub === "colors") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Color Preferences</h3>
+        <p style={{ color: "#888", fontSize: 12, margin: "0 0 12px" }}>Candle / chart color mode (client preference).</p>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            style={{
+              ...s.secondaryBtn,
+              margin: 0,
+              flex: 1,
+              borderColor: greenUp ? GOLD : "#333",
+              color: greenUp ? GOLD : "#aaa",
+            }}
+            disabled={busy}
+            onClick={() => void upsertCandle("green_up")}
+          >
+            Green up / Red down
+          </button>
+          <button
+            type="button"
+            style={{
+              ...s.secondaryBtn,
+              margin: 0,
+              flex: 1,
+              borderColor: !greenUp ? GOLD : "#333",
+              color: !greenUp ? GOLD : "#aaa",
+            }}
+            disabled={busy}
+            onClick={() => void upsertCandle("red_up")}
+          >
+            Red up / Green down
+          </button>
+        </div>
       </div>
     );
   }
@@ -206,6 +298,10 @@ export default function GeneralTab({
   if (sub === "help") {
     return (
       <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Help Center</h3>
         <a href="mailto:ceo.support.v@gmail.com" style={{ ...s.row, textDecoration: "none" }}>
           <span style={s.rowIcon}><SIcon name="mail" size={16} /></span>
           <span style={s.rowLabel}>Email support</span>
@@ -225,9 +321,6 @@ export default function GeneralTab({
           <span style={s.rowIcon}><SIcon name="headset" size={16} /></span>
           <span style={s.rowLabel}>Live Chat</span>
           <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
-        </button>
-        <button type="button" style={s.secondaryBtn} onClick={() => setSub(null)}>
-          Back
         </button>
       </div>
     );
@@ -260,37 +353,70 @@ export default function GeneralTab({
   if (sub === "about") {
     return (
       <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
         <div style={{ ...s.infoBox, flexDirection: "column", gap: 10 }}>
           <strong style={{ color: GOLD_LIGHT }}>CEO Exchange</strong>
           <p style={{ margin: 0, lineHeight: 1.5 }}>
-            Crypto exchange product with spot markets, P2P marketplace, custodial deposits via
-            provisioned wallet addresses, withdrawals, social feed, referrals, and live support tickets.
-          </p>
-          <p style={{ margin: 0, lineHeight: 1.5, color: "#999" }}>
-            Built on Supabase Auth, Storage (avatars public, kyc-documents private), and Edge Functions
-            for OTP, 2FA (TOTP), KYC submission, and notifications. No regulatory licenses, partnerships,
-            or user counts are claimed here — only features present in the codebase and live project.
+            Crypto exchange product with spot markets, P2P marketplace, custodial deposits, withdrawals,
+            social features, referrals, and live support.
           </p>
         </div>
-        <button type="button" style={s.secondaryBtn} onClick={() => setSub(null)}>
-          Back
+      </div>
+    );
+  }
+
+  if (sub === "storage") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Storage management</h3>
+        <div style={s.infoBox}>{storageInfo}</div>
+        <button
+          type="button"
+          style={s.secondaryBtn}
+          onClick={() => {
+            try {
+              // Clear only non-essential keys if any app-specific cache keys exist
+              notify("Client cache clear is limited in browser. Use browser settings for full clear.");
+            } catch {
+              notify("Unable to clear.");
+            }
+          }}
+        >
+          Clear local cache (limited)
         </button>
       </div>
     );
   }
 
-  
-  if (sub === "notifications") {
+  if (sub === "feedback") {
     return (
-      <NotificationsPrefs
-        userId={userId}
-        notify={notify}
-        onBack={() => setSub(null)}
-      />
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>User feedback</h3>
+        <div style={{ ...s.infoBox, flexDirection: "column", gap: 10 }}>
+          <p style={{ margin: 0, lineHeight: 1.45 }}>
+            There is currently no feedback submission backend. A form that pretends messages were saved would be misleading.
+          </p>
+          <a
+            href="mailto:ceo.exchange.web@gmail.com?subject=CEO%20Exchange%20Feedback"
+            style={{ color: GOLD_LIGHT, fontWeight: 700 }}
+          >
+            Email feedback instead
+          </a>
+          <span style={s.comingSoonPill}>NO BACKEND YET</span>
+        </div>
+      </div>
     );
   }
 
-if (chatOpen) {
+  if (chatOpen) {
     return (
       <SupportChat
         userId={userId}
@@ -306,6 +432,13 @@ if (chatOpen) {
 
   return (
     <div style={s.section}>
+      <button type="button" style={s.row} onClick={() => setSub("language")}>
+        <span style={s.rowIcon}><SIcon name="globe" size={16} /></span>
+        <span style={s.rowLabel}>Language</span>
+        <span style={s.rowValue}>{langLabel}</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
       <button type="button" style={s.row} onClick={() => setSub("currency")}>
         <span style={s.rowIcon}><SIcon name="currency" size={16} /></span>
         <span style={s.rowLabel}>Currency Display</span>
@@ -313,29 +446,22 @@ if (chatOpen) {
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <button type="button" style={s.row} onClick={() => setSub("notifications")}>
-        <span style={s.rowIcon}><SIcon name="bell" size={16} /></span>
-        <span style={s.rowLabel}>Notifications</span>
+      <button type="button" style={s.row} onClick={() => setSub("theme")}>
+        <span style={s.rowIcon}><SIcon name="sun" size={16} /></span>
+        <span style={s.rowLabel}>Color Theme</span>
+        <span style={s.rowValue}>{themeLabel}</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <div style={s.row}>
-        <span style={s.rowIcon}><SIcon name="phone" size={16} /></span>
-        <span style={s.rowLabel}>Keep Screen Awake</span>
-        <button
-          type="button"
-          style={{ ...s.toggle, background: alwaysOn ? GOLD : "#333" }}
-          disabled={busy}
-          onClick={() => {
-            const next = !alwaysOn;
-            setAlwaysOn(next);
-            void upsertPrefs({ screen_always_on: next });
-          }}
-          aria-label="Keep Screen Awake"
-        >
-          <span style={{ ...s.toggleKnob, left: alwaysOn ? 21 : 3 }} />
-        </button>
-      </div>
+      <button type="button" style={s.row} onClick={() => setSub("colors")}>
+        <span style={s.rowIcon}><SIcon name="palette" size={16} /></span>
+        <span style={s.rowLabel}>Color Preferences</span>
+        <span style={{ display: "flex", gap: 4 }}>
+          <span style={{ width: 12, height: 12, borderRadius: 2, background: greenUp ? "#1ecf8a" : "#ff5c6c" }} />
+          <span style={{ width: 12, height: 12, borderRadius: 2, background: greenUp ? "#ff5c6c" : "#1ecf8a" }} />
+        </span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
       <button type="button" style={s.row} onClick={() => setSub("help")}>
         <span style={s.rowIcon}><SIcon name="help" size={16} /></span>
@@ -343,118 +469,43 @@ if (chatOpen) {
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
+      <button type="button" style={s.row} onClick={() => setSub("support")}>
+        <span style={s.rowIcon}><SIcon name="headset" size={16} /></span>
+        <span style={s.rowLabel}>Contact Support</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
+      <button type="button" style={s.row} onClick={() => setSub("feedback")}>
+        <span style={s.rowIcon}><SIcon name="edit" size={16} /></span>
+        <span style={s.rowLabel}>User feedback</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
       <button type="button" style={s.row} onClick={() => setSub("about")}>
         <span style={s.rowIcon}><SIcon name="info" size={16} /></span>
-        <span style={s.rowLabel}>About CEO EXCHANGE</span>
+        <span style={s.rowLabel}>About Us</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
+      <button type="button" style={s.row} onClick={estimateStorage}>
+        <span style={s.rowIcon}><SIcon name="screen" size={16} /></span>
+        <span style={s.rowLabel}>Storage management</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
       <a
-        href="mailto:ceo.exchange.web@gmail.com?subject=CEO%20Exchange%20Feedback"
+        href="https://ceo-exchange.vercel.app"
+        target="_blank"
+        rel="noopener noreferrer"
         style={{ ...s.row, textDecoration: "none" }}
       >
-        <span style={s.rowIcon}><SIcon name="edit" size={16} /></span>
-        <span style={s.rowLabel}>User feedback</span>
+        <span style={s.rowIcon}><SIcon name="thumb" size={16} /></span>
+        <span style={s.rowLabel}>Rate Our App</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </a>
 
       <button type="button" style={s.logoutBtn} onClick={() => void onLogout()}>
         <SIcon name="logout" size={18} /> Log Out
-      </button>
-    </div>
-  );
-}
-
-
-/** Notification toggles bound to profiles.* notification columns (real backend). */
-function NotificationsPrefs({
-  userId,
-  notify,
-  onBack,
-}: {
-  userId: string;
-  notify: (m: string) => void;
-  onBack: () => void;
-}) {
-  const [busy, setBusy] = React.useState(false);
-  const [flags, setFlags] = React.useState({
-    notification_push: true,
-    notification_trade: true,
-    notification_security: true,
-    notification_marketing: false,
-    email_trade: true,
-    email_security: true,
-    email_marketing: false,
-  });
-
-  React.useEffect(() => {
-    void (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select(
-          "notification_push,notification_trade,notification_security,notification_marketing,email_trade,email_security,email_marketing"
-        )
-        .eq("id", userId)
-        .maybeSingle();
-      if (data) {
-        setFlags((f) => ({
-          notification_push: data.notification_push ?? f.notification_push,
-          notification_trade: data.notification_trade ?? f.notification_trade,
-          notification_security: data.notification_security ?? f.notification_security,
-          notification_marketing: data.notification_marketing ?? f.notification_marketing,
-          email_trade: data.email_trade ?? f.email_trade,
-          email_security: data.email_security ?? f.email_security,
-          email_marketing: data.email_marketing ?? f.email_marketing,
-        }));
-      }
-    })();
-  }, [userId]);
-
-  const toggle = async (key: keyof typeof flags) => {
-    const next = !flags[key];
-    setFlags((f) => ({ ...f, [key]: next }));
-    setBusy(true);
-    try {
-      const { error } = await supabase.from("profiles").update({ [key]: next }).eq("id", userId);
-      if (error) throw error;
-      notify("Notification preference saved.");
-    } catch (e: any) {
-      setFlags((f) => ({ ...f, [key]: !next }));
-      notify(e?.message || "Could not save preference.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const Row = ({ label, k }: { label: string; k: keyof typeof flags }) => (
-    <div style={s.row}>
-      <span style={s.rowLabel}>{label}</span>
-      <button
-        type="button"
-        style={{ ...s.toggle, background: flags[k] ? GOLD : "#333" }}
-        disabled={busy}
-        onClick={() => void toggle(k)}
-        aria-label={label}
-      >
-        <span style={{ ...s.toggleKnob, left: flags[k] ? 21 : 3 }} />
-      </button>
-    </div>
-  );
-
-  return (
-    <div style={s.section}>
-      <p style={{ color: "#888", fontSize: 13, margin: "0 0 14px", lineHeight: 1.4 }}>
-        Choose which alerts you receive. Changes save to your account immediately.
-      </p>
-      <Row label="Push notifications" k="notification_push" />
-      <Row label="Trading notifications" k="notification_trade" />
-      <Row label="Security notifications" k="notification_security" />
-      <Row label="Marketing notifications" k="notification_marketing" />
-      <Row label="Email — trading" k="email_trade" />
-      <Row label="Email — security" k="email_security" />
-      <Row label="Email — marketing" k="email_marketing" />
-      <button type="button" style={s.secondaryBtn} onClick={onBack}>
-        Back
       </button>
     </div>
   );

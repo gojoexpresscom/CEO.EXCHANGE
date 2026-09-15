@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT, BORDER, CARD } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
@@ -10,6 +10,19 @@ type Props = {
   onReload: () => Promise<void>;
   notify: (msg: string) => void;
   onLogout: () => void;
+};
+
+type FeeTier = {
+  maker_fee: number | null;
+  taker_fee: number | null;
+  tier_name: string | null;
+} | null;
+
+type VerifRow = {
+  id: string;
+  status: string;
+  created_at: string | null;
+  notes: string | null;
 };
 
 function kycLabel(status: string | null) {
@@ -49,10 +62,20 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
   const [error, setError] = useState("");
   const [xAgree, setXAgree] = useState(false);
   const [xRedirectAgree, setXRedirectAgree] = useState(false);
-  const [closePending, setClosePending] = useState(false);
+  const [subView, setSubView] = useState<"fees" | "additional" | "subaccount" | "community" | null>(null);
+  const [feeTier, setFeeTier] = useState<FeeTier>(null);
+  const [feeLoading, setFeeLoading] = useState(false);
+  const [verifs, setVerifs] = useState<VerifRow[]>([]);
+  const [verifLoading, setVerifLoading] = useState(false);
+  const [verifFile, setVerifFile] = useState<File | null>(null);
+  const [verifNotes, setVerifNotes] = useState("");
 
   const tg = socials.find((x) => x.provider === "telegram");
   const tw = socials.find((x) => x.provider === "twitter" || x.provider === "x");
+
+  useEffect(() => {
+    setNick(profile?.nickname || "");
+  }, [profile?.nickname]);
 
   const uploadAvatar = async (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -184,6 +207,92 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     }
   };
 
+  const loadFees = async () => {
+    setFeeLoading(true);
+    setSubView("fees");
+    try {
+      // Prefer user_fee_tiers then fall back to fee_schedules default
+      const { data: tiers } = await supabase
+        .from("user_fee_tiers")
+        .select("maker_fee,taker_fee,tier_name")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (tiers) {
+        setFeeTier(tiers as FeeTier);
+      } else {
+        const { data: sched } = await supabase
+          .from("fee_schedules")
+          .select("maker_fee,taker_fee,name")
+          .eq("is_default", true)
+          .maybeSingle();
+        if (sched) {
+          setFeeTier({
+            maker_fee: (sched as any).maker_fee,
+            taker_fee: (sched as any).taker_fee,
+            tier_name: (sched as any).name || "Regular",
+          });
+        } else {
+          setFeeTier(null);
+        }
+      }
+    } catch {
+      setFeeTier(null);
+    } finally {
+      setFeeLoading(false);
+    }
+  };
+
+  const loadVerifs = async () => {
+    setVerifLoading(true);
+    setSubView("additional");
+    try {
+      const { data: rows } = await supabase
+        .from("account_verifications")
+        .select("id,status,created_at,notes")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      setVerifs((rows as VerifRow[]) ?? []);
+    } catch {
+      setVerifs([]);
+    } finally {
+      setVerifLoading(false);
+    }
+  };
+
+  const submitAdditionalVerif = async () => {
+    if (!verifFile) {
+      notify("Please select a document to upload.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const ext = verifFile.name.split(".").pop() || "pdf";
+      const path = `${userId}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("account-verification-documents")
+        .upload(path, verifFile, { contentType: verifFile.type, upsert: false });
+      if (upErr) throw upErr;
+
+      const { error: insErr } = await supabase.from("account_verifications").insert({
+        user_id: userId,
+        status: "pending",
+        document_path: path,
+        notes: verifNotes.trim() || null,
+      });
+      if (insErr) throw insErr;
+
+      notify("Additional verification submitted.");
+      setVerifFile(null);
+      setVerifNotes("");
+      await loadVerifs();
+    } catch (e: any) {
+      notify(e?.message || "Could not submit verification.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (showKyc) {
     return (
       <KycFlow
@@ -200,7 +309,158 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     );
   }
 
-  // ── Link Account screens (reference style) ──
+  // ── Fee rates screen ──
+  if (subView === "fees") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSubView(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>My Fee Rates</h3>
+        {feeLoading ? (
+          <p style={{ color: "#777" }}>Loading…</p>
+        ) : feeTier ? (
+          <div style={{ ...s.infoBox, flexDirection: "column", gap: 10 }}>
+            <div>
+              <span style={{ color: GOLD_LIGHT, fontWeight: 700 }}>{feeTier.tier_name || "Regular"}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>Maker</span>
+              <span style={{ color: "#fff", fontWeight: 700 }}>
+                {feeTier.maker_fee != null ? `${Number(feeTier.maker_fee).toFixed(4)}%` : "—"}
+              </span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>Taker</span>
+              <span style={{ color: "#fff", fontWeight: 700 }}>
+                {feeTier.taker_fee != null ? `${Number(feeTier.taker_fee).toFixed(4)}%` : "—"}
+              </span>
+            </div>
+            <p style={{ margin: 0, color: "#666", fontSize: 11 }}>
+              Fees are determined by your VIP level and trading volume. Updated by the platform.
+            </p>
+          </div>
+        ) : (
+          <div style={s.infoBox}>Fee schedule data is not available yet.</div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Additional verification ──
+  if (subView === "additional") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSubView(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17 }}>Additional Verification</h3>
+        <p style={{ color: "#777", fontSize: 12, margin: "0 0 14px", lineHeight: 1.45 }}>
+          Enhanced / EDD verification. Separate from basic KYC. Approval does not automatically change withdrawal or P2P limits.
+        </p>
+        {verifLoading ? (
+          <p style={{ color: "#777" }}>Loading…</p>
+        ) : (
+          <>
+            {verifs.length === 0 && (
+              <div style={s.infoBox}>No previous additional verification cases.</div>
+            )}
+            {verifs.map((v) => (
+              <div key={v.id} style={{ ...s.rowStatic, marginBottom: 6 }}>
+                <span style={s.rowLabel}>Case</span>
+                <span
+                  style={{
+                    ...s.statusPill,
+                    background:
+                      v.status === "approved"
+                        ? "#0d2a1a"
+                        : v.status === "rejected"
+                          ? "#2a1012"
+                          : "#1a1508",
+                    color:
+                      v.status === "approved"
+                        ? "#39d98a"
+                        : v.status === "rejected"
+                          ? "#ff6574"
+                          : GOLD_LIGHT,
+                  }}
+                >
+                  {v.status}
+                </span>
+              </div>
+            ))}
+            <label style={s.field}>
+              Document
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(e) => setVerifFile(e.target.files?.[0] || null)}
+                style={{ color: "#ccc", fontSize: 13 }}
+              />
+            </label>
+            <label style={s.field}>
+              Notes (optional)
+              <input
+                style={s.input}
+                value={verifNotes}
+                onChange={(e) => setVerifNotes(e.target.value)}
+                placeholder="Reason or context"
+              />
+            </label>
+            <button type="button" style={s.primaryBtn} disabled={saving || !verifFile} onClick={() => void submitAdditionalVerif()}>
+              {saving ? "Submitting…" : "Submit application"}
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ── Subaccount coming soon ──
+  if (subView === "subaccount") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSubView(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Subaccount</h3>
+        <div style={{ ...s.infoBox, flexDirection: "column", alignItems: "center", textAlign: "center", gap: 12, padding: "28px 16px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>Coming soon</div>
+          <div style={{ color: "#aaa", fontSize: 13, lineHeight: 1.5 }}>
+            Subaccounts are not available yet. No balances or switchable accounts are created on the backend.
+          </div>
+          <span style={s.comingSoonPill}>UNAVAILABLE</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Community ──
+  if (subView === "community") {
+    return (
+      <div style={s.section}>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSubView(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Community</h3>
+        <a
+          href="https://t.me/ceomarket_bot"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ ...s.row, textDecoration: "none", marginBottom: 8 }}
+        >
+          <span style={s.rowIcon}><SIcon name="headset" size={16} /></span>
+          <span style={s.rowLabel}>Telegram</span>
+          <span style={s.rowValue}>t.me/ceomarket_bot</span>
+        </a>
+        <div style={s.infoBox}>
+          Official community channels will appear here when configured. Affiliate community status is shown from your referral data when available.
+        </div>
+      </div>
+    );
+  }
+
+  // ── Link Account screens ──
   if (linkView === "list") {
     return (
       <div style={s.section}>
@@ -212,7 +472,6 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
           Connect a third-party account for quick login or event access.
         </p>
 
-        {/* Telegram */}
         <div style={{ ...s.row, marginBottom: 8 }}>
           <span style={{ ...s.rowIcon, background: "#1a2a3a", borderColor: "#234" }}>
             <span style={{ fontSize: 14 }}>✈</span>
@@ -257,11 +516,10 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </div>
         {tg && (
           <p style={{ color: "#666", fontSize: 11, margin: "-4px 4px 12px" }}>
-            Linked{tg.handle ? `: ${tg.handle}` : ""}. How to Unlink — use Unlink above.
+            Linked{tg.handle ? `: ${tg.handle}` : ""}.
           </p>
         )}
 
-        {/* X */}
         <p style={{ margin: "16px 0 8px", color: "#777", fontSize: 12, lineHeight: 1.4 }}>
           Connect your X account to interact and earn event rewards.
         </p>
@@ -269,7 +527,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
           <span style={s.rowIcon}>
             <span style={{ fontWeight: 900, fontSize: 13 }}>𝕏</span>
           </span>
-          <span style={s.rowLabel}>{tw ? tw.handle || "Linked" : "Not yet configured"}</span>
+          <span style={s.rowLabel}>{tw ? tw.handle || "Linked" : "Not linked"}</span>
           {tw ? (
             <button
               type="button"
@@ -306,7 +564,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
                 setLinkView("x-consent");
               }}
             >
-              Unconfigured
+              Link
             </button>
           )}
         </div>
@@ -396,11 +654,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
           </label>
           <button
             type="button"
-            style={{
-              ...s.primaryBtn,
-              marginTop: 0,
-              opacity: xAgree ? 1 : 0.45,
-            }}
+            style={{ ...s.primaryBtn, marginTop: 0, opacity: xAgree ? 1 : 0.45 }}
             disabled={!xAgree || saving}
             onClick={() => {
               setXRedirectAgree(false);
@@ -409,11 +663,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
           >
             Confirm
           </button>
-          <button
-            type="button"
-            style={{ ...s.secondaryBtn, marginTop: 10 }}
-            onClick={() => setLinkView("list")}
-          >
+          <button type="button" style={{ ...s.secondaryBtn, marginTop: 10 }} onClick={() => setLinkView("list")}>
             Cancel
           </button>
         </div>
@@ -461,21 +711,13 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
           </label>
           <button
             type="button"
-            style={{
-              ...s.primaryBtn,
-              marginTop: 0,
-              opacity: xRedirectAgree ? 1 : 0.45,
-            }}
+            style={{ ...s.primaryBtn, marginTop: 0, opacity: xRedirectAgree ? 1 : 0.45 }}
             disabled={!xRedirectAgree || saving}
             onClick={() => void startXLink()}
           >
             {saving ? "Opening…" : "Confirm"}
           </button>
-          <button
-            type="button"
-            style={{ ...s.secondaryBtn, marginTop: 10 }}
-            onClick={() => setLinkView("list")}
-          >
+          <button type="button" style={{ ...s.secondaryBtn, marginTop: 10 }} onClick={() => setLinkView("list")}>
             Cancel
           </button>
           {error && <div style={{ ...s.errorBox, marginTop: 12 }}>{error}</div>}
@@ -484,21 +726,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     );
   }
 
-  if (closePending) {
-    return (
-      <div style={s.section}>
-        <div style={s.infoBox}>
-          Account closure is not available as a self-service action yet. Exchange accounts hold financial
-          records, KYC data, and compliance history that require a formal retention policy before permanent
-          closure can be enabled. Contact support if you need to restrict access to your account.
-        </div>
-        <button type="button" style={s.secondaryBtn} onClick={() => setClosePending(false)}>
-          Back
-        </button>
-      </div>
-    );
-  }
-
+  // ── Main My Info list ──
   return (
     <div style={s.section}>
       <input
@@ -564,7 +792,7 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </button>
       )}
 
-      <div style={s.row}>
+      <div style={s.rowStatic}>
         <span style={s.rowIcon}><SIcon name="id" size={16} /></span>
         <span style={s.rowLabel}>UID</span>
         <span style={s.rowValue}>{profile?.uid || "—"}</span>
@@ -579,13 +807,13 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
       </div>
 
       {kycIsVerified(profile?.kyc_status ?? null) ? (
-        <div style={s.row}>
+        <div style={s.rowStatic}>
           <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
           <span style={s.rowLabel}>Identity Verification</span>
           <span style={{ ...s.rowValue, color: "#39d98a" }}>Lv.1 Verified</span>
         </div>
       ) : kycIsPending(profile?.kyc_status ?? null) ? (
-        <div style={s.row}>
+        <div style={s.rowStatic}>
           <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
           <span style={s.rowLabel}>Identity Verification</span>
           <span style={{ ...s.rowValue, color: GOLD }}>Under review</span>
@@ -601,13 +829,33 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
         </button>
       )}
 
-      <div style={s.row}>
+      <div style={s.rowStatic}>
         <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
         <span style={s.rowLabel}>VIP level</span>
         <span style={s.rowValue}>
           {profile?.vip_level != null && profile?.vip_level !== "" ? String(profile.vip_level) : "Non-VIP"}
         </span>
       </div>
+
+      <button type="button" style={s.row} onClick={() => void loadFees()}>
+        <span style={s.rowIcon}><SIcon name="chart" size={16} /></span>
+        <span style={s.rowLabel}>My Fee Rates</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
+      <button type="button" style={s.row} onClick={() => void loadVerifs()}>
+        <span style={s.rowIcon}><SIcon name="id" size={16} /></span>
+        <span style={s.rowLabel}>Additional Verification</span>
+        <span style={s.rowValue}>{verifs.length ? `${verifs.length} case(s)` : ""}</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
+
+      <button type="button" style={s.row} onClick={() => setSubView("subaccount")}>
+        <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
+        <span style={s.rowLabel}>Subaccount</span>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Coming soon</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+      </button>
 
       <button type="button" style={s.row} onClick={() => setLinkView("list")}>
         <span style={s.rowIcon}><SIcon name="link" size={16} /></span>
@@ -620,9 +868,9 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
       </button>
 
       {profile?.referral_code ? (
-        <div style={s.row}>
+        <div style={s.rowStatic}>
           <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
-          <span style={s.rowLabel}>Referral code</span>
+          <span style={s.rowLabel}>Affiliate&apos;s community</span>
           <span style={s.rowValue}>{profile.referral_code}</span>
           <button
             type="button"
@@ -636,12 +884,17 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
             <SIcon name="copy" size={16} />
           </button>
         </div>
-      ) : null}
+      ) : (
+        <button type="button" style={s.row} onClick={() => setSubView("community")}>
+          <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
+          <span style={s.rowLabel}>Affiliate&apos;s community</span>
+          <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
+        </button>
+      )}
 
-      <button type="button" style={s.row} onClick={() => setClosePending(true)}>
-        <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
-        <span style={s.rowLabel}>Close Account</span>
-        <span style={s.rowValue}>Pending policy</span>
+      <button type="button" style={s.row} onClick={() => setSubView("community")}>
+        <span style={s.rowIcon}><SIcon name="community" size={16} /></span>
+        <span style={s.rowLabel}>Join Our Community</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 

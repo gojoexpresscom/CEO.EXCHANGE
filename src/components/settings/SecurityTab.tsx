@@ -701,88 +701,104 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
     <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
       <style>{MOTION}</style>
 
+      <div style={s.sectionHeader}>Basic Protect</div>
+      <p style={s.sectionDesc}>Essential protection for everyday account activity.</p>
 
-      {/* Email */}
       <button type="button" style={s.row} onClick={startEmailChange}>
-        <span style={s.rowIcon}>
-          <SIcon name="mail" size={16} />
-        </span>
+        <span style={s.rowIcon}><SIcon name="mail" size={16} /></span>
         <span style={s.rowLabel}>Email</span>
         <span style={s.rowValue}>{maskEmail(profile?.email ?? null)}</span>
-        <span style={s.rowChevron}>
-          <SIcon name="chevron" size={16} />
-        </span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      {/* Mobile / Phone */}
       <button type="button" style={s.row} onClick={() => setView("phone")}>
-        <span style={s.rowIcon}>
-          <SIcon name="phone" size={16} />
-        </span>
+        <span style={s.rowIcon}><SIcon name="phone" size={16} /></span>
         <span style={s.rowLabel}>Mobile</span>
         <span style={s.rowValue}>
-          {profile?.phone_verified ? maskPhone(profile?.phone ?? null) : "Not verified"}
+          {profile?.phone_verified ? maskPhone(profile?.phone ?? null) : "Coming soon"}
         </span>
-        <span style={s.rowChevron}>
-          <SIcon name="chevron" size={16} />
-        </span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      {/* Authenticator (2FA) */}
       <div style={s.row}>
-        <span style={s.rowIcon}>
-          <SIcon name="google" size={16} />
-        </span>
-        <span style={s.rowLabel}>Authenticator</span>
+        <span style={s.rowIcon}><SIcon name="google" size={16} /></span>
+        <span style={s.rowLabel}>Google 2FA Authentication</span>
         <button
           type="button"
-          style={{
-            ...s.toggle,
-            background: twoFaEnabled ? GOLD : "#333",
-            transition: "background 0.25s ease",
-          }}
+          style={{ ...s.toggle, background: twoFaEnabled ? GOLD : "#333", transition: "background 0.25s ease" }}
           onClick={() => {
-            if (twoFaEnabled) {
-              setCode("");
-              setView("2fa-disable");
-            } else {
-              void start2faSetup();
-            }
+            if (twoFaEnabled) { setCode(""); setView("2fa-disable"); }
+            else { void start2faSetup(); }
           }}
           aria-label={twoFaEnabled ? "Disable authenticator" : "Enable authenticator"}
         >
-          <span
-            style={{
-              ...s.toggleKnob,
-              left: twoFaEnabled ? 21 : 3,
-              transition: "left 0.22s ease",
-            }}
-          />
+          <span style={{ ...s.toggleKnob, left: twoFaEnabled ? 21 : 3, transition: "left 0.22s ease" }} />
         </button>
       </div>
 
-      {/* Withdrawal Security */}
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
+        <span style={s.rowLabel}>Passkeys</span>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Step-up only</span>
+      </div>
+
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
+        <span style={s.rowLabel}>Anti-phishing Code</span>
+        <span style={s.rowValue}>{profile?.anti_phishing_code || "Not set"}</span>
+      </div>
+
+      <div style={s.sectionHeader}>Advanced Protect</div>
+      <p style={s.sectionDesc}>Additional protection for key fund actions.</p>
+
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
+        <span style={s.rowLabel}>Fund Password</span>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Use existing flow</span>
+      </div>
+
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
+        <span style={s.rowLabel}>Secure Transaction Approval</span>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Not active</span>
+      </div>
+
+      <div style={s.sectionHeader}>Scenario-based protection</div>
+      <p style={s.sectionDesc}>Extra protection for specific scenarios.</p>
+
       <button type="button" style={s.row} onClick={() => setView("withdrawal")}>
-        <span style={s.rowIcon}>
-          <SIcon name="wallet" size={16} />
-        </span>
+        <span style={s.rowIcon}><SIcon name="wallet" size={16} /></span>
         <span style={s.rowLabel}>Withdrawal Security</span>
         <span style={s.rowValue}>{locked ? `Locked ${lockRemaining}h` : "Open"}</span>
-        <span style={s.rowChevron}>
-          <SIcon name="chevron" size={16} />
-        </span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      {/* Change Password */}
+      <div style={s.sectionHeader}>Account access and management</div>
+
       <button type="button" style={s.row} onClick={startPasswordChange}>
-        <span style={s.rowIcon}>
-          <SIcon name="lock" size={16} />
-        </span>
-        <span style={s.rowLabel}>Login Password</span>
-        <span style={s.rowChevron}>
-          <SIcon name="chevron" size={16} />
-        </span>
+        <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
+        <span style={s.rowLabel}>Change Password</span>
+        <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
+
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="phone" size={16} /></span>
+        <span style={s.rowLabel}>Trusted Devices</span>
+        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Available via backend</span>
+      </div>
+
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="user" size={16} /></span>
+        <span style={s.rowLabel}>Account Settings</span>
+        <span style={s.rowValue}>Overview only</span>
+      </div>
+
+      <div style={s.rowStatic}>
+        <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
+        <span style={s.rowLabel}>App Lock</span>
+        <span style={s.rowValue}>{profile?.app_lock_enabled ? "On" : "Off"}</span>
+      </div>
     </div>
   );
 }
+

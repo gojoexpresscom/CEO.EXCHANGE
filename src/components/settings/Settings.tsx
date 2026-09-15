@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
+import { s, GOLD } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 import MyInfoTab from "./MyInfoTab";
 import SecurityTab from "./SecurityTab";
@@ -27,6 +27,15 @@ type ProfileRow = {
   role: string | null;
   vip_level: string | number | null;
   referral_code: string | null;
+  color_theme: string | null;
+  time_zone: string | null;
+  deposit_to: string | null;
+  app_lock_enabled: boolean | null;
+  notification_push: boolean | null;
+  email_security: boolean | null;
+  email_trade: boolean | null;
+  email_marketing: boolean | null;
+  anti_phishing_code: string | null;
 };
 
 type TwoFaRow = {
@@ -71,12 +80,23 @@ function maskPhone(phone: string | null) {
   return `${phone.slice(0, 2)}****${phone.slice(-3)}`;
 }
 
+function applyThemeClass(theme: string) {
+  const root = document.documentElement;
+  root.classList.remove("theme-light", "theme-dark", "theme-classic");
+  if (theme === "light") root.classList.add("theme-light");
+  else if (theme === "classic") root.classList.add("theme-classic");
+  else if (theme === "system") {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    if (!prefersDark) root.classList.add("theme-light");
+  }
+  // dark is default (no class needed)
+}
+
 export default function Settings({ initialTab = "My Info", onClose, onLogout }: Props) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [data, setData] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
-  const [localTheme, setLocalTheme] = useState<"dark" | "light">("dark");
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [languages, setLanguages] = useState<{ code: string; name: string }[]>([]);
   const [langBusy, setLangBusy] = useState(false);
@@ -103,7 +123,7 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       supabase
         .from("profiles")
         .select(
-          "id,uid,nickname,email,phone,phone_verified,country_code,profile_picture_url,kyc_status,preferred_language,preferred_currency,withdrawal_lock_until,security_level,warning_count,role,vip_level,referral_code"
+          "id,uid,nickname,email,phone,phone_verified,country_code,profile_picture_url,kyc_status,preferred_language,preferred_currency,withdrawal_lock_until,security_level,warning_count,role,vip_level,referral_code,color_theme,time_zone,deposit_to,app_lock_enabled,notification_push,email_security,email_trade,email_marketing,anti_phishing_code"
         )
         .eq("id", uid)
         .maybeSingle(),
@@ -112,9 +132,12 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       supabase.from("user_social_accounts").select("provider,handle").eq("user_id", uid),
     ]);
 
+    const p = (profile as ProfileRow) ?? null;
+    if (p?.color_theme) applyThemeClass(p.color_theme);
+
     setData({
       userId: uid,
-      profile: (profile as ProfileRow) ?? null,
+      profile: p,
       twoFaEnabled: Boolean((twoFa as TwoFaRow | null)?.is_enabled),
       prefs: (prefs as PrefsRow) ?? null,
       socials: (socials as SocialRow[]) ?? [],
@@ -176,6 +199,10 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
 
   const p = data.profile;
   const displayName = p?.nickname || maskEmail(p?.email ?? null);
+  const themeIcon =
+    (p?.color_theme || "dark") === "light" || (p?.color_theme || "dark") === "classic"
+      ? "sun"
+      : "moon";
 
   return (
     <div style={s.overlay} className="ceo-fullscreen-overlay">
@@ -195,11 +222,11 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
           <button
             type="button"
             style={s.headerBtn}
-            onClick={() => setLocalTheme((t) => (t === "dark" ? "light" : "dark"))}
-            aria-label="Toggle theme (session only)"
-            title="Theme is session-only until backend column exists"
+            onClick={() => setTab("General")}
+            aria-label="Theme (open General)"
+            title="Change color theme in General"
           >
-            <SIcon name={localTheme === "dark" ? "moon" : "sun"} size={18} />
+            <SIcon name={themeIcon} size={18} />
           </button>
           <button type="button" style={s.headerBtn} aria-label="Language" onClick={() => void openLangPicker()}>
             <SIcon name="globe" size={18} />
@@ -208,7 +235,6 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       </div>
 
       <div style={s.body}>
-        {/* Profile header — reference style */}
         <div style={s.profileBlock}>
           <div style={s.avatarWrap}>
             {p?.profile_picture_url ? (
@@ -225,7 +251,6 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
           </div>
         </div>
 
-        {/* Tabs — My info · Security · Preference · General */}
         <div style={s.tabs}>
           {(["My Info", "Security", "Preference", "General"] as SettingsTab[]).map((t) => (
             <button
@@ -261,8 +286,6 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
               data={data}
               onReload={reload}
               notify={notify}
-              localTheme={localTheme}
-              setLocalTheme={setLocalTheme}
               onLogout={handleLogout}
             />
           )}
@@ -270,38 +293,9 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       </div>
 
       {showLangPicker && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 80,
-            background: "rgba(0,0,0,0.72)",
-            display: "flex",
-            alignItems: "flex-end",
-          }}
-          onClick={() => setShowLangPicker(false)}
-        >
-          <div
-            style={{
-              width: "100%",
-              maxHeight: "70%",
-              overflowY: "auto",
-              background: "#0a0a0a",
-              borderTop: "1px solid #2a2110",
-              borderRadius: "16px 16px 0 0",
-              padding: "16px 14px calc(20px + env(safe-area-inset-bottom))",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                width: 42,
-                height: 4,
-                borderRadius: 99,
-                background: "#3a3220",
-                margin: "0 auto 14px",
-              }}
-            />
+        <div style={s.sheetOverlay} onClick={() => setShowLangPicker(false)}>
+          <div style={s.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={s.sheetHandle} />
             <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 16 }}>Language</h3>
             {(languages.length ? languages : [{ code: "en", name: "English" }]).map((l) => (
               <button
