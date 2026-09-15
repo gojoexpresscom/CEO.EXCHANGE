@@ -114,7 +114,7 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
    */
   const cleanupOldKycFiles = async () => {
     try {
-      const bucket = "account-verification-documents";
+      const bucket = "kyc-documents";
       const toRemove: string[] = [];
 
       // List folders under {uid}/
@@ -231,7 +231,21 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
       const frontPath = await uploadPrivate(frontFile, "front");
       const backPath = backFile ? await uploadPrivate(backFile, "back") : null;
 
+      // Ensure a fresh JWT immediately before verify-kyc (flow can take several minutes)
+      let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData?.session?.access_token) {
+        const refreshed = await supabase.auth.refreshSession();
+        if (refreshed.error || !refreshed.data.session?.access_token) {
+          throw new Error("Your session expired. Please sign in again.");
+        }
+        sessionData = refreshed.data;
+      }
+      const accessToken = sessionData!.session!.access_token;
+
       const { data: res, error: fnErr } = await supabase.functions.invoke("verify-kyc", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: {
           document_type: docType,
           full_name: fullName.trim(),

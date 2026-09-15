@@ -340,7 +340,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
 
     const path = `${userId}/liveness/${stageId}_${Date.now()}.jpg`;
     const { error } = await supabase.storage
-      .from("account-verification-documents")
+      .from("kyc-documents")
       .upload(path, blob, { contentType: "image/jpeg", upsert: false });
     if (error) throw error;
     return path;
