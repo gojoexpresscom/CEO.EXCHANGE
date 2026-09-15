@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../../lib/supabase";
-import { s, GOLD, GOLD_LIGHT, BORDER } from "./settingsStyles";
+import { GOLD, GOLD_LIGHT, BORDER } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
 
 type Props = {
@@ -202,87 +203,177 @@ export default function SupportChat({
     }
   };
 
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [text]);
+
   const shortId = ticketId ? ticketId.replace(/-/g, "").slice(0, 8).toUpperCase() : "—";
 
-  return (
+  const ui = (
     <div
+      role="dialog"
+      aria-label="Live support chat"
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 95,
+        zIndex: 9999,
         background: "#050505",
         display: "flex",
         flexDirection: "column",
+        fontFamily: "inherit",
       }}
     >
-      {/* Force visible text in inputs (fixes iOS/Android autofill / dark-mode fill) */}
       <style>{`
-        .ceo-chat-input, .ceo-chat-input::placeholder {
+        .ceo-sc-input {
           color: #ffffff !important;
           -webkit-text-fill-color: #ffffff !important;
           caret-color: ${GOLD};
         }
-        .ceo-chat-input::placeholder {
-          color: #777 !important;
-          -webkit-text-fill-color: #777 !important;
+        .ceo-sc-input::placeholder {
+          color: #6b6b6b !important;
+          -webkit-text-fill-color: #6b6b6b !important;
           opacity: 1;
         }
-        .ceo-chat-bubble-mine { color: #fff !important; }
-        .ceo-chat-bubble-other { color: #f0f0f0 !important; }
+        .ceo-sc-send:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .ceo-sc-send:not(:disabled):active {
+          transform: scale(0.96);
+        }
       `}</style>
 
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "12px 14px",
+          gap: 10,
+          padding: "12px 16px",
           paddingTop: "calc(12px + env(safe-area-inset-top))",
-          borderBottom: "1px solid #1a1a1a",
+          borderBottom: "1px solid #141414",
           flexShrink: 0,
-          background: "#0a0a0a",
+          background: "#050505",
         }}
       >
         <button
           type="button"
-          style={{ ...s.headerBtn, color: GOLD }}
           onClick={onClose}
           aria-label="Back"
+          style={{
+            width: 40,
+            height: 40,
+            border: 0,
+            borderRadius: 12,
+            background: "transparent",
+            color: "#f5f5f5",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
         >
           <SIcon name="back" size={22} />
         </button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>CEO Exchange Support</div>
-          <div style={{ color: "#888", fontSize: 11 }}>
-            {closed ? "Chat ended" : "Live Support"} · Ticket #{shortId}
+
+        <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+          <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, letterSpacing: 0.2 }}>
+            CEO Support
+          </div>
+          <div
+            style={{
+              color: closed ? "#888" : GOLD_LIGHT,
+              fontSize: 11,
+              fontWeight: 600,
+              marginTop: 2,
+            }}
+          >
+            {closed ? "Chat ended" : "Agent online"}
+            {!closed && ticketId ? ` · #${shortId}` : ""}
           </div>
         </div>
-        <span
+
+        <div
           style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: closed ? "#666" : "#39d98a",
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            border: `1px solid ${BORDER}`,
+            background: "#0c0c0c",
+            display: "grid",
+            placeItems: "center",
             flexShrink: 0,
           }}
-        />
+          aria-hidden
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: closed ? "#555" : "#39d98a",
+              boxShadow: closed ? "none" : "0 0 8px rgba(57,217,138,0.6)",
+            }}
+          />
+        </div>
       </div>
 
       <div
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "14px 14px 8px",
+          padding: "16px 16px 12px",
           WebkitOverflowScrolling: "touch",
           background: "#050505",
         }}
       >
-        {loading && <p style={{ color: "#777", textAlign: "center" }}>Opening chat…</p>}
-        {error && <div style={s.errorBox}>{error}</div>}
+        {loading && (
+          <p style={{ color: "#666", textAlign: "center", marginTop: 40, fontSize: 14 }}>
+            Connecting…
+          </p>
+        )}
+
+        {error && (
+          <div
+            style={{
+              border: "1px solid #4c2025",
+              background: "#1d0c0e",
+              color: "#ff9aa3",
+              borderRadius: 12,
+              padding: 12,
+              fontSize: 13,
+              marginBottom: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
 
         {!loading && messages.length === 0 && !closed && (
-          <div style={{ ...s.infoBox, textAlign: "center" as const }}>
-            Waiting for an agent… You can send a message anytime.
+          <div style={{ textAlign: "center", marginTop: 48, padding: "0 24px" }}>
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: "50%",
+                margin: "0 auto 14px",
+                background: "linear-gradient(135deg,#1a1508,#0d0d0d)",
+                border: `1.5px solid ${BORDER}`,
+                display: "grid",
+                placeItems: "center",
+                color: GOLD,
+              }}
+            >
+              <SIcon name="headset" size={24} />
+            </div>
+            <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 6 }}>
+              How can we help?
+            </div>
+            <div style={{ color: "#777", fontSize: 13, lineHeight: 1.5 }}>
+              An agent will join shortly. Send a message anytime.
+            </div>
           </div>
         )}
 
@@ -294,27 +385,38 @@ export default function SupportChat({
               style={{
                 display: "flex",
                 justifyContent: mine ? "flex-end" : "flex-start",
-                marginBottom: 10,
+                marginBottom: 12,
               }}
             >
               <div
-                className={mine ? "ceo-chat-bubble-mine" : "ceo-chat-bubble-other"}
                 style={{
-                  maxWidth: "82%",
-                  padding: "10px 12px",
-                  borderRadius: 14,
-                  background: mine ? "#1a1508" : "#161616",
-                  border: mine ? `1px solid ${GOLD}` : "1px solid #2a2a2a",
+                  maxWidth: "78%",
+                  padding: "11px 14px",
+                  borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                  background: mine ? "linear-gradient(135deg,#2a2110,#1a1508)" : "#141414",
+                  border: mine ? `1px solid ${BORDER}` : "1px solid #222",
                   color: "#fff",
-                  fontSize: 14,
+                  fontSize: 15,
                   lineHeight: 1.45,
-                  whiteSpace: "pre-wrap" as const,
-                  wordBreak: "break-word" as const,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
                 }}
               >
                 {m.message}
-                <div style={{ color: "#888", fontSize: 10, marginTop: 6 }}>
-                  {m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}
+                <div
+                  style={{
+                    color: "#777",
+                    fontSize: 10,
+                    marginTop: 6,
+                    textAlign: mine ? "right" : "left",
+                  }}
+                >
+                  {m.created_at
+                    ? new Date(m.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : ""}
                 </div>
               </div>
             </div>
@@ -324,11 +426,30 @@ export default function SupportChat({
       </div>
 
       {closed ? (
-        <div style={{ padding: 14, paddingBottom: "calc(14px + env(safe-area-inset-bottom))", background: "#0a0a0a" }}>
-          <div style={s.infoBox}>This conversation has ended.</div>
+        <div
+          style={{
+            padding: "14px 16px",
+            paddingBottom: "calc(16px + env(safe-area-inset-bottom))",
+            borderTop: "1px solid #141414",
+            background: "#050505",
+          }}
+        >
+          <div
+            style={{
+              border: `1px solid ${BORDER}`,
+              background: "#121108",
+              color: "#c5b98d",
+              borderRadius: 12,
+              padding: 12,
+              fontSize: 13,
+              marginBottom: 10,
+              textAlign: "center",
+            }}
+          >
+            This conversation has ended.
+          </div>
           <button
             type="button"
-            style={s.primaryBtn}
             onClick={() => {
               setTicketId(null);
               setTicket(null);
@@ -362,6 +483,17 @@ export default function SupportChat({
                 })();
               }, 50);
             }}
+            style={{
+              width: "100%",
+              minHeight: 48,
+              border: 0,
+              borderRadius: 12,
+              background: `linear-gradient(135deg,${GOLD},#d98e00)`,
+              color: "#090909",
+              fontWeight: 800,
+              fontSize: 15,
+              cursor: "pointer",
+            }}
           >
             Start a new chat
           </button>
@@ -370,60 +502,74 @@ export default function SupportChat({
         <div
           style={{
             display: "flex",
-            gap: 8,
+            gap: 10,
             alignItems: "flex-end",
-            padding: "10px 12px",
-            paddingBottom: "calc(12px + env(safe-area-inset-bottom))",
-            borderTop: "1px solid #1a1a1a",
-            background: "#0a0a0a",
+            padding: "12px 14px",
+            paddingBottom: "calc(14px + env(safe-area-inset-bottom))",
+            background: "#050505",
+            borderTop: "1px solid #141414",
           }}
         >
-          <textarea
-            ref={inputRef}
-            className="ceo-chat-input"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="Write your message…"
-            rows={1}
-            autoComplete="off"
-            autoCorrect="on"
+          <div
             style={{
               flex: 1,
-              minHeight: 44,
-              maxHeight: 140,
-              resize: "none",
-              border: `1px solid ${BORDER}`,
-              borderRadius: 12,
+              display: "flex",
+              alignItems: "flex-end",
               background: "#101010",
-              color: "#ffffff",
-              WebkitTextFillColor: "#ffffff",
-              caretColor: GOLD,
-              padding: "12px 14px",
-              fontSize: 16,
-              lineHeight: 1.4,
-              outline: 0,
-              overflowY: "auto",
+              border: "1px solid #222",
+              borderRadius: 24,
+              padding: "4px 4px 4px 16px",
+              minHeight: 48,
             }}
-          />
+          >
+            <textarea
+              ref={inputRef}
+              className="ceo-sc-input"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Drop your question here"
+              rows={1}
+              autoComplete="off"
+              style={{
+                flex: 1,
+                border: 0,
+                outline: 0,
+                background: "transparent",
+                color: "#ffffff",
+                WebkitTextFillColor: "#ffffff",
+                caretColor: GOLD,
+                fontSize: 16,
+                lineHeight: 1.4,
+                padding: "10px 8px 10px 0",
+                resize: "none",
+                maxHeight: 120,
+                overflowY: "auto",
+              }}
+            />
+          </div>
           <button
             type="button"
+            className="ceo-sc-send"
             disabled={sending || !text.trim()}
             onClick={() => void send()}
+            aria-label="Send"
             style={{
               width: 48,
-              height: 44,
+              height: 48,
               border: 0,
-              borderRadius: 12,
+              borderRadius: "50%",
               background: `linear-gradient(135deg,${GOLD},#d98e00)`,
               color: "#090909",
               fontWeight: 800,
-              cursor: sending || !text.trim() ? "not-allowed" : "pointer",
-              flexShrink: 0,
-              opacity: sending || !text.trim() ? 0.45 : 1,
               fontSize: 18,
+              cursor: "pointer",
+              flexShrink: 0,
+              display: "grid",
+              placeItems: "center",
+              boxShadow: "0 4px 14px rgba(245,181,27,0.25)",
+              transition: "transform 0.12s ease",
             }}
-            aria-label="Send"
           >
             {sending ? "…" : "➤"}
           </button>
@@ -431,4 +577,9 @@ export default function SupportChat({
       )}
     </div>
   );
+
+  if (typeof document !== "undefined") {
+    return createPortal(ui, document.body);
+  }
+  return ui;
 }

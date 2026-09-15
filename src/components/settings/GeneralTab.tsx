@@ -349,22 +349,41 @@ export default function GeneralTab({ data, onReload, notify, onLogout }: Props) 
   if (sub === "support") {
     return (
       <div style={s.section}>
-        <div style={s.infoBox}>
-          Live chat tickets auto-close after 15 minutes of inactivity (server cron). Keep this screen open while chatting.
-        </div>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 14 }} onClick={() => setSub(null)}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 6px", color: "#fff", fontSize: 18, fontWeight: 700 }}>Live Support</h3>
+        <p style={{ margin: "0 0 16px", color: "#777", fontSize: 13, lineHeight: 1.45 }}>
+          Connect with an agent. Tickets auto-close after 15 minutes of inactivity.
+        </p>
         <label style={s.field}>
           Full name
-          <input style={s.input} value={supportName} onChange={(e) => setSupportName(e.target.value)} />
+          <input
+            style={s.input}
+            value={supportName}
+            onChange={(e) => setSupportName(e.target.value)}
+            placeholder="Your name"
+            autoComplete="name"
+          />
         </label>
         <label style={s.field}>
           Email
-          <input style={s.input} type="email" value={supportEmail} onChange={(e) => setSupportEmail(e.target.value)} />
+          <input
+            style={s.input}
+            type="email"
+            value={supportEmail}
+            onChange={(e) => setSupportEmail(e.target.value)}
+            placeholder="you@email.com"
+            autoComplete="email"
+          />
         </label>
-        <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void openSupportTicket()}>
-          {busy ? "Opening…" : "Start live chat"}
-        </button>
-        <button type="button" style={s.secondaryBtn} onClick={() => setSub(null)}>
-          Cancel
+        <button
+          type="button"
+          style={{ ...s.primaryBtn, opacity: !supportName.trim() || !supportEmail.trim() ? 0.5 : 1 }}
+          disabled={busy || !supportName.trim() || !supportEmail.trim()}
+          onClick={() => void openSupportTicket()}
+        >
+          {busy ? "Opening…" : "Continue to chat"}
         </button>
       </div>
     );

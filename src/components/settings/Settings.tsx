@@ -35,7 +35,7 @@ type ProfileRow = {
   email_security: boolean | null;
   email_trade: boolean | null;
   email_marketing: boolean | null;
-  anti_phishing_code: string | null;
+  anti_phishing_code,fund_password_set: string | null;
 };
 
 type TwoFaRow = {
@@ -123,7 +123,7 @@ export default function Settings({ initialTab = "My Info", onClose, onLogout }: 
       supabase
         .from("profiles")
         .select(
-          "id,uid,nickname,email,phone,phone_verified,country_code,profile_picture_url,kyc_status,preferred_language,preferred_currency,withdrawal_lock_until,security_level,warning_count,role,vip_level,referral_code,color_theme,time_zone,deposit_to,app_lock_enabled,notification_push,email_security,email_trade,email_marketing,anti_phishing_code"
+          "id,uid,nickname,email,phone,phone_verified,country_code,profile_picture_url,kyc_status,preferred_language,preferred_currency,withdrawal_lock_until,security_level,warning_count,role,vip_level,referral_code,color_theme,time_zone,deposit_to,app_lock_enabled,notification_push,email_security,email_trade,email_marketing,anti_phishing_code,fund_password_set"
         )
         .eq("id", uid)
         .maybeSingle(),

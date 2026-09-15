@@ -95,6 +95,18 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
   const [whitelistAddr, setWhitelistAddr] = useState("");
   const [infoKey, setInfoKey] = useState<string | null>(null);
   const [appLock, setAppLock] = useState(Boolean((profile as any)?.app_lock_enabled));
+  // Passkeys
+  const [passkeys, setPasskeys] = useState<any[]>([]);
+  const [pkLoading, setPkLoading] = useState(false);
+  // Anti-phishing
+  const [apCode, setApCode] = useState("");
+  // Fund password
+  const [fpNew, setFpNew] = useState("");
+  const [fpConfirm, setFpConfirm] = useState("");
+  const [fpVerify, setFpVerify] = useState("");
+  // Devices
+  const [devices, setDevices] = useState<any[]>([]);
+  const [devLoading, setDevLoading] = useState(false);
 
   const lockUntil = profile?.withdrawal_lock_until
     ? new Date(profile.withdrawal_lock_until)
@@ -699,34 +711,300 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
   }
 
 
-  if (infoKey) {
+
+  // ── Passkeys ──
+  const loadPasskeys = async () => {
+    setPkLoading(true);
+    setInfoKey("passkeys");
+    try {
+      const { data, error } = await supabase.rpc("list_my_passkeys");
+      if (error) throw error;
+      setPasskeys(Array.isArray(data) ? data : data ? [data] : []);
+    } catch (e: any) {
+      setPasskeys([]);
+      setError(e?.message || "Could not load passkeys.");
+    } finally {
+      setPkLoading(false);
+    }
+  };
+
+  const registerPasskey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const { data: optRes, error: optErr } = await supabase.functions.invoke("passkey-registration-options", { body: {} });
+      if (optErr) throw optErr;
+      if (optRes?.error) throw new Error(String(optRes.error));
+      const publicKey = optRes?.publicKey || optRes?.options || optRes;
+      if (!publicKey) throw new Error("No registration options returned.");
+
+      // Convert challenge / user.id / excludeCredentials from base64url if needed by browser
+      const cred = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential | null;
+      if (!cred) throw new Error("Passkey creation cancelled.");
+      const att = cred.response as AuthenticatorAttestationResponse;
+      const { data: verRes, error: verErr } = await supabase.functions.invoke("passkey-registration-verify", {
+        body: {
+          id: cred.id,
+          rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))),
+          type: cred.type,
+          response: {
+            clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(att.clientDataJSON))),
+            attestationObject: btoa(String.fromCharCode(...new Uint8Array(att.attestationObject))),
+          },
+          device_name: navigator.userAgent.slice(0, 80),
+        },
+      });
+      if (verErr) throw verErr;
+      if (verRes?.error) throw new Error(String(verRes.error));
+      notify("Passkey registered.");
+      await loadPasskeys();
+    } catch (e: any) {
+      setError(e?.message || "Could not register passkey.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revokePasskey = async (id: string) => {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("revoke_passkey", { id });
+      if (error) throw error;
+      notify("Passkey revoked.");
+      await loadPasskeys();
+    } catch (e: any) {
+      notify(e?.message || "Could not revoke passkey.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Anti-phishing ──
+  const saveAntiPhish = async () => {
+    const code = apCode.trim();
+    if (code.length < 4 || code.length > 20) {
+      setError("Code must be 4–20 characters.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error } = await supabase.rpc("set_anti_phishing_code", { p_code: code });
+      if (error) throw error;
+      notify("Anti-phishing code saved.");
+      setApCode("");
+      setInfoKey(null);
+      await onReload();
+    } catch (e: any) {
+      setError(e?.message || "Could not save code.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Fund password ──
+  const saveFundPassword = async () => {
+    if (fpNew.length < 6) {
+      setError("Fund password must be at least 6 characters.");
+      return;
+    }
+    if (fpNew !== fpConfirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error } = await supabase.rpc("set_fund_password", { p_new_password: fpNew });
+      if (error) throw error;
+      notify("Fund password set.");
+      setFpNew("");
+      setFpConfirm("");
+      setInfoKey(null);
+      await onReload();
+    } catch (e: any) {
+      setError(e?.message || "Could not set fund password.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Devices ──
+  const loadDevices = async () => {
+    setDevLoading(true);
+    setInfoKey("devices");
+    try {
+      const { data, error } = await supabase.rpc("list_my_devices");
+      if (error) throw error;
+      setDevices(Array.isArray(data) ? data : data ? [data] : []);
+    } catch (e: any) {
+      // Fallback direct table
+      try {
+        const { data } = await supabase.from("user_devices").select("*").eq("user_id", userId).order("last_seen_at", { ascending: false });
+        setDevices(data ?? []);
+      } catch {
+        setDevices([]);
+        setError(e?.message || "Could not load devices.");
+      }
+    } finally {
+      setDevLoading(false);
+    }
+  };
+
+  const revokeDevice = async (deviceId: string) => {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("revoke_device", { p_device_id: deviceId });
+      if (error) throw error;
+      notify("Device revoked.");
+      await loadDevices();
+    } catch (e: any) {
+      notify(e?.message || "Could not revoke device.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (infoKey === "passkeys") {
+    return (
+      <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
+        <style>{MOTION}</style>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => { setInfoKey(null); setError(""); }}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17 }}>Passkeys</h3>
+        <div style={s.infoBox}>
+          Passkeys are step-up authentication only — not passwordless primary login. Use a device authenticator (Face ID, fingerprint, security key).
+        </div>
+        {error && <div style={s.errorBox}>{error}</div>}
+        {pkLoading ? (
+          <p style={{ color: "#777" }}>Loading…</p>
+        ) : (
+          <>
+            {passkeys.length === 0 && <div style={s.infoBox}>No passkeys registered yet.</div>}
+            {passkeys.map((pk: any) => (
+              <div key={pk.id || pk.credential_id} style={{ ...s.row, marginBottom: 6 }}>
+                <span style={s.rowLabel}>{pk.device_name || "Passkey"}</span>
+                <button
+                  type="button"
+                  style={{ border: `1px solid ${BORDER}`, borderRadius: 99, background: "transparent", color: GOLD_LIGHT, fontWeight: 700, fontSize: 12, padding: "6px 12px", cursor: "pointer" }}
+                  disabled={busy}
+                  onClick={() => void revokePasskey(pk.id)}
+                >
+                  Revoke
+                </button>
+              </div>
+            ))}
+            <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void registerPasskey()}>
+              {busy ? "Working…" : "Register passkey"}
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (infoKey === "antiphish") {
+    return (
+      <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
+        <style>{MOTION}</style>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => { setInfoKey(null); setError(""); }}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17 }}>Anti-phishing Code</h3>
+        <div style={s.infoBox}>
+          This code appears in official emails so you can spot phishing. Stored via set_anti_phishing_code (security_settings). 4–20 characters.
+        </div>
+        <label style={s.field}>
+          New code
+          <input style={s.input} value={apCode} onChange={(e) => setApCode(e.target.value)} maxLength={20} placeholder="4–20 characters" autoComplete="off" />
+        </label>
+        {error && <div style={s.errorBox}>{error}</div>}
+        <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void saveAntiPhish()}>
+          {busy ? "Saving…" : "Save code"}
+        </button>
+      </div>
+    );
+  }
+
+  if (infoKey === "fundpass") {
+    const isSet = Boolean((profile as any)?.fund_password_set);
+    return (
+      <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
+        <style>{MOTION}</style>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => { setInfoKey(null); setError(""); }}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17 }}>Fund Password</h3>
+        <div style={s.infoBox}>
+          {isSet ? "A fund password is already set. Enter a new one to replace it." : "Set a fund password to protect sensitive fund actions. Min 6 characters. Never shared with the client after hashing."}
+        </div>
+        <label style={s.field}>
+          New fund password
+          <input style={s.input} type="password" value={fpNew} onChange={(e) => setFpNew(e.target.value)} autoComplete="new-password" />
+        </label>
+        <label style={s.field}>
+          Confirm
+          <input style={s.input} type="password" value={fpConfirm} onChange={(e) => setFpConfirm(e.target.value)} autoComplete="new-password" />
+        </label>
+        {error && <div style={s.errorBox}>{error}</div>}
+        <button type="button" style={s.primaryBtn} disabled={busy} onClick={() => void saveFundPassword()}>
+          {busy ? "Saving…" : isSet ? "Update fund password" : "Set fund password"}
+        </button>
+      </div>
+    );
+  }
+
+  if (infoKey === "devices") {
+    return (
+      <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
+        <style>{MOTION}</style>
+        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => { setInfoKey(null); setError(""); }}>
+          ← Back
+        </button>
+        <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17 }}>Trusted Devices</h3>
+        {error && <div style={s.errorBox}>{error}</div>}
+        {devLoading ? (
+          <p style={{ color: "#777" }}>Loading…</p>
+        ) : (
+          <>
+            {devices.length === 0 && <div style={s.infoBox}>No devices recorded yet.</div>}
+            {devices.map((d: any) => (
+              <div key={d.id || d.device_id} style={{ ...s.row, marginBottom: 6, flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <span style={s.rowLabel}>{d.device_name || d.name || d.user_agent?.slice(0, 40) || "Device"}</span>
+                  <button
+                    type="button"
+                    style={{ border: `1px solid ${BORDER}`, borderRadius: 99, background: "transparent", color: GOLD_LIGHT, fontWeight: 700, fontSize: 12, padding: "6px 12px", cursor: "pointer" }}
+                    disabled={busy}
+                    onClick={() => void revokeDevice(d.id || d.device_id)}
+                  >
+                    Revoke
+                  </button>
+                </div>
+                <span style={{ color: "#666", fontSize: 11 }}>
+                  {[d.platform, d.last_seen_at ? `Last seen ${new Date(d.last_seen_at).toLocaleString()}` : null].filter(Boolean).join(" · ")}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (infoKey === "securetx" || infoKey === "account") {
     const copy: Record<string, { title: string; body: string }> = {
-      passkeys: {
-        title: "Passkeys",
-        body: "Passkeys are available as step-up authentication on this platform. They are not used as passwordless primary login. Wire the existing WebAuthn registration/assertion endpoints to enable enrollment from this screen.",
-      },
-      antiphish: {
-        title: "Anti-phishing Code",
-        body: "Set a personal code that appears in official emails so you can spot phishing. Use the set_anti_phishing_code() RPC when you are ready to change it from this screen.",
-      },
-      fundpass: {
-        title: "Fund Password",
-        body: "Fund password protects sensitive fund actions. Use the existing secure fund-password backend flow. Do not store this password in the frontend.",
-      },
       securetx: {
         title: "Secure Transaction Approval",
         body: "Backend enforcement is not active yet. Enabling a toggle here would not protect transactions. This remains unavailable until the server enforces it.",
-      },
-      devices: {
-        title: "Trusted Devices",
-        body: "Trusted devices and session history are stored in the backend (user_devices / user_login_history). Connect those tables here to list and revoke devices.",
       },
       account: {
         title: "Account Settings",
         body: "Account closure and deactivation are not available as self-service actions. Contact support if you need access restricted.",
       },
     };
-    const item = copy[infoKey] || { title: "Info", body: "" };
+    const item = copy[infoKey];
     return (
       <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
         <style>{MOTION}</style>
@@ -779,7 +1057,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
         </button>
       </div>
 
-      <button type="button" style={s.row} onClick={() => setInfoKey("passkeys")}>
+      <button type="button" style={s.row} onClick={() => void loadPasskeys()}>
         <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
         <span style={s.rowLabel}>Passkeys</span>
         <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Step-up only</span>
@@ -789,7 +1067,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
       <button type="button" style={s.row} onClick={() => setInfoKey("antiphish")}>
         <span style={s.rowIcon}><SIcon name="shield" size={16} /></span>
         <span style={s.rowLabel}>Anti-phishing Code</span>
-        <span style={s.rowValue}>{(profile as any)?.anti_phishing_code || "Not set"}</span>
+        <span style={s.rowValue}>"Set / update"</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
@@ -799,7 +1077,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
       <button type="button" style={s.row} onClick={() => setInfoKey("fundpass")}>
         <span style={s.rowIcon}><SIcon name="lock" size={16} /></span>
         <span style={s.rowLabel}>Fund Password</span>
-        <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Info</span>
+        <span style={s.rowValue}>{(profile as any)?.fund_password_set ? "Set" : "Not set"}</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
@@ -828,7 +1106,7 @@ export default function SecurityTab({ data, onReload, notify, maskEmail, maskPho
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
       </button>
 
-      <button type="button" style={s.row} onClick={() => setInfoKey("devices")}>
+      <button type="button" style={s.row} onClick={() => void loadDevices()}>
         <span style={s.rowIcon}><SIcon name="phone" size={16} /></span>
         <span style={s.rowLabel}>Trusted Devices</span>
         <span style={{ ...s.rowValue, color: GOLD_LIGHT }}>Info</span>

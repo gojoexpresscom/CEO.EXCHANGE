@@ -173,25 +173,15 @@ export default function PreferenceTab({ data, onReload, notify }: Props) {
     setBusy(true);
     setError("");
     try {
-      // Verify OTP first
-      const { data: vRes, error: vErr } = await supabase.functions.invoke("verify-otp", {
-        body: { code: otpCode, purpose: "add_withdrawal_address" },
-      });
-      if (vErr) throw vErr;
-      if (vRes?.error || !vRes?.success) throw new Error(vRes?.error || "Invalid or expired code.");
-
-      // Prefer RPC if available
+      // RPC consumes OTP with purpose add_withdrawal_address (Claude audit)
       const { error: rpcErr } = await supabase.rpc("add_withdrawal_address", {
+        p_asset: "USDT",
+        p_network: "TRC20",
         p_address: newAddr.trim(),
+        p_label: null,
+        p_otp_code: otpCode,
       });
-      if (rpcErr) {
-        // Fallback insert (RLS should still protect)
-        const { error: insErr } = await supabase.from("withdrawal_addresses").insert({
-          user_id: userId,
-          address: newAddr.trim(),
-        });
-        if (insErr) throw insErr;
-      }
+      if (rpcErr) throw rpcErr;
       notify("Withdrawal address added.");
       setNewAddr("");
       setOtpCode("");
