@@ -52,6 +52,8 @@ type Props = {
   onOpenSettings: (tab?: string) => void;
   onOpenSupport: () => void;
   onOpenNotifications: () => void;
+  /** Optional entry into the promotional visual experience */
+  onOpenPromo?: () => void;
 };
 
 export default function UserCenter({
@@ -61,6 +63,7 @@ export default function UserCenter({
   onOpenSettings,
   onOpenSupport,
   onOpenNotifications,
+  onOpenPromo,
 }: Props) {
   const displayName = profile?.nickname || profile?.email?.split("@")[0] || "User";
   const email = profile?.email || "—";
@@ -97,6 +100,16 @@ export default function UserCenter({
       icon: "🎧",
       action: onOpenSupport,
     },
+    ...(onOpenPromo
+      ? [
+          {
+            label: "Experience",
+            sub: "Premium visual introduction",
+            icon: "◈",
+            action: onOpenPromo,
+          },
+        ]
+      : []),
     {
       label: "Sign out",
       icon: "→",

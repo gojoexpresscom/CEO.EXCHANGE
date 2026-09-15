@@ -212,7 +212,7 @@ type Comment = {
   profile?: Pick<Profile, "nickname" | "profile_picture_url">;
 };
 
-type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | "messages" | "profile" | null;
+type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | "messages" | "profile" | "promo" | null;
 type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
@@ -365,9 +365,13 @@ function initials(name: string) {
 export default function Home({
   onLogout,
   onTrade,
+  onP2P,
+  onExperience,
 }: {
   onLogout?: () => void;
   onTrade: (symbol: string) => void;
+  onP2P?: () => void;
+  onExperience?: () => void;
 }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -1320,8 +1324,10 @@ export default function Home({
           onOpenSettings={(tab) => { closeModal(); setSettingsTab((tab as SettingsTab) || "My Info"); setSettingsOpen(true); }}
           onOpenSupport={() => { closeModal(); setModal("support"); }}
           onOpenNotifications={() => { closeModal(); setModal("notifications"); }}
+          onOpenPromo={() => { closeModal(); onExperience?.(); }}
         />
       )}
+
       {modal === "profile" && userId && (
         <SocialProfile profileUserId={userId} currentUserId={userId} onClose={closeModal} notify={notify} />
       )}
