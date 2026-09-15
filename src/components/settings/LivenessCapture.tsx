@@ -132,12 +132,16 @@ function estimatePose(landmarks: { x: number; y: number; z?: number }[]): PoseSa
 function stageSatisfied(stageId: StageId, baseline: PoseSample, current: PoseSample): boolean {
   const dy = current.yaw - baseline.yaw;
   const dp = current.pitch - baseline.pitch;
+  // Front-camera frames are NOT CSS-mirrored for MediaPipe (only the preview is).
+  // User turns RIGHT → nose shifts toward lower x in the raw frame → after our yaw flip
+  // that becomes negative delta. Match labels to the user's real movement.
   switch (stageId) {
     case "forward":
       return Math.abs(current.yaw) < NEUTRAL_YAW_MAX && Math.abs(current.pitch) < NEUTRAL_PITCH_MAX;
-    case "left":
-      return dy >= YAW_THRESHOLD;
     case "right":
+      // User's right (matches what they feel when instruction says "turn right")
+      return dy >= YAW_THRESHOLD;
+    case "left":
       return dy <= -YAW_THRESHOLD;
     case "up":
       return dp >= PITCH_THRESHOLD;

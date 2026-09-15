@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { s, GOLD, GOLD_LIGHT, BG, CARD, BORDER } from "./settingsStyles";
 import { SIcon } from "./SettingsIcons";
@@ -89,11 +89,61 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
   const frontRef = useRef<HTMLInputElement>(null);
   const backRef = useRef<HTMLInputElement>(null);
   const frontGalleryRef = useRef<HTMLInputElement>(null);
+
   const backGalleryRef = useRef<HTMLInputElement>(null);
+
+  // On rejected / retry: remove prior unverified uploads so storage stays clean
+  useEffect(() => {
+    const st = (currentStatus || "").toLowerCase();
+    if (st === "rejected" || st === "declined" || st === "failed" || !st) {
+      void cleanupOldKycFiles();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   const needsBack = docType !== "passport";
   const idLabel =
     docType === "passport" ? "Passport number" : docType === "national_id" ? "National ID number" : "License number";
+
+
+  /** Best-effort cleanup of prior KYC uploads (rejected / abandoned). */
+  const cleanupOldKycFiles = async () => {
+    try {
+      const bucket = "account-verification-documents";
+      const folders = ["front", "back", "liveness", "selfie", ""];
+      for (const folder of folders) {
+        const prefix = folder ? `${userId}/${folder}` : userId;
+        const { data: listed } = await supabase.storage.from(bucket).list(prefix, { limit: 100 });
+        if (!listed?.length) continue;
+        const paths = listed
+          .filter((f) => f.name && !f.name.endsWith("/"))
+          .map((f) => `${prefix}/${f.name}`);
+        if (paths.length) {
+          await supabase.storage.from(bucket).remove(paths);
+        }
+      }
+      // Also list top-level user folder for nested leftovers
+      const { data: top } = await supabase.storage.from(bucket).list(userId, { limit: 100 });
+      if (top?.length) {
+        for (const entry of top) {
+          if ((entry as any).id === null || entry.name) {
+            const sub = `${userId}/${entry.name}`;
+            const { data: nested } = await supabase.storage.from(bucket).list(sub, { limit: 100 });
+            if (nested?.length) {
+              const paths = nested.filter((f) => f.name).map((f) => `${sub}/${f.name}`);
+              if (paths.length) await supabase.storage.from(bucket).remove(paths);
+            } else if (entry.name && !(entry as any).metadata?.mimetype === undefined) {
+              // file at user root
+              await supabase.storage.from(bucket).remove([`${userId}/${entry.name}`]);
+            }
+          }
+        }
+      }
+    } catch {
+      // RLS may block deletes — non-fatal for the user flow
+    }
+  };
 
   const uploadPrivate = async (file: File, folder: string) => {
     const ext = file.name.split(".").pop() || "jpg";
@@ -173,6 +223,8 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
 
     setBusy(true);
     try {
+      // Clear prior rejected/unverified files before uploading a fresh set
+      await cleanupOldKycFiles();
       const frontPath = await uploadPrivate(frontFile, "front");
       const backPath = backFile ? await uploadPrivate(backFile, "back") : null;
 
@@ -198,8 +250,31 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
       setStep("done");
       notify("Identity verification submitted for review.");
     } catch (e: any) {
-      setError(e?.message || "Submission failed. Check files and try again.");
-      setStep("docs");
+      // Surface useful server reasons (FunctionsHttpError often nests the body)
+      let msg =
+        e?.context?.body?.reason ||
+        e?.context?.body?.error ||
+        e?.message ||
+        "Submission failed. Check files and try again.";
+      try {
+        if (typeof e?.context?.body === "string") {
+          const parsed = JSON.parse(e.context.body);
+          msg = parsed?.reason || parsed?.error || parsed?.message || msg;
+        }
+      } catch {
+        /* ignore */
+      }
+      if (/captures could not be validated/i.test(String(msg))) {
+        msg =
+          "Face verification captures could not be validated. Please retake the face movement steps and try again.";
+      }
+      setError(String(msg));
+      // Return to liveness if face evidence failed; otherwise docs
+      if (/liveness|face|capture/i.test(String(msg))) {
+        setStep("liveness");
+      } else {
+        setStep("docs");
+      }
     } finally {
       setBusy(false);
     }
