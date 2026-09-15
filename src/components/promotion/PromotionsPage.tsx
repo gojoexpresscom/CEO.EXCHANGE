@@ -8,8 +8,10 @@ import PromotionHero from "./PromotionHero";
 import PromotionFeature from "./PromotionFeature";
 import PromotionCTA from "./PromotionCTA";
 import PromotionCard from "./PromotionCard";
+import PromotionVideoHero from "./PromotionVideoHero";
 import {
   getPublishedPromoCards,
+  PROMOTIONS_HERO_VIDEO,
   type PromoCardItem,
   type PromoCategory,
 } from "./content";
@@ -174,6 +176,9 @@ export default function PromotionsPage({ onBack, onTrade, onP2P }: Props) {
           paddingBottom: "calc(32px + env(safe-area-inset-bottom))",
         }}
       >
+        {/* Cinematic launch video — real hero media, above the 3D hero */}
+        <PromotionVideoHero src={PROMOTIONS_HERO_VIDEO} />
+
         {/* HERO */}
         <PromotionHero
           scene="exchange"

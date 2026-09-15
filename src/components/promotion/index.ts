@@ -4,12 +4,14 @@ export { default as PromotionHero } from "./PromotionHero";
 export { default as PromotionFeature } from "./PromotionFeature";
 export { default as PromotionCTA } from "./PromotionCTA";
 export { default as PromotionCard } from "./PromotionCard";
+export { default as PromotionVideoHero } from "./PromotionVideoHero";
 export { default as ExchangePromo } from "./ExchangePromo";
 export { default as PromotionsPage } from "./PromotionsPage";
 export {
   PROMO_CARDS,
   getPublishedPromoCards,
   getAllPromoCards,
+  PROMOTIONS_HERO_VIDEO,
 } from "./content";
 export type { PromoCardItem, PromoCategory } from "./content";
 export * from "./tokens";

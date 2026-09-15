@@ -50,6 +50,12 @@ export type PromoCardItem = {
 };
 
 /**
+ * Hero cinematic video shown at the top of the Experience/Promotions page.
+ * Path is under public/, matches the committed file exactly.
+ */
+export const PROMOTIONS_HERO_VIDEO = "/promotions/videos/ceo-launch.mp4";
+
+/**
  * Published promotional cards.
  * Keep claims limited to real product capabilities.
  */
