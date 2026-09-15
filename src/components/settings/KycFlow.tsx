@@ -269,15 +269,12 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
       }
       if (/captures could not be validated/i.test(String(msg))) {
         msg =
-          "Face verification captures could not be validated. Please retake the face movement steps and try again.";
+          "Face verification captures could not be validated. Tap Continue to verification to retake the face steps.";
       }
       setError(String(msg));
-      // Return to liveness if face evidence failed; otherwise docs
-      if (/liveness|face|capture/i.test(String(msg))) {
-        setStep("liveness");
-      } else {
-        setStep("docs");
-      }
+      // Always return to docs so the user can retry without a blank liveness remount
+      setLivenessUrls([]);
+      setStep("docs");
     } finally {
       setBusy(false);
     }

@@ -179,6 +179,11 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
   const [modelState, setModelState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [faceFound, setFaceFound] = useState(false);
   const [flash, setFlash] = useState(false);
+  const [completedUrls, setCompletedUrls] = useState<string[] | null>(null);
+  const [completedEvidence, setCompletedEvidence] = useState<LivenessEvidence | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const finishOnceRef = useRef(false);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -485,19 +490,34 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                         cooldownUntilRef.current = performance.now() + COOLDOWN_MS;
 
                         if (pathsRef.current.length >= STAGES.length) {
-                          setPhase("done");
-                          setStatus("Face verification complete");
-                          setStatusKind("capture");
-                          stopCamera();
                           const evidence: LivenessEvidence = {
                             version: 1,
                             method: "mediapipe_face_landmarker_pose",
                             steps: evidenceRef.current,
                             completed_at: new Date().toISOString(),
                           };
-                          window.setTimeout(() => {
-                            onComplete(pathsRef.current, evidence);
-                          }, 600);
+                          const urls = [...pathsRef.current];
+                          setCompletedUrls(urls);
+                          setCompletedEvidence(evidence);
+                          setPhase("done");
+                          setStatus("Face verification complete");
+                          setStatusKind("capture");
+                          stopCamera();
+                          // Advance to KYC submit (parent). Retryable via Continue if it fails.
+                          if (!finishOnceRef.current) {
+                            finishOnceRef.current = true;
+                            setSubmitting(true);
+                            setSubmitError("");
+                            window.setTimeout(() => {
+                              try {
+                                onComplete(urls, evidence);
+                              } catch (err: any) {
+                                setSubmitError(err?.message || "Could not submit. Tap Continue to retry.");
+                                setSubmitting(false);
+                                finishOnceRef.current = false;
+                              }
+                            }, 400);
+                          }
                         } else {
                           const next = pathsRef.current.length;
                           stageIdxRef.current = next;
@@ -1093,16 +1113,60 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
                   : "Verify"}
           </button>
         ) : phase === "done" ? (
-          <div
-            style={{
-              textAlign: "center",
-              color: "#39d98a",
-              fontWeight: 700,
-              fontSize: 15,
-              padding: 12,
-            }}
-          >
-            Face verification complete
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {submitError && (
+              <div
+                style={{
+                  border: "1px solid #4c2025",
+                  background: "#1d0c0e",
+                  color: "#ff9aa3",
+                  borderRadius: 12,
+                  padding: 12,
+                  fontSize: 13,
+                  textAlign: "center",
+                }}
+              >
+                {submitError}
+              </div>
+            )}
+            <button
+              type="button"
+              disabled={submitting || !completedUrls || !completedEvidence}
+              onClick={() => {
+                if (!completedUrls || !completedEvidence) return;
+                setSubmitting(true);
+                setSubmitError("");
+                finishOnceRef.current = true;
+                try {
+                  onComplete(completedUrls, completedEvidence);
+                } catch (err: any) {
+                  setSubmitError(err?.message || "Could not submit. Tap Continue to retry.");
+                  setSubmitting(false);
+                  finishOnceRef.current = false;
+                }
+                // Parent submit is async — if still here after a few seconds, allow retry
+                window.setTimeout(() => {
+                  setSubmitting(false);
+                  finishOnceRef.current = false;
+                }, 12000);
+              }}
+              style={{
+                ...primaryBtnStyle,
+                opacity: submitting ? 0.7 : 1,
+              }}
+            >
+              {submitting ? "Submitting verification…" : "Continue"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                stopCamera();
+                onCancel();
+              }}
+              style={secondaryBtnStyle}
+            >
+              Back
+            </button>
           </div>
         ) : (
           <button
