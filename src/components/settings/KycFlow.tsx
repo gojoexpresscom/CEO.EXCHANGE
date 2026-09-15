@@ -107,41 +107,44 @@ export default function KycFlow({ userId, currentStatus, onClose, onSubmitted, n
     docType === "passport" ? "Passport number" : docType === "national_id" ? "National ID number" : "License number";
 
 
-  /** Best-effort cleanup of prior KYC uploads (rejected / abandoned). */
+  /**
+   * Best-effort cleanup of prior KYC uploads (rejected / abandoned).
+   * Matches storage policy: paths are {auth.uid()}/... so users can only delete their own prefix.
+   * Server-side purge_kyc_documents() also runs on admin reject.
+   */
   const cleanupOldKycFiles = async () => {
     try {
       const bucket = "account-verification-documents";
-      const folders = ["front", "back", "liveness", "selfie", ""];
-      for (const folder of folders) {
-        const prefix = folder ? `${userId}/${folder}` : userId;
-        const { data: listed } = await supabase.storage.from(bucket).list(prefix, { limit: 100 });
-        if (!listed?.length) continue;
-        const paths = listed
-          .filter((f) => f.name && !f.name.endsWith("/"))
-          .map((f) => `${prefix}/${f.name}`);
-        if (paths.length) {
-          await supabase.storage.from(bucket).remove(paths);
-        }
-      }
-      // Also list top-level user folder for nested leftovers
+      const toRemove: string[] = [];
+
+      // List folders under {uid}/
       const { data: top } = await supabase.storage.from(bucket).list(userId, { limit: 100 });
-      if (top?.length) {
-        for (const entry of top) {
-          if ((entry as any).id === null || entry.name) {
-            const sub = `${userId}/${entry.name}`;
-            const { data: nested } = await supabase.storage.from(bucket).list(sub, { limit: 100 });
-            if (nested?.length) {
-              const paths = nested.filter((f) => f.name).map((f) => `${sub}/${f.name}`);
-              if (paths.length) await supabase.storage.from(bucket).remove(paths);
-            } else if (entry.name && !(entry as any).metadata?.mimetype === undefined) {
-              // file at user root
-              await supabase.storage.from(bucket).remove([`${userId}/${entry.name}`]);
+      if (!top?.length) return;
+
+      for (const entry of top) {
+        if (!entry?.name) continue;
+        // Subfolder (front, back, liveness, selfie, …)
+        const sub = `${userId}/${entry.name}`;
+        const { data: nested } = await supabase.storage.from(bucket).list(sub, { limit: 100 });
+        if (nested?.length) {
+          for (const f of nested) {
+            if (f?.name && !f.name.endsWith("/")) {
+              toRemove.push(`${sub}/${f.name}`);
             }
           }
+        } else {
+          // File directly under {uid}/
+          toRemove.push(sub);
         }
       }
+
+      // Chunk deletes (storage API is happier with smaller batches)
+      for (let i = 0; i < toRemove.length; i += 50) {
+        const chunk = toRemove.slice(i, i + 50);
+        if (chunk.length) await supabase.storage.from(bucket).remove(chunk);
+      }
     } catch {
-      // RLS may block deletes — non-fatal for the user flow
+      // Non-fatal — admin reject trigger may still purge
     }
   };
 
