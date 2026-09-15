@@ -7,6 +7,7 @@ export type AdminSection =
   | "tickets"
   | "announcements"
   | "giveaways"
+  | "promotions"
   | "reports"
   | "settings"
   | "roles"
