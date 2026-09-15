@@ -4,12 +4,14 @@ import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
 import P2PMarketplace from "./components/p2p/P2PMarketplace";
 import AdminPortal from "./components/admin/AdminPortal";
+import { PromotionsPage } from "./components/promotion";
 import { supabase } from "./lib/supabase";
 
 type AppRoute =
   | { page: "home" }
   | { page: "trade"; symbol: string }
-  | { page: "p2p" };
+  | { page: "p2p" }
+  | { page: "experience" };
 
 function getRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -26,6 +28,12 @@ function getRoute(): AppRoute {
   if (path === "/p2p") {
     return {
       page: "p2p",
+    };
+  }
+
+  if (path === "/experience" || path === "/promotions") {
+    return {
+      page: "experience",
     };
   }
 
@@ -160,6 +168,19 @@ export default function App() {
 
     setRoute({
       page: "p2p",
+    });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "instant",
+    });
+  }
+
+  function openExperience() {
+    window.history.pushState({}, "", "/experience");
+
+    setRoute({
+      page: "experience",
     });
 
     window.scrollTo({
@@ -308,6 +329,16 @@ export default function App() {
     return <P2PMarketplace onBack={goHome} />;
   }
 
+  if (route.page === "experience") {
+    return (
+      <PromotionsPage
+        onBack={goHome}
+        onTrade={(symbol) => openTrade(symbol || "BTCUSDT")}
+        onP2P={openP2P}
+      />
+    );
+  }
+
   return (
     <Home
       onLogout={() => {
@@ -316,6 +347,7 @@ export default function App() {
       }}
       onTrade={openTrade}
       onP2P={openP2P}
+      onExperience={openExperience}
     />
   );
 }
