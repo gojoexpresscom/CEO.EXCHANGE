@@ -29,8 +29,8 @@ function kycLabel(status: string | null) {
   if (!status) return "Unverified";
   const v = status.toLowerCase();
   if (v === "approved" || v === "verified") return "Lv.1 Verified";
-  if (v === "pending" || v === "submitted") return "Under review";
-  if (v === "rejected") return "Rejected — resubmit";
+  if (v === "pending" || v === "submitted" || v === "in_review" || v === "reviewing") return "Under review";
+  if (v === "rejected" || v === "declined" || v === "failed") return "Rejected — resubmit";
   return "Unverified";
 }
 function kycIsVerified(status: string | null) {
@@ -39,13 +39,17 @@ function kycIsVerified(status: string | null) {
 }
 function kycIsPending(status: string | null) {
   const v = (status || "").toLowerCase();
-  return v === "pending" || v === "submitted";
+  return v === "pending" || v === "submitted" || v === "in_review" || v === "reviewing";
+}
+function kycIsRejected(status: string | null) {
+  const v = (status || "").toLowerCase();
+  return v === "rejected" || v === "declined" || v === "failed";
 }
 function kycColor(status: string | null) {
   const v = (status || "").toLowerCase();
   if (v === "approved" || v === "verified") return "#39d98a";
-  if (v === "pending" || v === "submitted") return GOLD;
-  if (v === "rejected") return "#ff6574";
+  if (v === "pending" || v === "submitted" || v === "in_review" || v === "reviewing") return GOLD;
+  if (v === "rejected" || v === "declined" || v === "failed") return "#ff6574";
   return "#888";
 }
 
@@ -56,6 +60,17 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
   const [nick, setNick] = useState(profile?.nickname || "");
   const [saving, setSaving] = useState(false);
   const [showKyc, setShowKyc] = useState(false);
+  // Community links (read-only from public.community_links)
+  const [communityLinks, setCommunityLinks] = useState<Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    url: string;
+    icon: string | null;
+    sort_order: number | null;
+  }>>([]);
+  const [communityLoading, setCommunityLoading] = useState(false);
+  const [communityError, setCommunityError] = useState("");
   const [linkView, setLinkView] = useState<"list" | "telegram" | "x" | "x-consent" | "x-redirect" | null>(null);
   const [tgCode, setTgCode] = useState("");
   const [tgExpires, setTgExpires] = useState<string | null>(null);
@@ -435,30 +450,266 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
     );
   }
 
-  // ── Community ──
+
+  const openCommunity = () => {
+    setSubView("community");
+    setCommunityLoading(true);
+    setCommunityError("");
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("community_links")
+          .select("id,title,description,url,icon,sort_order,created_at,is_active")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true });
+        if (error) throw error;
+        setCommunityLinks(
+          (data ?? []).map((row: any) => ({
+            id: String(row.id),
+            title: String(row.title ?? "Channel"),
+            description: row.description ?? null,
+            url: String(row.url ?? ""),
+            icon: row.icon ?? null,
+            sort_order: row.sort_order ?? 0,
+          }))
+        );
+      } catch (e: any) {
+        setCommunityLinks([]);
+        setCommunityError(e?.message || "Could not load community links. Please try again.");
+      } finally {
+        setCommunityLoading(false);
+      }
+    })();
+  };
+
+  const communityIconName = (icon: string | null, title: string) => {
+    const key = `${icon || ""} ${title}`.toLowerCase();
+    if (key.includes("telegram") || key.includes("tg")) return "headset";
+    if (key.includes("twitter") || key.includes("x.com") || key === "x") return "link";
+    if (key.includes("discord")) return "users";
+    if (key.includes("youtube") || key.includes("video")) return "globe";
+    if (key.includes("web") || key.includes("site")) return "globe";
+    return "community";
+  };
+
+  // ── Join Our Community (premium promotion) ──
   if (subView === "community") {
     return (
-      <div style={s.section}>
-        <button type="button" style={{ ...s.secondaryBtn, width: "auto", marginBottom: 12 }} onClick={() => setSubView(null)}>
+      <div style={{ ...s.section, animation: "secIn 0.28s ease-out both" }}>
+        <style>{`
+          @keyframes secIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes communityCardIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        `}</style>
+
+        <button
+          type="button"
+          style={{ ...s.secondaryBtn, width: "auto", marginBottom: 16 }}
+          onClick={() => setSubView(null)}
+        >
           ← Back
         </button>
-        <h3 style={{ margin: "0 0 12px", color: "#fff", fontSize: 17 }}>Community</h3>
-        <a
-          href="https://t.me/ceomarket_bot"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ ...s.row, textDecoration: "none", marginBottom: 8 }}
+
+        {/* Hero */}
+        <div
+          style={{
+            position: "relative",
+            borderRadius: 18,
+            padding: "22px 18px 20px",
+            marginBottom: 22,
+            background: "linear-gradient(145deg, #16120a 0%, #0a0a0a 55%, #050505 100%)",
+            border: `1px solid ${BORDER}`,
+            overflow: "hidden",
+          }}
         >
-          <span style={s.rowIcon}><SIcon name="headset" size={16} /></span>
-          <span style={s.rowLabel}>Telegram</span>
-          <span style={s.rowValue}>t.me/ceomarket_bot</span>
-        </a>
-        <div style={s.infoBox}>
-          Official community channels will appear here when configured. Affiliate community status is shown from your referral data when available.
+          <div
+            style={{
+              position: "absolute",
+              top: -40,
+              right: -30,
+              width: 140,
+              height: 140,
+              borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(245,181,27,0.18) 0%, transparent 70%)",
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 16,
+              marginBottom: 14,
+              display: "grid",
+              placeItems: "center",
+              background: "linear-gradient(135deg, rgba(245,181,27,0.22), rgba(245,181,27,0.06))",
+              border: `1px solid ${BORDER}`,
+              color: GOLD,
+            }}
+          >
+            <SIcon name="community" size={24} />
+          </div>
+          <div
+            style={{
+              color: GOLD_LIGHT,
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 1.4,
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}
+          >
+            CEO Exchange
+          </div>
+          <h2
+            style={{
+              margin: "0 0 8px",
+              color: "#fff",
+              fontSize: 22,
+              fontWeight: 800,
+              lineHeight: 1.2,
+              letterSpacing: -0.3,
+            }}
+          >
+            Join Our Community
+          </h2>
+          <p style={{ margin: 0, color: "#999", fontSize: 13.5, lineHeight: 1.5, maxWidth: 320 }}>
+            Connect with the CEO Exchange community. Official channels, updates, and support — in one place.
+          </p>
         </div>
+
+        <div
+          style={{
+            color: "#aaa",
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: 0.8,
+            textTransform: "uppercase",
+            marginBottom: 12,
+          }}
+        >
+          Official Channels
+        </div>
+
+        {communityLoading && (
+          <div style={{ ...s.infoBox, textAlign: "center" }}>Loading community…</div>
+        )}
+
+        {!communityLoading && communityError && (
+          <div style={s.errorBox}>
+            {communityError}
+            <button
+              type="button"
+              style={{ ...s.secondaryBtn, marginTop: 10 }}
+              onClick={() => openCommunity()}
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {!communityLoading && !communityError && communityLinks.length === 0 && (
+          <div
+            style={{
+              borderRadius: 16,
+              padding: "28px 18px",
+              textAlign: "center",
+              background: "#0c0c0c",
+              border: "1px dashed #2a2a2a",
+            }}
+          >
+            <div style={{ color: GOLD, marginBottom: 10, display: "grid", placeItems: "center" }}>
+              <SIcon name="community" size={28} />
+            </div>
+            <div style={{ color: "#fff", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>
+              Coming soon
+            </div>
+            <div style={{ color: "#777", fontSize: 13, lineHeight: 1.45 }}>
+              Official community channels are coming soon.
+            </div>
+          </div>
+        )}
+
+        {!communityLoading &&
+          !communityError &&
+          communityLinks.map((link, idx) => (
+            <a
+              key={link.id}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                padding: "14px 14px",
+                marginBottom: 10,
+                borderRadius: 16,
+                textDecoration: "none",
+                background: "linear-gradient(180deg, #121212 0%, #0c0c0c 100%)",
+                border: `1px solid ${BORDER}`,
+                animation: `communityCardIn 0.35s ease-out ${idx * 0.05}s both`,
+                cursor: "pointer",
+              }}
+            >
+              <span
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  background: "linear-gradient(135deg, rgba(245,181,27,0.18), rgba(245,181,27,0.05))",
+                  border: `1px solid ${BORDER}`,
+                  color: GOLD,
+                }}
+              >
+                <SIcon name={communityIconName(link.icon, link.title) as any} size={20} />
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    display: "block",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    marginBottom: link.description ? 3 : 0,
+                  }}
+                >
+                  {link.title}
+                </span>
+                {link.description && (
+                  <span
+                    style={{
+                      display: "block",
+                      color: "#888",
+                      fontSize: 12.5,
+                      lineHeight: 1.35,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {link.description}
+                  </span>
+                )}
+              </span>
+              <span style={{ color: GOLD_LIGHT, flexShrink: 0 }}>
+                <SIcon name="chevron" size={18} />
+              </span>
+            </a>
+          ))}
       </div>
     );
   }
+
 
   // ── Link Account screens ──
   if (linkView === "list") {
@@ -885,14 +1136,14 @@ export default function MyInfoTab({ data, onReload, notify, onLogout }: Props) {
           </button>
         </div>
       ) : (
-        <button type="button" style={s.row} onClick={() => setSubView("community")}>
+        <button type="button" style={s.row} onClick={() => openCommunity()}>
           <span style={s.rowIcon}><SIcon name="users" size={16} /></span>
           <span style={s.rowLabel}>Affiliate&apos;s community</span>
           <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
         </button>
       )}
 
-      <button type="button" style={s.row} onClick={() => setSubView("community")}>
+      <button type="button" style={s.row} onClick={() => openCommunity()}>
         <span style={s.rowIcon}><SIcon name="community" size={16} /></span>
         <span style={s.rowLabel}>Join Our Community</span>
         <span style={s.rowChevron}><SIcon name="chevron" size={16} /></span>
