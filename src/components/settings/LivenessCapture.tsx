@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import { supabase } from "../../lib/supabase";
-import { s, GOLD, GOLD_LIGHT } from "./settingsStyles";
+import { GOLD, GOLD_LIGHT, BORDER } from "./settingsStyles";
 
 type Props = {
   userId: string;
@@ -10,7 +10,6 @@ type Props = {
   notify: (msg: string) => void;
 };
 
-/** Meaningful directional evidence sent with KYC submission (no new DB columns required). */
 export type LivenessStepEvidence = {
   stage: string;
   yaw: number;
@@ -30,71 +29,83 @@ export type LivenessEvidence = {
   completed_at: string;
 };
 
-type StageId = "forward" | "left" | "right" | "up" | "down";
+type StageId = "forward" | "right" | "left" | "up" | "down";
 
 type Stage = {
   id: StageId;
   title: string;
-  hint: string;
+  short: string;
+  instruction: string;
   failHint: string;
+  arrow: string;
 };
 
+/** Sequence required by product: Straight → Right → Left → Up → Down */
 const STAGES: Stage[] = [
   {
     id: "forward",
-    title: "Look at the camera",
-    hint: "Center your face and look straight ahead",
-    failHint: "Look straight at the camera with your face centered",
-  },
-  {
-    id: "left",
-    title: "Turn slowly to the left",
-    hint: "Turn your head to the left",
-    failHint: "Please turn your head to the left",
+    title: "Look Straight",
+    short: "Straight",
+    instruction: "Look straight at the camera",
+    failHint: "Center your face and look straight ahead",
+    arrow: "●",
   },
   {
     id: "right",
-    title: "Turn slowly to the right",
-    hint: "Turn your head to the right",
-    failHint: "Please turn your head to the right",
+    title: "Turn Right",
+    short: "Right",
+    instruction: "Turn your head right",
+    failHint: "Please turn your head right →",
+    arrow: "→",
+  },
+  {
+    id: "left",
+    title: "Turn Left",
+    short: "Left",
+    instruction: "Turn your head left",
+    failHint: "Please turn your head left ←",
+    arrow: "←",
   },
   {
     id: "up",
-    title: "Look up slowly",
-    hint: "Tilt your chin upward",
-    failHint: "Please tilt your head upward",
+    title: "Look Up",
+    short: "Up",
+    instruction: "Look up",
+    failHint: "Please look up ↑",
+    arrow: "↑",
   },
   {
     id: "down",
-    title: "Look down slowly",
-    hint: "Tilt your chin downward",
-    failHint: "Please tilt your head downward",
+    title: "Look Down",
+    short: "Down",
+    instruction: "Look down",
+    failHint: "Please look down ↓",
+    arrow: "↓",
   },
 ];
 
-/** Radians — tuned for phone front-camera distance; adjustable. */
-const YAW_THRESHOLD = 0.22;
-const PITCH_THRESHOLD = 0.16;
-const NEUTRAL_YAW_MAX = 0.12;
-const NEUTRAL_PITCH_MAX = 0.12;
-const STABILITY_SAMPLES = 4;
-const SAMPLE_MS = 80;
-const MIN_FACE_SCORE = 0.5;
+// Tuned for front-camera phone distance; slightly forgiving for real users
+const YAW_THRESHOLD = 0.18;
+const PITCH_THRESHOLD = 0.14;
+const NEUTRAL_YAW_MAX = 0.14;
+const NEUTRAL_PITCH_MAX = 0.14;
+const STABILITY_SAMPLES = 3;
+const COOLDOWN_MS = 700;
+const SAMPLE_MS = 70;
+const MIN_FACE_SCORE = 0.45;
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const LANDMARKER_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
-/**
- * Head-pose from Face Landmarker 478-point mesh.
- * Yaw: horizontal offset of nose tip relative to cheek midpoints (mirrored preview aware).
- * Pitch: vertical position of nose vs eye / mouth landmarks.
- * Video is mirrored (scaleX -1); landmark x is already in image space — we flip for user-facing directions.
- */
-function estimatePose(landmarks: { x: number; y: number; z?: number }[]): { yaw: number; pitch: number } | null {
-  if (!landmarks || landmarks.length < 300) return null;
+type PoseSample = { yaw: number; pitch: number };
 
-  // MediaPipe indices
+/**
+ * Head-pose from Face Landmarker mesh.
+ * Video is mirrored (scaleX -1). We flip yaw so positive = user's left.
+ */
+function estimatePose(landmarks: { x: number; y: number; z?: number }[]): PoseSample | null {
+  if (!landmarks || landmarks.length < 300) return null;
   const nose = landmarks[1];
   const leftCheek = landmarks[234];
   const rightCheek = landmarks[454];
@@ -102,41 +113,28 @@ function estimatePose(landmarks: { x: number; y: number; z?: number }[]): { yaw:
   const rightEye = landmarks[263];
   const chin = landmarks[152];
   const forehead = landmarks[10];
-
   if (!nose || !leftCheek || !rightCheek || !leftEye || !rightEye || !chin || !forehead) return null;
 
   const midX = (leftCheek.x + rightCheek.x) / 2;
-  const faceWidth = Math.abs(rightCheek.x - leftCheek.x) || 0.01;
-  // Image space: larger nose.x means nose is toward the right of the frame.
-  // Mirrored preview: user turns their left → face appears to move right on screen.
-  // We define yaw positive = user's head turned to their left (matches "Turn left").
+  const faceWidth = Math.abs(rightCheek.x - leftCheek.x) || 0.001;
   const rawYaw = (nose.x - midX) / faceWidth;
-  const yaw = -rawYaw; // flip so positive = user left
+  // Mirror-aware: positive yaw = user turned left
+  const yaw = -rawYaw;
 
   const eyeY = (leftEye.y + rightEye.y) / 2;
-  const faceHeight = Math.abs(chin.y - forehead.y) || 0.01;
-  // Positive pitch = chin up (user looking up)
+  const faceHeight = Math.abs(chin.y - forehead.y) || 0.001;
+  // Positive pitch = looking up
   const pitch = (eyeY - nose.y) / faceHeight;
 
   return { yaw, pitch };
 }
 
-type PoseSample = { yaw: number; pitch: number };
-
-function stageSatisfied(
-  stageId: StageId,
-  baseline: PoseSample,
-  current: PoseSample
-): boolean {
+function stageSatisfied(stageId: StageId, baseline: PoseSample, current: PoseSample): boolean {
   const dy = current.yaw - baseline.yaw;
   const dp = current.pitch - baseline.pitch;
-
   switch (stageId) {
     case "forward":
-      return (
-        Math.abs(current.yaw) < NEUTRAL_YAW_MAX &&
-        Math.abs(current.pitch) < NEUTRAL_PITCH_MAX
-      );
+      return Math.abs(current.yaw) < NEUTRAL_YAW_MAX && Math.abs(current.pitch) < NEUTRAL_PITCH_MAX;
     case "left":
       return dy >= YAW_THRESHOLD;
     case "right":
@@ -150,11 +148,8 @@ function stageSatisfied(
   }
 }
 
-/**
- * Directional liveness with MediaPipe Face Landmarker.
- * No countdown. No capture on face-presence alone.
- * Capture only after the required head movement is confirmed.
- */
+type Phase = "intro" | "tracking" | "done";
+
 export default function LivenessCapture({ userId, onComplete, onCancel, notify }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -164,18 +159,22 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
   const stableCountRef = useRef(0);
   const lastSampleRef = useRef(0);
   const capturingRef = useRef(false);
+  const cooldownUntilRef = useRef(0);
   const stageIdxRef = useRef(0);
   const pathsRef = useRef<string[]>([]);
   const evidenceRef = useRef<LivenessStepEvidence[]>([]);
+  const aliveRef = useRef(true);
 
+  const [phase, setPhase] = useState<Phase>("intro");
   const [stageIdx, setStageIdx] = useState(0);
   const [ready, setReady] = useState(false);
   const [permError, setPermError] = useState("");
-  const [status, setStatus] = useState("Allow camera access");
+  const [status, setStatus] = useState("Position your face inside the frame");
+  const [statusKind, setStatusKind] = useState<"neutral" | "warn" | "ok" | "capture">("neutral");
   const [capturing, setCapturing] = useState(false);
-  const [done, setDone] = useState(false);
   const [modelState, setModelState] = useState<"loading" | "ready" | "unavailable">("loading");
-  const [poseDebug, setPoseDebug] = useState({ yaw: 0, pitch: 0 });
+  const [faceFound, setFaceFound] = useState(false);
+  const [flash, setFlash] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -189,7 +188,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       if (!cancelled && !landmarkerRef.current) setModelState("unavailable");
-    }, 15000);
+    }, 18000);
 
     async function init() {
       try {
@@ -238,12 +237,13 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
       const video = videoRef.current;
       if (!video) return false;
       video.setAttribute("playsinline", "true");
+      video.setAttribute("webkit-playsinline", "true");
       video.muted = true;
       video.srcObject = stream;
       try {
         await video.play();
       } catch {
-        await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 60));
         await video.play().catch(() => undefined);
       }
       return true;
@@ -275,7 +275,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
           streamRef.current = stream;
           let attached = await attachStream(stream);
           if (!attached) {
-            for (let i = 0; i < 10 && !cancelled && !attached; i++) {
+            for (let i = 0; i < 12 && !cancelled && !attached; i++) {
               await new Promise((r) => setTimeout(r, 80));
               attached = await attachStream(stream);
             }
@@ -286,7 +286,6 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
             return;
           }
           setReady(true);
-          setStatus(STAGES[0].hint);
           return;
         } catch (e) {
           lastErr = e;
@@ -298,7 +297,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
           "Camera access is required for identity verification. Please allow camera access in your browser settings and try again."
         );
       } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-        setPermError("No camera was found on this device.");
+        setPermError("Camera unavailable. Please check your camera and try again.");
       } else {
         setPermError(
           "Could not open the camera. Use HTTPS, allow permissions, and try again on Chrome or Safari."
@@ -308,6 +307,7 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     void start();
     return () => {
       cancelled = true;
+      aliveRef.current = false;
       stopCamera();
     };
   }, [stopCamera]);
@@ -320,319 +320,762 @@ export default function LivenessCapture({ userId, onComplete, onCancel, notify }
     c.height = video.videoHeight || 480;
     const ctx = c.getContext("2d");
     if (!ctx) throw new Error("Canvas unavailable");
-    ctx.drawImage(video, 0, 0);
+    // Un-mirror for storage (video is CSS mirrored)
+    ctx.translate(c.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+
     const blob: Blob = await new Promise((resolve, reject) => {
-      c.toBlob((b) => (b ? resolve(b) : reject(new Error("Capture failed"))), "image/jpeg", 0.88);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error("Frame encode failed"))), "image/jpeg", 0.9);
     });
-    const path = `${userId}/liveness/${Date.now()}_${stageId}.jpg`;
-    const { error: upErr } = await supabase.storage
-      .from("kyc-documents")
+
+    const path = `${userId}/liveness/${stageId}_${Date.now()}.jpg`;
+    const { error } = await supabase.storage
+      .from("account-verification-documents")
       .upload(path, blob, { contentType: "image/jpeg", upsert: false });
-    if (upErr) throw upErr;
+    if (error) throw error;
     return path;
   }, [userId]);
 
-  // Detection loop — directional state machine
+  // Tracking loop — only while phase === tracking
   useEffect(() => {
-    if (!ready || done || capturingRef.current || permError || modelState !== "ready") return;
+    if (phase !== "tracking" || !ready || modelState !== "ready" || permError) return;
 
-    let alive = true;
+    aliveRef.current = true;
     stageIdxRef.current = stageIdx;
+    setStatus(STAGES[stageIdx].instruction);
+    setStatusKind("neutral");
 
     const tick = () => {
-      if (!alive || capturingRef.current) return;
-      const now = performance.now();
-      if (now - lastSampleRef.current < SAMPLE_MS) {
-        rafRef.current = requestAnimationFrame(() => void tick());
-        return;
-      }
-      lastSampleRef.current = now;
-
+      if (!aliveRef.current) return;
       const video = videoRef.current;
       const lm = landmarkerRef.current;
-      if (!video || !lm || video.readyState < 2) {
-        rafRef.current = requestAnimationFrame(() => void tick());
-        return;
-      }
+      const now = performance.now();
 
-      let pose: PoseSample | null = null;
-      try {
-        const result = lm.detectForVideo(video, now);
-        const faces = result?.faceLandmarks ?? [];
-        if (faces.length > 0) {
-          pose = estimatePose(faces[0]);
-        }
-      } catch {
-        pose = null;
-      }
+      if (
+        video &&
+        lm &&
+        video.readyState >= 2 &&
+        now - lastSampleRef.current >= SAMPLE_MS &&
+        !capturingRef.current &&
+        now >= cooldownUntilRef.current
+      ) {
+        lastSampleRef.current = now;
+        try {
+          const result = lm.detectForVideo(video, now);
+          const face = result?.faceLandmarks?.[0];
+          const score =
+            (result as any)?.faceBlendshapes?.[0]?.categories?.[0]?.score ??
+            (face ? 1 : 0);
 
-      const idx = stageIdxRef.current;
-      const stage = STAGES[idx];
-
-      if (!pose) {
-        stableCountRef.current = 0;
-        setStatus("Position your face in the frame");
-        if (alive && !capturingRef.current) {
-          rafRef.current = requestAnimationFrame(() => void tick());
-        }
-        return;
-      }
-
-      setPoseDebug({ yaw: pose.yaw, pitch: pose.pitch });
-
-      // Establish neutral baseline on the first (forward) stage or when missing
-      if (!baselineRef.current && stage.id === "forward") {
-        if (
-          Math.abs(pose.yaw) < NEUTRAL_YAW_MAX &&
-          Math.abs(pose.pitch) < NEUTRAL_PITCH_MAX
-        ) {
-          stableCountRef.current += 1;
-          setStatus("Hold still — calibrating…");
-          if (stableCountRef.current >= STABILITY_SAMPLES) {
-            baselineRef.current = { yaw: pose.yaw, pitch: pose.pitch };
+          if (!face || (typeof score === "number" && score < MIN_FACE_SCORE && score !== 0)) {
+            setFaceFound(false);
             stableCountRef.current = 0;
-            setStatus("Look straight — face confirmed");
-          }
-        } else {
-          stableCountRef.current = 0;
-          setStatus(stage.failHint);
-        }
-      }
+            setStatus("Position your face inside the frame");
+            setStatusKind("warn");
+          } else {
+            setFaceFound(true);
+            const pose = estimatePose(face);
+            if (!pose) {
+              setStatus("Center your face");
+              setStatusKind("warn");
+            } else {
+              const stage = STAGES[stageIdxRef.current];
 
-      const baseline = baselineRef.current;
-      if (!baseline) {
-        if (stage.id !== "forward") {
-          // Should not happen; re-calibrate
-          setStatus("Look straight at the camera first");
-        }
-        if (alive && !capturingRef.current) {
-          rafRef.current = requestAnimationFrame(() => void tick());
-        }
-        return;
-      }
-
-      const ok = stageSatisfied(stage.id, baseline, pose);
-
-      if (ok) {
-        stableCountRef.current += 1;
-        setStatus(
-          stage.id === "forward"
-            ? "Face centered — hold still…"
-            : "Movement detected — hold…"
-        );
-        if (stableCountRef.current >= STABILITY_SAMPLES) {
-          capturingRef.current = true;
-          setCapturing(true);
-          setStatus("Captured ✓");
-          void (async () => {
-            try {
-              const path = await captureFrame(stage.id);
-              const stepEv: LivenessStepEvidence = {
-                stage: stage.id,
-                yaw: pose!.yaw,
-                pitch: pose!.pitch,
-                baseline_yaw: baseline.yaw,
-                baseline_pitch: baseline.pitch,
-                delta_yaw: pose!.yaw - baseline.yaw,
-                delta_pitch: pose!.pitch - baseline.pitch,
-                confirmed_at: new Date().toISOString(),
-                path,
-              };
-              evidenceRef.current = [...evidenceRef.current, stepEv];
-              pathsRef.current = [...pathsRef.current, path];
-              stableCountRef.current = 0;
-
-              if (pathsRef.current.length >= STAGES.length) {
-                setDone(true);
-                setStatus("Verification captures complete");
-                stopCamera();
-                const evidence: LivenessEvidence = {
-                  version: 1,
-                  method: "mediapipe_face_landmarker_pose",
-                  steps: evidenceRef.current,
-                  completed_at: new Date().toISOString(),
-                };
-                onComplete(pathsRef.current, evidence);
-              } else {
-                const next = pathsRef.current.length;
-                stageIdxRef.current = next;
-                setStageIdx(next);
-                setStatus(STAGES[next].hint);
-                notify(`Step ${next}/${STAGES.length} complete`);
+              // Establish baseline on forward stage
+              if (!baselineRef.current) {
+                if (
+                  Math.abs(pose.yaw) < NEUTRAL_YAW_MAX &&
+                  Math.abs(pose.pitch) < NEUTRAL_PITCH_MAX
+                ) {
+                  stableCountRef.current += 1;
+                  setStatus("Perfect — hold still");
+                  setStatusKind("ok");
+                  if (stableCountRef.current >= STABILITY_SAMPLES) {
+                    baselineRef.current = { yaw: pose.yaw, pitch: pose.pitch };
+                    // If current stage is forward, capture it immediately after baseline
+                    if (stage.id === "forward") {
+                      stableCountRef.current = STABILITY_SAMPLES;
+                    } else {
+                      stableCountRef.current = 0;
+                      setStatus(stage.instruction);
+                      setStatusKind("neutral");
+                    }
+                  }
+                } else {
+                  stableCountRef.current = 0;
+                  setStatus("Center your face and look straight");
+                  setStatusKind("warn");
+                }
               }
-            } catch (e: any) {
-              setStatus(e?.message || "Capture failed — try again");
-              stableCountRef.current = 0;
-            } finally {
-              capturingRef.current = false;
-              setCapturing(false);
+
+              const baseline = baselineRef.current;
+              if (baseline) {
+                const ok = stageSatisfied(stage.id, baseline, pose);
+                if (ok) {
+                  stableCountRef.current += 1;
+                  setStatus(
+                    stage.id === "forward" ? "Perfect — hold still" : "Movement detected — hold…"
+                  );
+                  setStatusKind("ok");
+                  if (stableCountRef.current >= STABILITY_SAMPLES) {
+                    capturingRef.current = true;
+                    setCapturing(true);
+                    setFlash(true);
+                    setStatus("Captured ✓");
+                    setStatusKind("capture");
+                    void (async () => {
+                      try {
+                        const path = await captureFrame(stage.id);
+                        const stepEv: LivenessStepEvidence = {
+                          stage: stage.id,
+                          yaw: pose.yaw,
+                          pitch: pose.pitch,
+                          baseline_yaw: baseline.yaw,
+                          baseline_pitch: baseline.pitch,
+                          delta_yaw: pose.yaw - baseline.yaw,
+                          delta_pitch: pose.pitch - baseline.pitch,
+                          confirmed_at: new Date().toISOString(),
+                          path,
+                        };
+                        evidenceRef.current = [...evidenceRef.current, stepEv];
+                        pathsRef.current = [...pathsRef.current, path];
+                        stableCountRef.current = 0;
+                        cooldownUntilRef.current = performance.now() + COOLDOWN_MS;
+
+                        if (pathsRef.current.length >= STAGES.length) {
+                          setPhase("done");
+                          setStatus("Face verification complete");
+                          setStatusKind("capture");
+                          stopCamera();
+                          const evidence: LivenessEvidence = {
+                            version: 1,
+                            method: "mediapipe_face_landmarker_pose",
+                            steps: evidenceRef.current,
+                            completed_at: new Date().toISOString(),
+                          };
+                          // Brief pause so user sees success
+                          window.setTimeout(() => {
+                            onComplete(pathsRef.current, evidence);
+                          }, 650);
+                        } else {
+                          const next = pathsRef.current.length;
+                          stageIdxRef.current = next;
+                          setStageIdx(next);
+                          setStatus(STAGES[next].instruction);
+                          setStatusKind("neutral");
+                          notify(`Step ${next + 1}/${STAGES.length}`);
+                        }
+                      } catch (e: any) {
+                        setStatus(e?.message || "Capture failed — try again");
+                        setStatusKind("warn");
+                        stableCountRef.current = 0;
+                      } finally {
+                        capturingRef.current = false;
+                        setCapturing(false);
+                        window.setTimeout(() => setFlash(false), 350);
+                      }
+                    })();
+                  }
+                } else {
+                  stableCountRef.current = 0;
+                  setStatus(stage.failHint);
+                  setStatusKind("warn");
+                }
+              }
             }
-          })();
-          return;
+          }
+        } catch {
+          // ignore transient detect errors
         }
-      } else {
-        stableCountRef.current = 0;
-        setStatus(stage.failHint);
       }
 
-      if (alive && !capturingRef.current && !done) {
-        rafRef.current = requestAnimationFrame(() => void tick());
+      if (aliveRef.current) {
+        rafRef.current = requestAnimationFrame(tick);
       }
     };
 
-    rafRef.current = requestAnimationFrame(() => void tick());
+    rafRef.current = requestAnimationFrame(tick);
     return () => {
-      alive = false;
+      aliveRef.current = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     };
-  }, [ready, stageIdx, done, permError, modelState, captureFrame, onComplete, notify, stopCamera]);
+  }, [phase, ready, modelState, permError, stageIdx, captureFrame, stopCamera, onComplete, notify]);
 
-  const stage = STAGES[Math.min(stageIdx, STAGES.length - 1)];
+  const startTracking = () => {
+    if (!ready) {
+      notify("Camera is still starting…");
+      return;
+    }
+    if (modelState === "loading") {
+      notify("Face tracking model is still loading…");
+      return;
+    }
+    if (modelState === "unavailable") {
+      notify("Face tracking model unavailable. Check network and retry.");
+      return;
+    }
+    // Reset state for a clean run
+    baselineRef.current = null;
+    stableCountRef.current = 0;
+    stageIdxRef.current = 0;
+    pathsRef.current = [];
+    evidenceRef.current = [];
+    capturingRef.current = false;
+    cooldownUntilRef.current = 0;
+    setStageIdx(0);
+    setPhase("tracking");
+    setStatus(STAGES[0].instruction);
+    setStatusKind("neutral");
+  };
+
+  const stage = STAGES[stageIdx];
+  const ringColor =
+    statusKind === "capture"
+      ? "#39d98a"
+      : statusKind === "ok"
+        ? GOLD
+        : statusKind === "warn"
+          ? "#c9a227"
+          : GOLD;
 
   return (
-    <div style={{ ...s.section, background: "#000" }}>
+    <div
+      style={{
+        position: "relative",
+        minHeight: "100%",
+        background: "#050505",
+        color: "#fff",
+        display: "flex",
+        flexDirection: "column",
+        padding: "8px 16px 20px",
+        paddingBottom: "calc(20px + env(safe-area-inset-bottom))",
+        overflow: "hidden",
+      }}
+    >
       <style>{`
-        @keyframes lcStageIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes lcFrameGlow { 0% { box-shadow: 0 0 0 0 rgba(245,181,27,0.25); } 100% { box-shadow: 0 0 0 14px rgba(245,181,27,0); } }
+        @keyframes liveRingPulse {
+          0% { box-shadow: 0 0 0 0 rgba(245,181,27,0.35); }
+          70% { box-shadow: 0 0 0 14px rgba(245,181,27,0); }
+          100% { box-shadow: 0 0 0 0 rgba(245,181,27,0); }
+        }
+        @keyframes liveScan {
+          0% { top: 8%; opacity: 0; }
+          15% { opacity: 0.85; }
+          85% { opacity: 0.85; }
+          100% { top: 88%; opacity: 0; }
+        }
+        @keyframes liveFlash {
+          0% { opacity: 0.55; }
+          100% { opacity: 0; }
+        }
+        @keyframes liveFadeUp {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
       `}</style>
-      <h3 style={{ margin: "0 0 6px", color: "#fff", fontSize: 17, textAlign: "center" }}>
-        Verify your identity
-      </h3>
-      <p style={{ margin: "0 0 14px", color: "#888", fontSize: 13, textAlign: "center", lineHeight: 1.45 }}>
-        Follow each instruction. The camera only captures after you complete the required head movement.
-      </p>
 
-      {permError ? (
-        <div style={s.errorBox}>{permError}</div>
-      ) : modelState === "unavailable" ? (
-        <div style={s.errorBox}>
-          Face pose model could not load. Check your connection and try again on a supported browser (Chrome / Safari).
-        </div>
-      ) : (
-        <>
-          <div key={stageIdx} style={{ animation: "lcStageIn 0.3s cubic-bezier(0.16,1,0.3,1) both" }}>
-            <p style={{ color: GOLD_LIGHT, fontWeight: 700, textAlign: "center", margin: "0 0 4px", fontSize: 15 }}>
-              {stage.title}
-            </p>
-            <p style={{ color: "#666", textAlign: "center", margin: "0 0 12px", fontSize: 12 }}>
-              Step {Math.min(stageIdx + 1, STAGES.length)} of {STAGES.length}
-            </p>
-          </div>
+      {/* Ambient gold glow */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(ellipse 80% 50% at 50% 30%, rgba(245,181,27,0.08) 0%, transparent 60%)",
+          pointerEvents: "none",
+        }}
+      />
 
-          <div
-            style={{
-              position: "relative",
-              width: "min(100%, 300px)",
-              margin: "0 auto 14px",
-              aspectRatio: "3 / 4",
-              borderRadius: 20,
-              overflow: "hidden",
-              background: "#000",
-              border: `1.5px solid ${GOLD}`,
-              boxShadow: capturing ? "0 0 30px rgba(57,217,138,0.25)" : "0 0 30px rgba(245,181,27,0.14)",
-            }}
-          >
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              autoPlay
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                transform: "scaleX(-1)",
-              }}
-            />
-            <svg
-              viewBox="0 0 300 400"
-              preserveAspectRatio="none"
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
-            >
-              <defs>
-                <mask id="kycFaceMask">
-                  <rect width="300" height="400" fill="white" />
-                  <path
-                    d="M150 46 C100 46 70 96 70 160 C70 208 82 236 96 262 C108 284 122 306 136 322 C142 330 158 330 164 322 C178 306 192 284 204 262 C218 236 230 208 230 160 C230 96 200 46 150 46 Z"
-                    fill="black"
-                  />
-                </mask>
-              </defs>
-              <rect width="300" height="400" fill="rgba(0,0,0,0.55)" mask="url(#kycFaceMask)" />
-              <path
-                d="M150 46 C100 46 70 96 70 160 C70 208 82 236 96 262 C108 284 122 306 136 322 C142 330 158 330 164 322 C178 306 192 284 204 262 C218 236 230 208 230 160 C230 96 200 46 150 46 Z"
-                fill="none"
-                stroke={capturing ? "#39d98a" : "rgba(245,181,27,0.65)"}
-                strokeWidth={2.5}
-              />
-            </svg>
-            {!ready && (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#aaa",
-                  background: "rgba(0,0,0,0.72)",
-                  fontSize: 13,
-                  padding: 16,
-                  textAlign: "center",
-                }}
-              >
-                Starting camera…
-              </div>
-            )}
-            {ready && modelState === "loading" && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  padding: "8px 10px",
-                  background: "rgba(0,0,0,0.55)",
-                  color: "#ccc",
-                  fontSize: 11,
-                  textAlign: "center",
-                }}
-              >
-                Loading face pose model…
-              </div>
-            )}
-          </div>
-
-          <p
-            style={{
-              textAlign: "center",
-              color: capturing ? "#39d98a" : "#ccc",
-              fontSize: 13,
-              minHeight: 20,
-              margin: "0 0 8px",
-              fontWeight: capturing ? 700 : 400,
-            }}
-          >
-            {status}
-          </p>
-          {/* Subtle debug only while developing — remove or gate if preferred */}
-          {modelState === "ready" && import.meta.env.DEV && (
-            <p style={{ textAlign: "center", color: "#444", fontSize: 10, margin: 0 }}>
-              yaw {poseDebug.yaw.toFixed(2)} · pitch {poseDebug.pitch.toFixed(2)}
-            </p>
-          )}
-        </>
-      )}
-
-      <button
-        type="button"
-        style={{ ...s.secondaryBtn, marginTop: 12 }}
-        onClick={() => {
-          stopCamera();
-          onCancel();
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 8,
+          position: "relative",
+          zIndex: 1,
         }}
       >
-        Cancel
-      </button>
+        <button
+          type="button"
+          onClick={() => {
+            stopCamera();
+            onCancel();
+          }}
+          aria-label="Back"
+          style={{
+            width: 40,
+            height: 40,
+            border: 0,
+            borderRadius: 12,
+            background: "transparent",
+            color: "#f0f0f0",
+            fontSize: 22,
+            cursor: "pointer",
+          }}
+        >
+          ‹
+        </button>
+        <div style={{ flex: 1, textAlign: "center", fontWeight: 700, fontSize: 16 }}>
+          Identity Verification
+        </div>
+        <div style={{ width: 40 }} />
+      </div>
+
+      {/* Mini progress: Documents ✓ · Liveness · Review · Complete */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 0,
+          marginBottom: 18,
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
+        {["Documents", "Liveness", "Review", "Complete"].map((label, i) => {
+          const doneStep = i === 0 || (i === 1 && phase === "done");
+          const active = i === 1 && phase !== "done";
+          return (
+            <React.Fragment key={label}>
+              {i > 0 && (
+                <div
+                  style={{
+                    width: 28,
+                    height: 2,
+                    background: doneStep || active ? GOLD : "#333",
+                  }}
+                />
+              )}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: "50%",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    background: doneStep
+                      ? `linear-gradient(135deg,${GOLD},#d98e00)`
+                      : active
+                        ? "#1a1508"
+                        : "#111",
+                    border: `1.5px solid ${doneStep || active ? GOLD : "#333"}`,
+                    color: doneStep ? "#090909" : active ? GOLD : "#666",
+                    boxShadow: active ? `0 0 12px rgba(245,181,27,0.35)` : undefined,
+                  }}
+                >
+                  {doneStep ? "✓" : i + 1}
+                </div>
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 600,
+                    color: doneStep || active ? GOLD_LIGHT : "#555",
+                  }}
+                >
+                  {label}
+                </span>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      <div style={{ textAlign: "center", position: "relative", zIndex: 1, marginBottom: 6 }}>
+        <div
+          style={{
+            color: GOLD,
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1.2,
+            textTransform: "uppercase",
+            marginBottom: 6,
+          }}
+        >
+          {phase === "done"
+            ? "COMPLETE"
+            : phase === "tracking"
+              ? `STEP ${stageIdx + 1} OF ${STAGES.length}`
+              : "FACE VERIFICATION"}
+        </div>
+        <h2
+          style={{
+            margin: "0 0 6px",
+            fontSize: 22,
+            fontWeight: 800,
+            letterSpacing: -0.3,
+            lineHeight: 1.2,
+          }}
+        >
+          Face Movement <span style={{ color: GOLD }}>Capture</span>
+        </h2>
+        <p style={{ margin: 0, color: "#888", fontSize: 13, lineHeight: 1.45, padding: "0 8px" }}>
+          We need to verify that you&apos;re a real person. Please follow the camera movement
+          instructions below.
+        </p>
+      </div>
+
+      {/* Camera ring */}
+      <div
+        style={{
+          position: "relative",
+          width: "min(280px, 78vw)",
+          aspectRatio: "1",
+          margin: "18px auto 14px",
+          zIndex: 1,
+        }}
+      >
+        {/* Outer glow ring */}
+        <div
+          style={{
+            position: "absolute",
+            inset: -6,
+            borderRadius: "50%",
+            border: `2px solid ${ringColor}`,
+            opacity: 0.9,
+            animation:
+              phase === "tracking" && faceFound && !capturing
+                ? "liveRingPulse 1.8s ease-out infinite"
+                : undefined,
+            transition: "border-color 0.25s ease",
+            pointerEvents: "none",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "50%",
+            overflow: "hidden",
+            background: "#0a0a0a",
+            border: `3px solid ${ringColor}`,
+            boxShadow: `0 0 40px rgba(245,181,27,0.18)`,
+            transition: "border-color 0.25s ease",
+          }}
+        >
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            autoPlay
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: "scaleX(-1)",
+              background: "#000",
+            }}
+          />
+          {/* Corner brackets */}
+          <svg
+            width="100%"
+            height="100%"
+            viewBox="0 0 100 100"
+            style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+          >
+            <path
+              d="M22 32 V22 H32"
+              fill="none"
+              stroke={ringColor}
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+            <path
+              d="M78 32 V22 H68"
+              fill="none"
+              stroke={ringColor}
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+            <path
+              d="M22 68 V78 H32"
+              fill="none"
+              stroke={ringColor}
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+            <path
+              d="M78 68 V78 H68"
+              fill="none"
+              stroke={ringColor}
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
+          {phase === "tracking" && (
+            <div
+              style={{
+                position: "absolute",
+                left: "12%",
+                right: "12%",
+                height: 2,
+                background: `linear-gradient(90deg, transparent, ${GOLD}, transparent)`,
+                animation: "liveScan 2.4s linear infinite",
+                pointerEvents: "none",
+              }}
+            />
+          )}
+          {flash && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "#fff",
+                animation: "liveFlash 0.35s ease-out forwards",
+                pointerEvents: "none",
+              }}
+            />
+          )}
+        </div>
+
+        {/* AI badge */}
+        <div
+          style={{
+            position: "absolute",
+            right: -8,
+            top: 18,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 10px",
+            borderRadius: 12,
+            background: "rgba(12,12,12,0.92)",
+            border: `1px solid ${BORDER}`,
+            fontSize: 10,
+            fontWeight: 700,
+            color: GOLD_LIGHT,
+            letterSpacing: 0.3,
+          }}
+        >
+          <span style={{ fontSize: 12 }}>◈</span>
+          <span>
+            AI POWERED
+            <br />
+            <span style={{ color: "#888", fontWeight: 600, fontSize: 9 }}>Face Tracking</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Movement indicators */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          gap: 10,
+          marginBottom: 14,
+          position: "relative",
+          zIndex: 1,
+          flexWrap: "wrap",
+        }}
+      >
+        {STAGES.map((st, i) => {
+          const completed = i < stageIdx || phase === "done";
+          const current = i === stageIdx && phase === "tracking";
+          return (
+            <div
+              key={st.id}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 5,
+                minWidth: 52,
+              }}
+            >
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: completed ? 16 : 18,
+                  fontWeight: 800,
+                  background: completed
+                    ? "linear-gradient(135deg,rgba(245,181,27,0.25),rgba(245,181,27,0.08))"
+                    : current
+                      ? "#161208"
+                      : "#0c0c0c",
+                  border: `1.5px solid ${completed || current ? GOLD : "#2a2a2a"}`,
+                  color: completed || current ? GOLD : "#555",
+                  boxShadow: current ? `0 0 14px rgba(245,181,27,0.3)` : undefined,
+                  transition: "all 0.25s ease",
+                }}
+              >
+                {completed ? "✓" : st.arrow}
+              </div>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: completed || current ? "#ddd" : "#555",
+                  textAlign: "center",
+                  lineHeight: 1.2,
+                }}
+              >
+                {st.short.split(" ").map((w, wi) => (
+                  <span key={wi} style={{ display: "block" }}>
+                    {w}
+                  </span>
+                ))}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Status / guidance */}
+      <div
+        style={{
+          margin: "0 auto 16px",
+          maxWidth: 360,
+          width: "100%",
+          borderRadius: 14,
+          padding: "12px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          background:
+            statusKind === "capture"
+              ? "rgba(57,217,138,0.1)"
+              : statusKind === "warn"
+                ? "rgba(245,181,27,0.08)"
+                : "rgba(20,20,20,0.9)",
+          border: `1px solid ${
+            statusKind === "capture"
+              ? "rgba(57,217,138,0.35)"
+              : statusKind === "warn"
+                ? BORDER
+                : "#222"
+          }`,
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
+        <span
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: "50%",
+            flexShrink: 0,
+            display: "grid",
+            placeItems: "center",
+            fontSize: 12,
+            fontWeight: 800,
+            background: statusKind === "capture" ? "#39d98a" : GOLD,
+            color: "#090909",
+          }}
+        >
+          {statusKind === "capture" ? "✓" : "!"}
+        </span>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: statusKind === "capture" ? "#9dffc2" : "#e8d9a8",
+            lineHeight: 1.35,
+          }}
+        >
+          {permError
+            ? permError
+            : modelState === "unavailable"
+              ? "Face tracking model could not load. Check your connection and try again."
+              : phase === "intro"
+                ? "Please follow the instructions. If you don't turn your head, we won't be able to verify your identity."
+                : status}
+        </span>
+      </div>
+
+      {/* Primary action */}
+      <div style={{ marginTop: "auto", position: "relative", zIndex: 1 }}>
+        {permError ? (
+          <button
+            type="button"
+            onClick={() => {
+              stopCamera();
+              onCancel();
+            }}
+            style={primaryBtnStyle}
+          >
+            Close
+          </button>
+        ) : phase === "intro" ? (
+          <button
+            type="button"
+            disabled={!ready || modelState === "loading"}
+            onClick={startTracking}
+            style={{
+              ...primaryBtnStyle,
+              opacity: !ready || modelState === "loading" ? 0.55 : 1,
+              cursor: !ready || modelState === "loading" ? "not-allowed" : "pointer",
+            }}
+          >
+            {!ready
+              ? "Starting camera…"
+              : modelState === "loading"
+                ? "Loading tracker…"
+                : modelState === "unavailable"
+                  ? "Tracker unavailable"
+                  : "Verify"}
+          </button>
+        ) : phase === "done" ? (
+          <div
+            style={{
+              textAlign: "center",
+              color: "#39d98a",
+              fontWeight: 700,
+              fontSize: 15,
+              padding: 12,
+            }}
+          >
+            Face verification complete
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              stopCamera();
+              onCancel();
+            }}
+            style={secondaryBtnStyle}
+          >
+            Cancel
+          </button>
+        )}
+      </div>
     </div>
   );
 }
+
+const primaryBtnStyle: React.CSSProperties = {
+  width: "100%",
+  minHeight: 52,
+  border: 0,
+  borderRadius: 999,
+  background: `linear-gradient(135deg, ${GOLD} 0%, #d98e00 100%)`,
+  color: "#090909",
+  fontWeight: 800,
+  fontSize: 16,
+  cursor: "pointer",
+  boxShadow: "0 8px 28px rgba(245,181,27,0.28)",
+  letterSpacing: 0.2,
+};
+
+const secondaryBtnStyle: React.CSSProperties = {
+  width: "100%",
+  minHeight: 48,
+  border: `1px solid ${BORDER}`,
+  borderRadius: 999,
+  background: "transparent",
+  color: GOLD_LIGHT,
+  fontWeight: 700,
+  fontSize: 15,
+  cursor: "pointer",
+};
