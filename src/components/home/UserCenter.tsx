@@ -103,8 +103,8 @@ export default function UserCenter({
     ...(onOpenPromo
       ? [
           {
-            label: "Join our community",
-            sub: "See what CEO Exchange is about",
+            label: "Experience",
+            sub: "Premium visual introduction",
             icon: "◈",
             action: onOpenPromo,
           },
