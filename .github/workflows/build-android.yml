@@ -22,7 +22,22 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify required client configuration
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
+        run: |
+          test -n "$VITE_SUPABASE_URL" || (echo "Missing VITE_SUPABASE_URL" && exit 1)
+          test -n "$VITE_SUPABASE_ANON_KEY" || (echo "Missing VITE_SUPABASE_ANON_KEY" && exit 1)
+          test -n "$VITE_TURNSTILE_SITE_KEY" || (echo "Missing VITE_TURNSTILE_SITE_KEY" && exit 1)
+          echo "Required client configuration is present."
+
       - name: Build Vite app
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
         run: npm run build
 
       - name: Install Capacitor
