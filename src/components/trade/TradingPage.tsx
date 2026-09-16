@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { getExecutionProvider } from "../../trading/providers";
+import TradingChart from "./TradingChart";
 
 type Props = { symbol?: string; onBack?: () => void; onAddFunds?: () => void };
 type Pair = { id: string; symbol: string; base_asset: string; quote_asset: string; is_active: boolean };
@@ -55,17 +56,6 @@ const TF = [
   { label: "1D", value: "1d" },
 ] as const;
 
-// Maps our internal timeframe values to TradingView's interval codes.
-const TV_INTERVAL: Record<string, string> = { "15m": "15", "1h": "60", "4h": "240", "1d": "D" };
-
-// Builds a real Kraken symbol for TradingView's chart feed (e.g. "KRAKEN:BTCUSDT").
-// This is TradingView's own live Kraken market data — the same feed Kraken's own
-// site and every serious exchange chart embed uses — not something we're faking
-// or approximating with our own rendering.
-function tvSymbolFor(pair: Pair): string {
-  return `KRAKEN:${pair.base_asset.toUpperCase()}${pair.quote_asset.toUpperCase()}`;
-}
-
 const ACCOUNT_TABS = [
   { label: "Spot", value: "spot" },
   { label: "Futures", value: "futures" },
@@ -87,25 +77,42 @@ const CANCELLABLE = new Set(["open", "partially_filled"]);
 // No mock data, no demo buttons, no placeholder prices.
 
 const css = `
-.trade-page{min-height:100vh;background:#050505;color:#eee;font-family:Inter,ui-sans-serif,system-ui,sans-serif;overflow-x:hidden}
-.trade-shell{width:min(1400px,100%);margin:auto;padding:0 0 80px;box-sizing:border-box}
-.trade-top{display:flex;align-items:center;gap:8px;min-height:48px;padding:8px 12px;border-bottom:1px solid #171717;position:sticky;top:0;background:#050505;z-index:40}
-.trade-back{width:36px;height:36px;border:1px solid #232323;border-radius:10px;background:#0a0a0a;color:#f4c542;cursor:pointer;font-size:18px;display:grid;place-items:center;flex-shrink:0}
-.trade-pair{display:flex;align-items:center;gap:6px;min-width:0;cursor:pointer}
-.pair-name{font-size:16px;font-weight:700;color:#fff;white-space:nowrap}
-.pair-change{font-size:12px;font-weight:700}
-.up{color:#16c784}.down{color:#ea3943}
+:root{
+  --ceo-bg:#050505;
+  --ceo-surface:#080808;
+  --ceo-surface-2:#0a0a0a;
+  --ceo-border:#1a1a1a;
+  --ceo-border-strong:#242424;
+  --ceo-text:#e8e8e8;
+  --ceo-text-dim:#8a8a8a;
+  --ceo-text-faint:#5c5c5c;
+  --ceo-gold:#d4af5a;
+  --ceo-gold-bright:#f0c766;
+  --ceo-gold-dim:#7a6428;
+  --ceo-up:#17c087;
+  --ceo-down:#e0475a;
+  --ceo-radius:10px;
+}
+.trade-page{min-height:100vh;background:var(--ceo-bg);color:var(--ceo-text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+.trade-shell{width:min(1440px,100%);margin:auto;padding:0 0 84px;box-sizing:border-box}
+.trade-top{display:flex;align-items:center;gap:8px;min-height:52px;padding:9px 14px;border-bottom:1px solid var(--ceo-border);position:sticky;top:0;background:rgba(5,5,5,0.92);backdrop-filter:blur(10px);z-index:40}
+.trade-back{width:34px;height:34px;border:1px solid var(--ceo-border-strong);border-radius:9px;background:var(--ceo-surface-2);color:var(--ceo-gold);cursor:pointer;font-size:17px;display:grid;place-items:center;flex-shrink:0;transition:border-color .15s ease}
+.trade-back:hover{border-color:var(--ceo-gold-dim)}
+.trade-pair{display:flex;align-items:center;gap:7px;min-width:0;cursor:pointer}
+.pair-name{font-size:15.5px;font-weight:700;color:#fff;white-space:nowrap;letter-spacing:.1px}
+.pair-change{font-size:11.5px;font-weight:700;padding:2px 6px;border-radius:5px;background:rgba(255,255,255,0.04)}
+.up{color:var(--ceo-up)}.down{color:var(--ceo-down)}
 .trade-spacer{flex:1}
 .top-icons{display:flex;gap:6px;align-items:center}
-.icon-btn{width:34px;height:34px;border:1px solid #232323;border-radius:8px;background:#0a0a0a;color:#888;cursor:pointer;display:grid;place-items:center;font-size:14px}
-.icon-btn:hover{color:#f4c542;border-color:#7a5c14}
+.icon-btn{width:32px;height:32px;border:1px solid var(--ceo-border-strong);border-radius:8px;background:var(--ceo-surface-2);color:var(--ceo-text-dim);cursor:pointer;display:grid;place-items:center;font-size:13px;transition:color .15s ease,border-color .15s ease}
+.icon-btn:hover{color:var(--ceo-gold);border-color:var(--ceo-gold-dim)}
 
 /* Account type tabs */
-.account-tabs{display:flex;gap:0;padding:0 12px;border-bottom:1px solid #171717;background:#070707}
-.account-tab{flex:1;background:none;border:0;color:#777;padding:12px 6px;font-size:13px;font-weight:700;cursor:pointer;position:relative}
-.account-tab.active{color:#f4c542}
-.account-tab.active::after{content:"";position:absolute;bottom:0;left:20%;right:20%;height:2px;background:#f4c542;border-radius:2px 2px 0 0}
-.account-tab.disabled{color:#555;cursor:default}
+.account-tabs{display:flex;gap:0;padding:0 14px;border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
+.account-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:12px 6px;font-size:12.5px;font-weight:700;letter-spacing:.2px;cursor:pointer;position:relative;transition:color .15s ease}
+.account-tab.active{color:var(--ceo-gold-bright)}
+.account-tab.active::after{content:"";position:absolute;bottom:0;left:22%;right:22%;height:2px;background:var(--ceo-gold-bright);border-radius:2px 2px 0 0}
+.account-tab.disabled{color:var(--ceo-text-faint);cursor:default}
 
 /* Main grid */
 .main-grid{display:flex;flex-direction:column;gap:0}
@@ -118,20 +125,22 @@ const css = `
 .mobile-only{display:block}
 
 /* Chart / Book / Trades card */
-.market-card{border-bottom:1px solid #171717;background:#070707}
-.stats-row{display:flex;align-items:baseline;gap:12px;padding:12px 14px 8px;flex-wrap:wrap}
-.stat-price{font-size:26px;font-weight:750;letter-spacing:-.4px}
-.stat-mini{font-size:11px;color:#888}
-.stat-mini b{color:#ccc;font-weight:600}
-.market-tabs{display:flex;border-bottom:1px solid #171717}
-.market-tab{flex:1;background:none;border:0;color:#777;padding:10px 4px;font-size:12px;font-weight:700;cursor:pointer}
-.market-tab.active{color:#f4c542;border-bottom:2px solid #f4c542}
-.tf-row{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid #141414;overflow:auto}
-.tf-btn{background:none;border:1px solid #202020;border-radius:6px;color:#888;padding:4px 9px;font-size:11px;cursor:pointer;white-space:nowrap}
-.tf-btn.active{color:#f4c542;border-color:#7a5c14}
-.chart-wrap{height:380px;position:relative}
+.market-card{border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
+.stats-row{display:flex;align-items:baseline;gap:14px;padding:13px 14px 9px;flex-wrap:wrap}
+.stat-price{font-size:25px;font-weight:750;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.stat-mini{font-size:11px;color:var(--ceo-text-dim)}
+.stat-mini b{color:#d4d4d4;font-weight:600;font-variant-numeric:tabular-nums}
+.market-tabs{display:flex;border-bottom:1px solid var(--ceo-border)}
+.market-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:10px 4px;font-size:11.5px;font-weight:700;letter-spacing:.2px;cursor:pointer;transition:color .15s ease}
+.market-tab.active{color:var(--ceo-gold-bright);border-bottom:2px solid var(--ceo-gold-bright)}
+.tf-row{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--ceo-border);overflow:auto}
+.tf-btn{background:none;border:1px solid var(--ceo-border-strong);border-radius:6px;color:var(--ceo-text-dim);padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:color .15s ease,border-color .15s ease}
+.tf-btn.active{color:var(--ceo-gold-bright);border-color:var(--ceo-gold-dim);background:rgba(212,175,90,0.08)}
+.chart-wrap{height:320px;position:relative}
+@media(min-width:601px){.chart-wrap{height:400px}}
+@media(min-width:901px){.chart-wrap{height:460px}}
 .chart-svg{width:100%;height:100%;display:block}
-.empty{height:100%;display:grid;place-items:center;text-align:center;color:#666;padding:20px;box-sizing:border-box;font-size:12px;line-height:1.55}
+.empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--ceo-text-faint);padding:20px;box-sizing:border-box;font-size:12px;line-height:1.55}
 
 /* Order book with depth bars */
 .book-wrap{padding:0}
@@ -275,66 +284,6 @@ function routeSymbol() {
   const m = window.location.pathname.match(/^\/trade\/(.+)$/i);
   return m ? decodeURIComponent(m[1]).toUpperCase() : "";
 }
-
-// Real, live, pinch-to-zoom/pan candlestick chart backed by TradingView's own
-// Kraken market data feed — the same feed TradingView (and most real exchanges'
-// embedded charts) serves for KRAKEN: symbols. Replaces a hand-rolled SVG chart
-// that couldn't zoom/pan and looked like a demo. One widget instance per
-// container id; re-created whenever symbol or interval changes.
-let tvScriptPromise: Promise<void> | null = null;
-function loadTradingViewScript(): Promise<void> {
-  if ((window as any).TradingView) return Promise.resolve();
-  if (tvScriptPromise) return tvScriptPromise;
-  tvScriptPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/tv.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load TradingView chart library."));
-    document.head.appendChild(script);
-  });
-  return tvScriptPromise;
-}
-
-function TradingViewChart({ symbol, interval }: { symbol: string; interval: string }) {
-  const containerId = useMemo(() => `tv_${symbol.replace(/[^A-Za-z0-9]/g, "")}_${Math.random().toString(36).slice(2)}`, []);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadTradingViewScript()
-      .then(() => {
-        if (cancelled || !containerRef.current) return;
-        containerRef.current.innerHTML = "";
-        new (window as any).TradingView.widget({
-          container_id: containerId,
-          symbol,
-          interval,
-          autosize: true,
-          theme: "dark",
-          style: "1",
-          timezone: "Etc/UTC",
-          locale: "en",
-          toolbar_bg: "#0a0a0a",
-          hide_side_toolbar: false,
-          hide_top_toolbar: false,
-          allow_symbol_change: false,
-          save_image: false,
-          backgroundColor: "#070707",
-          gridColor: "rgba(255,255,255,0.06)",
-          studies: ["Volume@tv-basicstudies"],
-        });
-      })
-      .catch((e) => console.error(e));
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, interval, containerId]);
-
-  return <div id={containerId} ref={containerRef} style={{ width: "100%", height: "100%" }} />;
-}
-
 
 export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: Props) {
   const [symbol, setSymbol] = useState((propSymbol || routeSymbol()).toUpperCase());
@@ -923,7 +872,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                         ))}
                       </div>
                       <div className="chart-wrap">
-                        <TradingViewChart symbol={tvSymbolFor(pair)} interval={TV_INTERVAL[tf]} />
+                        {candles.length ? (
+                          <TradingChart candles={candles} />
+                        ) : (
+                          <div className="empty" style={{ height: "100%" }}>
+                            No chart data available yet for {pair.symbol} ({tf}).
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
