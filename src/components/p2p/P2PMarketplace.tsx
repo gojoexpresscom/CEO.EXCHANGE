@@ -82,7 +82,7 @@ function initials(name: string): string {
   return (name || "").trim().slice(0, 2).toUpperCase() || "P2";
 }
 
-export default function P2PMarketplace({ onBack }: Props) {
+export default function P2PMarketplace({ onBack, onOpenTrade, onOpenMerchant }: Props) {
   // "side" here means what the CURRENT USER wants to do. To buy crypto, we
   // show orders posted with side='sell' (merchants selling); to sell crypto,
   // we show orders posted with side='buy' (merchants buying) — this mirrors
@@ -255,7 +255,18 @@ export default function P2PMarketplace({ onBack }: Props) {
               <div className="p2p-card-top">
                 <div className="p2p-avatar">{initials(o.merchant_name)}</div>
                 <div style={{ minWidth: 0 }}>
-                  <div className="p2p-merchant">{o.merchant_name}</div>
+                <div
+  className="p2p-avatar"
+  role="button"
+  tabIndex={0}
+  aria-label={`View ${o.merchant_name}'s merchant profile`}
+  onClick={(e) => {
+    e.stopPropagation();
+    onOpenMerchant?.(o.user_id);
+  }}
+>
+  {initials(o.merchant_name)}
+</div>
                   <div className="p2p-rep">
                     {fmt(o.completion_rate, 1)}% completion
                     {o.avg_release_time_minutes != null ? ` · ~${o.avg_release_time_minutes}m release` : ""}
