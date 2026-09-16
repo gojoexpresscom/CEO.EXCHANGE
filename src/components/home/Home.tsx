@@ -2559,31 +2559,213 @@ function CommentsModal({ comments, currentUserId, onClose, onAdd, onDelete }: {
   onDelete: (commentId: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const count = comments.length;
+  const title = count === 0 ? "Comments" : `${count} comment${count === 1 ? "" : "s"}`;
+
+  const submit = async () => {
+    const body = text.trim();
+    if (!body || busy) return;
+    setBusy(true);
+    try {
+      await onAdd(body);
+      setText("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <ModalShell title="Comments" onClose={onClose}>
-      <div style={styles.comments}>
-        {comments.map((c) => (
-          <div key={c.id} style={styles.commentRow}>
-            <Avatar url={c.profile?.profile_picture_url} text={c.profile?.nickname || "CE"} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <b>{(c.profile?.nickname && c.profile.nickname.trim()) || "User"}</b>
-              <div>{c.content}</div>
-              <small style={{ color: "#777" }}>{timeAgo(c.created_at)}</small>
-            </div>
-            {currentUserId && c.user_id === currentUserId && (
-              <button type="button" style={styles.commentDelete} onClick={() => void onDelete(c.id)}>Delete</button>
-            )}
-          </div>
-        ))}
-        {!comments.length && <Empty text="No comments yet." />}
+    <ModalShell title={title} onClose={onClose}>
+      {/* Composer — Bybit-style "Leave a comment" row */}
+      <div style={cmtStyles.composer}>
+        <div style={cmtStyles.composerAv}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#f5b51b" }}>
+            {(currentUserId || "U").slice(0, 1).toUpperCase()}
+          </span>
+        </div>
+        <input
+          style={cmtStyles.composerInput}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Leave a comment"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+        />
+        <button
+          type="button"
+          style={{
+            ...cmtStyles.postBtn,
+            opacity: text.trim() && !busy ? 1 : 0.45,
+          }}
+          disabled={!text.trim() || busy}
+          onClick={() => void submit()}
+        >
+          Post
+        </button>
       </div>
-      <div style={styles.otpRow}>
-        <input style={{ ...styles.input, flex: 1 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a comment" />
-        <button type="button" style={styles.primaryButton} onClick={() => { void onAdd(text); setText(""); }}>Post</button>
+
+      <div style={cmtStyles.list}>
+        {comments.map((c) => {
+          const name = (c.profile?.nickname && c.profile.nickname.trim()) || "User";
+          const isMine = Boolean(currentUserId && c.user_id === currentUserId);
+          return (
+            <div key={c.id} style={cmtStyles.row}>
+              <Avatar url={c.profile?.profile_picture_url} text={name} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={cmtStyles.name}>{name}</div>
+                <div style={cmtStyles.body}>{c.content}</div>
+                <div style={cmtStyles.meta}>
+                  <span>{timeAgo(c.created_at)}</span>
+                  <button
+                    type="button"
+                    style={cmtStyles.replyBtn}
+                    onClick={() => setText((t) => (t ? t : `@${name} `))}
+                  >
+                    Reply
+                  </button>
+                  {isMine && (
+                    <button
+                      type="button"
+                      style={cmtStyles.deleteBtn}
+                      onClick={() => void onDelete(c.id)}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div style={cmtStyles.likeCol}>
+                <Icon name="heart" size={16} />
+                <span style={{ fontSize: 11, color: "#666" }}>0</span>
+              </div>
+            </div>
+          );
+        })}
+        {!comments.length && (
+          <p style={cmtStyles.empty}>No comments yet.</p>
+        )}
       </div>
     </ModalShell>
   );
 }
+
+const cmtStyles: Record<string, React.CSSProperties> = {
+  composer: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "4px 0 14px",
+    borderBottom: "1px solid #1a1a1a",
+    marginBottom: 4,
+  },
+  composerAv: {
+    width: 36,
+    height: 36,
+    borderRadius: "50%",
+    background: "#161616",
+    border: "1px solid #2a2a2a",
+    display: "grid",
+    placeItems: "center",
+    flexShrink: 0,
+  },
+  composerInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "1px solid #2a2a2a",
+    background: "#0e0e0e",
+    borderRadius: 20,
+    color: "#eee",
+    padding: "10px 14px",
+    fontSize: 14,
+    outline: "none",
+  },
+  postBtn: {
+    border: 0,
+    borderRadius: 20,
+    padding: "10px 16px",
+    background: "#f5b51b",
+    color: "#0a0a0a",
+    fontWeight: 800,
+    fontSize: 13,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    maxHeight: "55vh",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+  },
+  row: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: "14px 0",
+    borderBottom: "1px solid #151515",
+  },
+  name: {
+    fontWeight: 700,
+    fontSize: 14,
+    color: "#f2f2f2",
+    marginBottom: 4,
+  },
+  body: {
+    fontSize: 14,
+    color: "#ddd",
+    lineHeight: 1.45,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  meta: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    marginTop: 8,
+    fontSize: 12,
+    color: "#777",
+  },
+  replyBtn: {
+    border: 0,
+    background: "transparent",
+    color: "#888",
+    fontWeight: 600,
+    fontSize: 12,
+    padding: 0,
+    cursor: "pointer",
+  },
+  deleteBtn: {
+    border: 0,
+    background: "transparent",
+    color: "#ff6574",
+    fontWeight: 600,
+    fontSize: 12,
+    padding: 0,
+    cursor: "pointer",
+  },
+  likeCol: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+    color: "#666",
+    flexShrink: 0,
+    paddingTop: 4,
+  },
+  empty: {
+    color: "#666",
+    textAlign: "center",
+    padding: "36px 12px",
+    fontSize: 14,
+    margin: 0,
+  },
+};
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) { return <div style={styles.stat}><span>{label}</span><b>{value}</b></div>; }
 
