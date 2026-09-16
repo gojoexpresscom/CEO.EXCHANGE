@@ -1109,36 +1109,7 @@ export default function Home({
       {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
 
       <main
-        ref={contentRef as React.RefObject<HTMLElement>
-      {/* Bybit-style pull-to-refresh: compact logo at top, content stays visible */}
-      {(isRefreshing || pullY > 8) && (
-        <div
-          style={{
-            ...styles.pullRefresh,
-            height: isRefreshing ? 52 : Math.max(pullY, 0),
-            opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1),
-            background: "transparent",
-            backgroundColor: "transparent",
-          }}
-          aria-busy={isRefreshing}
-          aria-label={isRefreshing ? "Refreshing" : undefined}
-        >
-          <div style={styles.pullLogoWrap}>
-            <img
-              src="/ceo-auth-reference-transparent.png"
-              alt="CEO"
-              style={{
-                ...styles.pullLogo,
-                transform: isRefreshing
-                  ? undefined
-                  : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
-              }}
-            />
-            {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
-          </div>
-        </div>
-      )}
-}
+        ref={contentRef as React.RefObject<HTMLElement>}
         style={styles.content}
         onTouchStart={onPullStart}
         onTouchMove={onPullMove}
@@ -1149,6 +1120,34 @@ export default function Home({
           if (top <= 180) setFabOpen(false);
         }}
       >
+        {/* Bybit-style pull-to-refresh: compact logo at top, content stays visible */}
+        {(isRefreshing || pullY > 8) && (
+          <div
+            style={{
+              ...styles.pullRefresh,
+              height: isRefreshing ? 52 : Math.max(pullY, 0),
+              opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1),
+              background: "transparent",
+              backgroundColor: "transparent",
+            }}
+            aria-busy={isRefreshing}
+            aria-label={isRefreshing ? "Refreshing" : undefined}
+          >
+            <div style={styles.pullLogoWrap}>
+              <img
+                src="/ceo-auth-reference-transparent.png"
+                alt="CEO"
+                style={{
+                  ...styles.pullLogo,
+                  transform: isRefreshing
+                    ? undefined
+                    : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
+                }}
+              />
+              {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
+            </div>
+          </div>
+        )}
         <section style={styles.balanceCard}>
           <div style={styles.balanceTop}>
             <div>
@@ -1491,12 +1490,80 @@ const svc: Record<string, React.CSSProperties> = {
 };
 
 
+
+/** Official-style coin icons (CDN). Falls back to letter avatar on error. */
+const COIN_ICON_ALIASES: Record<string, string> = {
+  BTC: "btc", XBT: "btc",
+  ETH: "eth",
+  SOL: "sol",
+  BNB: "bnb",
+  XRP: "xrp",
+  ADA: "ada",
+  DOGE: "doge",
+  DOT: "dot",
+  AVAX: "avax",
+  MATIC: "matic", POL: "matic",
+  LINK: "link",
+  LTC: "ltc",
+  ATOM: "atom",
+  UNI: "uni",
+  APT: "apt",
+  ARB: "arb",
+  OP: "op",
+  SUI: "sui",
+  TON: "ton",
+  TRX: "trx",
+  SHIB: "shib",
+  PEPE: "pepe",
+  NEAR: "near",
+  FIL: "fil",
+  ICP: "icp",
+  AAVE: "aave",
+  MKR: "mkr",
+  CRV: "crv",
+  SAND: "sand",
+  MANA: "mana",
+  AXS: "axs",
+  GRT: "grt",
+  INJ: "inj",
+  SEI: "sei",
+  TIA: "tia",
+  WLD: "wld",
+  FET: "fet",
+  RENDER: "rndr", RNDR: "rndr",
+  IMX: "imx",
+  STX: "stx",
+  RUNE: "rune",
+  EGLD: "egld",
+  ALGO: "algo",
+  XLM: "xlm",
+  VET: "vet",
+  HBAR: "hbar",
+  FTM: "ftm",
+  SUI: "sui",
+  ONDO: "ondo",
+  MNT: "mnt",
+  APEX: "apex",
+  USDT: "usdt",
+  USDC: "usdc",
+};
+
+function coinIconUrl(base: string): string {
+  const key = (base || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const slug = COIN_ICON_ALIASES[key] || key.toLowerCase();
+  // spothq cryptocurrency-icons — reliable public CDN
+  return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/${slug}.png`;
+}
+
 function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
   const change = market.change_24h == null ? null : Number(market.change_24h);
   const up = change != null && change >= 0;
-  const letter = (market.base_asset || market.symbol || "?").slice(0, 1).toUpperCase();
+  const base = (market.base_asset || market.symbol?.split(/[\/\-]/)[0] || "?").toUpperCase();
+  const quote = (market.quote_asset || "USDT").toUpperCase();
+  const letter = base.slice(0, 1);
   const vol = market.volume_24h == null ? null : Number(market.volume_24h);
   const volLabel = vol == null ? "" : vol >= 1_000_000 ? `${(vol / 1_000_000).toFixed(2)}M` : vol >= 1_000 ? `${(vol / 1_000).toFixed(1)}K` : formatMoney(vol);
+  const [imgOk, setImgOk] = React.useState(true);
 
   return (
     <button type="button" style={styles.marketRow} onClick={onTrade}>
@@ -1508,21 +1575,35 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
       >
         <Icon name="star" size={15} />
       </span>
-      <span style={styles.coinAvatar}>{letter}</span>
+      {imgOk ? (
+        <img
+          src={coinIconUrl(base)}
+          alt={base}
+          style={styles.coinImg}
+          onError={() => setImgOk(false)}
+        />
+      ) : (
+        <span style={styles.coinAvatar}>{letter}</span>
+      )}
       <div style={styles.pair}>
-        <b>{market.symbol}</b>
-        {vol != null && <span>{volLabel} USDT</span>}
+        <div style={styles.pairTop}>
+          <b style={styles.pairName}>{base}</b>
+          <span style={styles.pairSlash}> / {quote}</span>
+        </div>
+        {vol != null && <span style={styles.pairVol}>{volLabel} {quote}</span>}
       </div>
-      <div style={styles.price}>{market.last_price == null ? "—" : formatPrice(Number(market.last_price))}</div>
+      <div style={styles.priceCol}>
+        <div style={styles.price}>{market.last_price == null ? "—" : formatPrice(Number(market.last_price))}</div>
+      </div>
       <span
         style={{
           ...styles.changePill,
-          background: change == null ? "#2a2a2a" : up ? "#0d3d2e" : "#3d1518",
-          color: change == null ? "#888" : up ? "#1ecf8a" : "#ff5c6c",
+          background: change == null ? "#2a2a2a" : up ? "#12b76a" : "#f04438",
+          color: "#fff",
         }}
         onClick={(e) => { e.stopPropagation(); onTrade(); }}
       >
-        {change == null ? "—" : `${up ? "+" : ""}${change.toFixed(2)}%`}
+        {change == null ? "—" : `${up ? "" : ""}${change.toFixed(2)}%`}
       </span>
     </button>
   );
@@ -3184,17 +3265,23 @@ const styles: Record<string, React.CSSProperties> = {
   tab: { whiteSpace: "nowrap", border: 0, background: "transparent", color: "#7a7a7a", padding: "12px 12px", display: "inline-flex", alignItems: "center", cursor: "pointer", fontWeight: 600, fontSize: 14 },
   tabActive: { color: "#fff", borderBottom: "2px solid #f0b90b" },
   marketHeader: { display: "none" },
-  marketRow: { width: "100%", minHeight: 64, display: "grid", gridTemplateColumns: "22px 36px 1.2fr auto auto", alignItems: "center", gap: 10, padding: "12px 2px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "1px solid #141414", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
+  marketRow: { width: "100%", minHeight: 60, display: "grid", gridTemplateColumns: "22px 36px 1.2fr auto auto", alignItems: "center", gap: 10, padding: "10px 2px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "none", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
   starButton: { border: 0, background: "transparent", color: "#555", padding: 0, cursor: "pointer", borderRadius: 7, width: 22, height: 22, display: "grid", placeItems: "center" },
   starHit: { border: 0, background: "transparent", color: "#4a4a4a", padding: 0, cursor: "pointer", width: 22, height: 22, display: "grid", placeItems: "center" },
   starButtonActive: { color: "#f0b90b" },
-  coinAvatar: { width: 32, height: 32, borderRadius: 999, background: "linear-gradient(145deg,#2a2a2a,#141414)", border: "1px solid #2e2e2e", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#eee" },
-  pair: { display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" },
+  coinAvatar: { width: 32, height: 32, borderRadius: 999, background: "linear-gradient(145deg,#2a2a2a,#141414)", border: "1px solid #2e2e2e", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#eee", flexShrink: 0 },
+  coinImg: { width: 32, height: 32, borderRadius: 999, objectFit: "cover", background: "#1a1a1a", flexShrink: 0 },
+  pair: { display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden", gap: 2 },
+  pairTop: { display: "flex", alignItems: "center", gap: 2, minWidth: 0 },
+  pairName: { fontSize: 14, fontWeight: 600, color: "#f5f5f5" },
+  pairSlash: { fontSize: 13, fontWeight: 500, color: "#8a8a8a" },
+  pairVol: { color: "#666", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   "pair b": { fontSize: 14, fontWeight: 600, color: "#f5f5f5" },
   "pair span": { color: "#666", fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" },
-  price: { fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", color: "#f5f5f5", textAlign: "right", minWidth: 72 },
+  priceCol: { display: "flex", flexDirection: "column", alignItems: "flex-end", minWidth: 72 },
+  price: { fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", color: "#f5f5f5", textAlign: "right" },
   change: { fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" },
-  changePill: { minWidth: 72, textAlign: "center", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" },
+  changePill: { minWidth: 68, textAlign: "center", borderRadius: 6, padding: "7px 10px", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", color: "#fff" },
   tradeButton: { border: 0, borderRadius: 8, background: "#1a1a1a", color: "#ddd", padding: "8px 10px", cursor: "pointer", fontWeight: 600, fontSize: 12 },
   categoryRow: { display: "flex", gap: 6, padding: "8px 0 4px", overflowX: "auto", scrollbarWidth: "none" },
   categoryTab: { border: "1px solid #2a2a2a", background: "#121212", color: "#9a9a9a", borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
