@@ -179,7 +179,8 @@ const css = `
 .side-tab.sell.active{background:#b82034;color:#fff}
 .form-body{padding:0 12px 14px}
 .label{display:flex;justify-content:space-between;color:#999;font-size:11.5px;margin:10px 0 5px}
-.input-wrap{display:flex;align-items:center;border:1px solid #232323;border-radius:9px;background:#0a0a0a}
+.input-wrap{display:flex;align-items:center;border:1px solid #292929;border-radius:11px;background:#0b0b0b;transition:border-color 180ms ease,box-shadow 180ms ease}
+.input-wrap:focus-within{border-color:#d9a927;box-shadow:0 0 0 3px rgba(245,181,27,.1)}
 .input-wrap:focus-within{border-color:#d9a927}
 .step-btn{background:none;border:0;color:#777;padding:10px;cursor:pointer;font-size:14px;line-height:0}
 .step-btn:hover{color:#f4c542}
@@ -220,7 +221,8 @@ const css = `
 .view-more{background:none;border:0;color:#888;font-size:12px;cursor:pointer}
 .view-more:hover{color:#f4c542}
 .hot-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.hot-card{min-width:110px;background:#0a0a0a;border:1px solid #202020;border-radius:10px;padding:8px 10px;cursor:pointer;flex-shrink:0}
+.hot-card{min-width:110px;background:linear-gradient(145deg,#11110f,#0a0a0a);border:1px solid #242424;border-radius:12px;padding:9px 10px;cursor:pointer;flex-shrink:0;transition:transform 160ms ease,border-color 180ms ease,background-color 180ms ease}
+.hot-card:active{transform:scale(.98)}
 .hot-card:hover{border-color:#7a5c14}
 .hot-card .sym{font-size:12px;font-weight:700;color:#fff}
 .hot-card .px{font-size:13px;font-weight:600;margin-top:2px}
@@ -265,6 +267,21 @@ const css = `
 .error{margin:8px 12px;border:1px solid #5b1d26;background:#1b080b;color:#ff9aa6;border-radius:9px;padding:10px;font-size:12px}
 .notice-ok{margin:8px 12px;border:1px solid #1e4a34;background:#08160f;color:#8fe0bb;border-radius:9px;padding:10px;font-size:12px}
 .loading{min-height:100vh;display:grid;place-items:center;color:#f4c542}
+.trade-page{background:radial-gradient(circle at 70% -10%,rgba(245,181,27,.14),transparent 32rem),#070707;font-family:"Avenir Next","Segoe UI",ui-sans-serif,system-ui,sans-serif}
+.trade-top{min-height:62px;padding:10px 16px;background:rgba(7,7,7,.82);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,.09);box-shadow:0 14px 35px rgba(0,0,0,.2)}
+.trade-back,.icon-btn{border-color:rgba(255,255,255,.12);background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(255,255,255,.025));border-radius:13px}
+.market-card,.form-card,.bottom-panel{background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.012));border-color:rgba(255,255,255,.08)}
+.market-card{border-radius:18px 18px 0 0;box-shadow:0 18px 55px rgba(0,0,0,.2)}
+.stats-row{padding:18px 18px 12px}
+.stat-price{font-size:32px;font-weight:800;letter-spacing:-.7px}
+.hot-section{padding:16px;background:rgba(255,255,255,.018);border-bottom-color:rgba(255,255,255,.08)}
+.hot-card{background:linear-gradient(145deg,rgba(245,181,27,.12),rgba(255,255,255,.025));border-color:rgba(245,181,27,.16);border-radius:15px;padding:12px}
+.form-card{border-radius:0 0 18px 18px}
+.side-tabs{border-color:rgba(255,255,255,.12);border-radius:12px}
+.input-wrap{background:rgba(0,0,0,.28);border-color:rgba(255,255,255,.12);border-radius:13px}
+.order-btn{border-radius:12px;padding:14px}
+.bottom-panel{box-shadow:0 -16px 38px rgba(0,0,0,.22)}
+@media(max-width:900px){.trade-shell{padding-bottom:66px}.trade-top{padding-left:12px;padding-right:12px}.chart-wrap{height:300px}.main-grid{padding:0 8px}.hot-section{padding-left:12px;padding-right:12px}}
 `;
 
 function fmt(v: number | null | undefined, d = 2) {

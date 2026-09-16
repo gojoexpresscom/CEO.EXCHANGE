@@ -1,25 +1,15 @@
-// src/components/trade/TradingChart.tsx
-//
-// Native CEO.EXCHANGE candlestick chart. Replaces the embedded TradingView
-// widget entirely — no tv.js, no iframe, no KRAKEN: symbol lookups. Renders
-// ONLY the real candle data it is given (the same market_candles rows
-// TradingPage already loads through the Kraken execution provider). No
-// synthetic candles, no Math.random(), no placeholder price action: if
-// `candles` is empty, the chart shows an empty/"No data" state instead of
-// inventing anything.
-
 import { useEffect, useRef } from "react";
 import {
-  createChart,
   CandlestickSeries,
-  HistogramSeries,
   ColorType,
   CrosshairMode,
+  HistogramSeries,
+  createChart,
+  type CandlestickData,
+  type HistogramData,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
-  type CandlestickData,
-  type HistogramData,
 } from "lightweight-charts";
 
 export type ChartCandle = {
@@ -33,53 +23,73 @@ export type ChartCandle = {
 
 type Props = {
   candles: ChartCandle[];
-  className?: string;
 };
+
+function isValidCandle(candle: ChartCandle) {
+  return (
+    Number.isFinite(new Date(candle.open_time).getTime()) &&
+    Number.isFinite(candle.open) &&
+    Number.isFinite(candle.high) &&
+    Number.isFinite(candle.low) &&
+    Number.isFinite(candle.close) &&
+    Number.isFinite(candle.volume)
+  );
+}
+
+function sortCandles(candles: ChartCandle[]) {
+  return candles
+    .filter(isValidCandle)
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(a.open_time).getTime() - new Date(b.open_time).getTime(),
+    );
+}
 
 function toUnixSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
 }
 
-function toBar(c: ChartCandle): CandlestickData<UTCTimestamp> {
+function toBar(candle: ChartCandle): CandlestickData<UTCTimestamp> {
   return {
-    time: toUnixSeconds(c.open_time),
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
+    time: toUnixSeconds(candle.open_time),
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
   };
 }
 
-function toVolumeBar(c: ChartCandle): HistogramData<UTCTimestamp> {
+function toVolumeBar(candle: ChartCandle): HistogramData<UTCTimestamp> {
   return {
-    time: toUnixSeconds(c.open_time),
-    value: c.volume,
-    color: c.close >= c.open ? "rgba(22,199,132,0.5)" : "rgba(234,57,67,0.5)",
+    time: toUnixSeconds(candle.open_time),
+    value: candle.volume,
+    color:
+      candle.close >= candle.open
+        ? "rgba(22,199,132,0.5)"
+        : "rgba(234,57,67,0.5)",
   };
 }
 
-// CEO.EXCHANGE chart theme: charcoal/black foundation, restrained gold accent
-// on the crosshair/last-price line, neutral up/down colors matching the rest
-// of the trading UI (#16c784 / #ea3943).
 const UP_COLOR = "#16c784";
 const DOWN_COLOR = "#ea3943";
 const GOLD = "#f4c542";
 
-export default function TradingChart({ candles, className }: Props) {
+export default function TradingChart({ candles }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const prevCandlesRef = useRef<ChartCandle[]>([]);
+  const candleSeriesRef =
+    useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const previousCandlesRef = useRef<ChartCandle[]>([]);
 
-  // Create the chart once on mount; tear it down cleanly on unmount.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const chart = createChart(el, {
-      width: el.clientWidth,
-      height: el.clientHeight,
+    const chart = createChart(container, {
+      width: container.clientWidth,
+      height: container.clientHeight,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#9a9a9a",
@@ -92,8 +102,16 @@ export default function TradingChart({ candles, className }: Props) {
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: "rgba(244,197,66,0.35)", labelBackgroundColor: "#171307", width: 1 },
-        horzLine: { color: "rgba(244,197,66,0.35)", labelBackgroundColor: "#171307", width: 1 },
+        vertLine: {
+          color: "rgba(244,197,66,0.35)",
+          labelBackgroundColor: "#171307",
+          width: 1,
+        },
+        horzLine: {
+          color: "rgba(244,197,66,0.35)",
+          labelBackgroundColor: "#171307",
+          width: 1,
+        },
       },
       rightPriceScale: {
         borderColor: "#1c1c1c",
@@ -105,8 +123,17 @@ export default function TradingChart({ candles, className }: Props) {
         secondsVisible: false,
         rightOffset: 4,
       },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+      },
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -130,67 +157,68 @@ export default function TradingChart({ candles, className }: Props) {
     });
 
     chartRef.current = chart;
-    seriesRef.current = candleSeries;
-    volumeRef.current = volumeSeries;
-    prevCandlesRef.current = [];
+    candleSeriesRef.current = candleSeries;
+    volumeSeriesRef.current = volumeSeries;
+    previousCandlesRef.current = [];
 
-    const ro = new ResizeObserver((entries) => {
+    const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
       const { width, height } = entry.contentRect;
-      if (width > 0 && height > 0) {
-        chart.applyOptions({ width, height });
-      }
+      if (width > 0 && height > 0) chart.applyOptions({ width, height });
     });
-    ro.observe(el);
+    resizeObserver.observe(container);
 
     return () => {
-      ro.disconnect();
+      resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
-      seriesRef.current = null;
-      volumeRef.current = null;
-      prevCandlesRef.current = [];
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      previousCandlesRef.current = [];
     };
   }, []);
 
-  // Push real candle data into the chart. Full setData() on a reload
-  // (pair/timeframe switch, or an empty->populated transition); an
-  // incremental update() for the common case of a single tail bar
-  // ticking/appending from the realtime subscription, so pan/zoom state
-  // isn't reset on every 60s poll.
   useEffect(() => {
-    const candleSeries = seriesRef.current;
-    const volumeSeries = volumeRef.current;
-    if (!candleSeries || !volumeSeries) return;
+    const candleSeries = candleSeriesRef.current;
+    const volumeSeries = volumeSeriesRef.current;
+    const chart = chartRef.current;
+    if (!candleSeries || !volumeSeries || !chart) return;
 
-    const prev = prevCandlesRef.current;
+    const nextCandles = sortCandles(candles);
+    const previousCandles = previousCandlesRef.current;
     const isReload =
-      candles.length === 0 ||
-      prev.length === 0 ||
-      candles.length < prev.length ||
-      candles[0]?.open_time !== prev[0]?.open_time ||
-      candles.length - prev.length > 1;
+      nextCandles.length === 0 ||
+      previousCandles.length === 0 ||
+      nextCandles.length < previousCandles.length ||
+      nextCandles[0]?.open_time !== previousCandles[0]?.open_time ||
+      nextCandles.length - previousCandles.length > 1;
 
     if (isReload) {
-      candleSeries.setData(candles.map(toBar));
-      volumeSeries.setData(candles.map(toVolumeBar));
-      if (candles.length) chartRef.current?.timeScale().fitContent();
+      candleSeries.setData(nextCandles.map(toBar));
+      volumeSeries.setData(nextCandles.map(toVolumeBar));
+      if (nextCandles.length) chart.timeScale().fitContent();
     } else {
-      const last = candles[candles.length - 1];
-      const prevLast = prev[prev.length - 1];
-      if (last && (candles.length !== prev.length || last.open_time !== prevLast?.open_time || last.close !== prevLast?.close)) {
+      const last = nextCandles[nextCandles.length - 1];
+      const previousLast = previousCandles[previousCandles.length - 1];
+      if (
+        last &&
+        (!previousLast ||
+          last.open_time !== previousLast.open_time ||
+          last.close !== previousLast.close ||
+          last.volume !== previousLast.volume)
+      ) {
         candleSeries.update(toBar(last));
         volumeSeries.update(toVolumeBar(last));
       }
     }
-    prevCandlesRef.current = candles;
+
+    previousCandlesRef.current = nextCandles;
   }, [candles]);
 
   return (
     <div
       ref={containerRef}
-      className={className}
       style={{ width: "100%", height: "100%", position: "relative" }}
     />
   );
