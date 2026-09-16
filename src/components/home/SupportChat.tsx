@@ -85,6 +85,21 @@ export default function SupportChat({ onClose }: Props) {
   const [agentTyping, setAgentTyping] = useState(false);
   const [error, setError] = useState("");
   const [closedLocal, setClosedLocal] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const lastActiveRef = useRef(Date.now());
+
+  const IDLE_MS = 15 * 60 * 1000;
+  useEffect(() => {
+    if (screen !== "chat" || !ticket?.id) return;
+    const tick = () => {
+      if (Date.now() - lastActiveRef.current >= IDLE_MS) {
+        void endChat();
+      }
+    };
+    const id = window.setInterval(tick, 30000);
+    return () => window.clearInterval(id);
+  }, [screen, ticket?.id]);
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const gateInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -177,6 +192,8 @@ export default function SupportChat({ onClose }: Props) {
   }, [ticket?.id, isClosed, loadMessages]);
 
   async function endChat() {
+    setShowEndConfirm(false);
+    lastActiveRef.current = Date.now();
     if (!ticket?.id) {
       onClose();
       return;
@@ -361,6 +378,16 @@ export default function SupportChat({ onClose }: Props) {
           </div>
 
           {error && <div style={errBox}>{error}</div>}
+      {showEndConfirm && (
+        <div style={endOverlay} onClick={() => setShowEndConfirm(false)}>
+          <div style={endSheet} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17, fontWeight: 800 }}>End chat?</h3>
+            <p style={{ margin: "0 0 16px", color: "#999", fontSize: 13, lineHeight: 1.45 }}>Your chat history will be cleared. You can start a new chat anytime.</p>
+            <button type="button" style={endPrimary} onClick={() => { setShowEndConfirm(false); void endChat(); }}>End Chat</button>
+            <button type="button" style={endSecondary} onClick={() => setShowEndConfirm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
           <button
             type="button"
@@ -389,7 +416,7 @@ export default function SupportChat({ onClose }: Props) {
             <div style={headerTitle}>CEO AI</div>
             <div style={headerSub}>Almost there</div>
           </div>
-          <button type="button" style={powerBtn} onClick={endChat} aria-label="End">
+          <button type="button" style={powerBtn} onClick={() => setShowEndConfirm(true)} aria-label="End">
             ⌁
           </button>
         </header>
@@ -409,6 +436,16 @@ export default function SupportChat({ onClose }: Props) {
             }}
           />
           {error && <div style={errBox}>{error}</div>}
+      {showEndConfirm && (
+        <div style={endOverlay} onClick={() => setShowEndConfirm(false)}>
+          <div style={endSheet} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17, fontWeight: 800 }}>End chat?</h3>
+            <p style={{ margin: "0 0 16px", color: "#999", fontSize: 13, lineHeight: 1.45 }}>Your chat history will be cleared. You can start a new chat anytime.</p>
+            <button type="button" style={endPrimary} onClick={() => { setShowEndConfirm(false); void endChat(); }}>End Chat</button>
+            <button type="button" style={endSecondary} onClick={() => setShowEndConfirm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
           <button
             type="button"
             style={startBtn}
@@ -438,7 +475,7 @@ export default function SupportChat({ onClose }: Props) {
             <div style={headerTitle}>CEO AI</div>
             <div style={headerSub}>One more step</div>
           </div>
-          <button type="button" style={powerBtn} onClick={endChat} aria-label="End">
+          <button type="button" style={powerBtn} onClick={() => setShowEndConfirm(true)} aria-label="End">
             ⌁
           </button>
         </header>
@@ -456,6 +493,16 @@ export default function SupportChat({ onClose }: Props) {
             }}
           />
           {error && <div style={errBox}>{error}</div>}
+      {showEndConfirm && (
+        <div style={endOverlay} onClick={() => setShowEndConfirm(false)}>
+          <div style={endSheet} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17, fontWeight: 800 }}>End chat?</h3>
+            <p style={{ margin: "0 0 16px", color: "#999", fontSize: 13, lineHeight: 1.45 }}>Your chat history will be cleared. You can start a new chat anytime.</p>
+            <button type="button" style={endPrimary} onClick={() => { setShowEndConfirm(false); void endChat(); }}>End Chat</button>
+            <button type="button" style={endSecondary} onClick={() => setShowEndConfirm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
           <button type="button" style={startBtn} disabled={sending} onClick={() => void startTicket()}>
             {sending ? "Starting…" : "Start chat"}
           </button>
@@ -486,7 +533,7 @@ export default function SupportChat({ onClose }: Props) {
             {isClosed ? "Chat closed" : mode === "ai" ? "Assistant online" : "Agent connected"}
           </div>
         </div>
-        <button type="button" style={powerBtn} onClick={() => void endChat()} aria-label="End chat" title="End chat">
+        <button type="button" style={powerBtn} onClick={() => setShowEndConfirm(true)} aria-label="End chat" title="End chat">
           ⌁
         </button>
       </header>
@@ -557,6 +604,16 @@ export default function SupportChat({ onClose }: Props) {
           <div style={{ ...typingLine, color: "#8ab4ff" }}>Agent is typing…</div>
         )}
         {error && <div style={errBox}>{error}</div>}
+      {showEndConfirm && (
+        <div style={endOverlay} onClick={() => setShowEndConfirm(false)}>
+          <div style={endSheet} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 8px", color: "#fff", fontSize: 17, fontWeight: 800 }}>End chat?</h3>
+            <p style={{ margin: "0 0 16px", color: "#999", fontSize: 13, lineHeight: 1.45 }}>Your chat history will be cleared. You can start a new chat anytime.</p>
+            <button type="button" style={endPrimary} onClick={() => { setShowEndConfirm(false); void endChat(); }}>End Chat</button>
+            <button type="button" style={endSecondary} onClick={() => setShowEndConfirm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
         {isClosed && (
           <div style={closedBanner}>
@@ -656,6 +713,48 @@ const powerBtn: React.CSSProperties = {
   cursor: "pointer",
   display: "grid",
   placeItems: "center",
+};
+
+
+const endOverlay: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 200,
+  background: "rgba(0,0,0,0.65)",
+  display: "flex",
+  alignItems: "flex-end",
+  justifyContent: "center",
+};
+const endSheet: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 480,
+  background: "#121212",
+  borderRadius: "16px 16px 0 0",
+  padding: "20px 16px calc(20px + env(safe-area-inset-bottom))",
+  border: "1px solid #2a2a2a",
+};
+const endPrimary: React.CSSProperties = {
+  width: "100%",
+  border: 0,
+  borderRadius: 12,
+  padding: "14px",
+  background: "#f5b51b",
+  color: "#0a0a0a",
+  fontWeight: 800,
+  fontSize: 15,
+  cursor: "pointer",
+  marginBottom: 8,
+};
+const endSecondary: React.CSSProperties = {
+  width: "100%",
+  border: "1px solid #333",
+  borderRadius: 12,
+  padding: "14px",
+  background: "transparent",
+  color: "#ddd",
+  fontWeight: 700,
+  fontSize: 15,
+  cursor: "pointer",
 };
 
 const headerCenter: React.CSSProperties = {

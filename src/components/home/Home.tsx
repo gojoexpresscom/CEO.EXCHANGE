@@ -212,7 +212,7 @@ type Comment = {
   profile?: Pick<Profile, "nickname" | "profile_picture_url">;
 };
 
-type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "post" | "announcement" | "messages" | "profile" | "promo" | null;
+type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "services" | "post" | "announcement" | "messages" | "profile" | "promo" | null;
 type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
@@ -1091,6 +1091,25 @@ export default function Home({
 
   return (
     <div style={styles.page}>
+      <style>{HOME_MOTION}</style>
+      <header style={styles.header}>
+        <button type="button" style={styles.profileBtn} onClick={() => { setSettingsTab("My Info"); setSettingsOpen(true); }} aria-label="Profile">
+          <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
+        </button>
+        <div style={styles.topSearch}>
+          <Icon name="search" size={18} />
+          <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="" aria-label="Search markets" />
+          {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={16} /></button>}
+        </div>
+        <div style={styles.headerActions}>
+          {/* User Center via avatar; More opens Services */}
+        </div>
+      </header>
+
+      {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
+
+      <main
+        ref={contentRef as React.RefObject<HTMLElement>
       {/* Bybit-style pull-to-refresh: compact logo at top, content stays visible */}
       {(isRefreshing || pullY > 8) && (
         <div
@@ -1119,25 +1138,7 @@ export default function Home({
           </div>
         </div>
       )}
-      <style>{HOME_MOTION}</style>
-      <header style={styles.header}>
-        <button type="button" style={styles.profileBtn} onClick={() => { setSettingsTab("My Info"); setSettingsOpen(true); }} aria-label="Profile">
-          <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
-        </button>
-        <div style={styles.topSearch}>
-          <Icon name="search" size={18} />
-          <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="" aria-label="Search markets" />
-          {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={16} /></button>}
-        </div>
-        <div style={styles.headerActions}>
-          <button type="button" style={styles.iconRound} onClick={() => setModal("menu")} aria-label="Menu"><Icon name="menu" size={22} /></button>
-        </div>
-      </header>
-
-      {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
-
-      <main
-        ref={contentRef as React.RefObject<HTMLElement>}
+}
         style={styles.content}
         onTouchStart={onPullStart}
         onTouchMove={onPullMove}
@@ -1172,9 +1173,7 @@ export default function Home({
           <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
           <QuickAction icon="wallet" label="Deposit" onClick={() => setModal("deposit")} />
-          <QuickAction icon="trade" label="Convert" onClick={() => notify("Convert is coming soon.")} />
-          <QuickAction icon="trade" label="P2P Trading" onClick={() => onP2P?.()} />
-          <QuickAction icon="menu" label="More" onClick={() => setModal("menu")} />
+          <QuickAction icon="menu" label="More" onClick={() => setModal("services")} />
         </section>
 
         <section style={styles.marketSection}>
@@ -1320,6 +1319,21 @@ export default function Home({
       {modal === "invite" && <InviteModal referral={referral} link={referralLink} onClose={closeModal} onCopy={async () => { if (referralLink) { await navigator.clipboard.writeText(referralLink); notify("Referral link copied."); } }} />}
       {modal === "rewards" && <RewardsModal referral={referral} onClose={closeModal} />}
       {modal === "giveaway" && <GiveawayModal giveaways={giveaways} onClose={closeModal} />}
+      {modal === "services" && (
+        <ServicesModal
+          onClose={closeModal}
+          onOpen={(key) => {
+            if (key === "deposit") setModal("deposit");
+            else if (key === "invite") setModal("invite");
+            else if (key === "rewards") setModal("rewards");
+            else if (key === "giveaway") setModal("giveaway");
+            else if (key === "p2p") { closeModal(); onP2P?.(); }
+            else if (key === "support") setModal("support");
+            else if (key === "menu") setModal("menu");
+            else notify("Coming soon.");
+          }}
+        />
+      )}
       {modal === "menu" && (
         <UserCenter
           profile={profile}
@@ -1384,11 +1398,98 @@ export default function Home({
 function QuickAction({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
   return (
     <button type="button" style={styles.quickAction} onClick={onClick}>
-      <span style={styles.quickIcon}><Icon name={icon} size={22} /></span>
+      <span style={styles.quickIcon}><Icon name={icon} size={24} /></span>
       <span style={styles.quickLabel}>{label}</span>
     </button>
   );
 }
+
+/** Bybit-style Services hub opened from More */
+function ServicesModal({
+  onClose,
+  onOpen,
+}: {
+  onClose: () => void;
+  onOpen: (key: string) => void;
+}) {
+  const [q, setQ] = useState("");
+  const items: { key: string; label: string; section: string }[] = [
+    { key: "rewards", label: "Rewards Hub", section: "Recommended" },
+    { key: "invite", label: "Invite Friends", section: "Recommended" },
+    { key: "deposit", label: "Deposit", section: "Buy Crypto" },
+    { key: "buy", label: "Buy Crypto", section: "Buy Crypto" },
+    { key: "p2p", label: "P2P Trading", section: "Buy Crypto" },
+    { key: "fiat", label: "Fiat Deposit", section: "Buy Crypto" },
+    { key: "convert", label: "Convert", section: "Trade" },
+    { key: "giveaway", label: "Giveaway", section: "Events" },
+    { key: "support", label: "Support", section: "Services" },
+    { key: "menu", label: "User Center", section: "Services" },
+  ];
+  const filtered = q.trim()
+    ? items.filter((i) => i.label.toLowerCase().includes(q.trim().toLowerCase()))
+    : items;
+  const sections = Array.from(new Set(filtered.map((i) => i.section)));
+  return (
+    <div style={svc.shell}>
+      <header style={svc.header}>
+        <button type="button" style={svc.back} onClick={onClose} aria-label="Back">←</button>
+        <h2 style={svc.title}>Services</h2>
+        <span style={{ width: 40 }} />
+      </header>
+      <div style={svc.searchWrap}>
+        <Icon name="search" size={16} />
+        <input
+          style={svc.search}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search"
+        />
+      </div>
+      <div style={svc.body}>
+        <div style={svc.favLabel}>My Favorites</div>
+        <div style={svc.favRow}>
+          {["percent", "userPlus", "gift", "wallet"].map((ic) => (
+            <span key={ic} style={svc.favIcon}><Icon name={ic} size={18} /></span>
+          ))}
+          <button type="button" style={svc.editBtn} onClick={() => onOpen("menu")}>Edit</button>
+        </div>
+        {sections.map((sec) => (
+          <div key={sec} style={{ marginTop: 18 }}>
+            <div style={svc.secTitle}>{sec}</div>
+            <div style={svc.grid}>
+              {filtered.filter((i) => i.section === sec).map((i) => (
+                <button key={i.key} type="button" style={svc.item} onClick={() => onOpen(i.key)}>
+                  <span style={svc.itemIcon}><Icon name={i.key === "p2p" || i.key === "convert" ? "trade" : i.key === "invite" ? "userPlus" : i.key === "deposit" || i.key === "buy" || i.key === "fiat" ? "wallet" : i.key === "support" ? "headset" : "gift"} size={22} /></span>
+                  <span style={svc.itemLabel}>{i.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const svc: Record<string, React.CSSProperties> = {
+  shell: { position: "fixed", inset: 0, zIndex: 96, background: "#050505", display: "flex", flexDirection: "column", fontFamily: "Inter, system-ui, sans-serif" },
+  header: { position: "sticky", top: 0, zIndex: 30, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", background: "rgba(5,5,5,0.92)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", paddingTop: "calc(12px + env(safe-area-inset-top))", borderBottom: "1px solid #1a1a1a" },
+  back: { width: 40, height: 40, border: 0, background: "transparent", color: "#eee", fontSize: 20, cursor: "pointer" },
+  title: { margin: 0, fontSize: 17, fontWeight: 800, color: "#f5f5f5" },
+  searchWrap: { display: "flex", alignItems: "center", gap: 8, margin: "12px 14px", padding: "10px 14px", borderRadius: 999, background: "#121212", border: "1px solid #222", color: "#888" },
+  search: { flex: 1, border: 0, background: "transparent", color: "#eee", fontSize: 14, outline: "none" },
+  body: { flex: 1, overflowY: "auto", padding: "4px 14px calc(28px + env(safe-area-inset-bottom))" },
+  favLabel: { fontSize: 13, fontWeight: 700, color: "#aaa", marginBottom: 10 },
+  favRow: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: "#101010", border: "1px solid #1e1e1e" },
+  favIcon: { width: 36, height: 36, borderRadius: 999, background: "#161616", display: "grid", placeItems: "center", color: "#ddd" },
+  editBtn: { marginLeft: "auto", border: 0, borderRadius: 999, padding: "8px 16px", background: "#f5b51b", color: "#0a0a0a", fontWeight: 800, fontSize: 13, cursor: "pointer" },
+  secTitle: { fontSize: 13, fontWeight: 700, color: "#888", marginBottom: 10 },
+  grid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px 8px" },
+  item: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" },
+  itemIcon: { width: 48, height: 48, borderRadius: 999, background: "#161616", border: "1px solid #222", display: "grid", placeItems: "center", color: "#f0f0f0" },
+  itemLabel: { fontSize: 11, fontWeight: 500, color: "#cfcfcf", textAlign: "center", lineHeight: 1.2 },
+};
+
 
 function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
   const change = market.change_24h == null ? null : Number(market.change_24h);
@@ -3074,16 +3175,16 @@ const styles: Record<string, React.CSSProperties> = {
   walletVisual: { display: "none" },
   walletShape: { display: "none" },
   walletLogo: { display: "none" },
-  quickGrid: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, margin: "14px 0 18px" },
+  quickGrid: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "12px 6px", margin: "16px 0 20px" },
   quickAction: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" },
-  quickIcon: { width: 48, height: 48, borderRadius: 999, background: "#161616", border: "1px solid #222", color: "#f0f0f0", display: "grid", placeItems: "center" },
-  quickLabel: { fontSize: 11, fontWeight: 500, color: "#cfcfcf", textAlign: "center", lineHeight: 1.2 },
+  quickIcon: { width: 52, height: 52, borderRadius: 999, background: "#141414", border: "1px solid #252525", color: "#f0f0f0", display: "grid", placeItems: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.25)" },
+  quickLabel: { fontSize: 12, fontWeight: 500, color: "#c8c8c8", textAlign: "center", lineHeight: 1.25 },
   marketSection: { marginTop: 4 },
   tabsRow: { display: "flex", overflowX: "auto", gap: 2, borderBottom: "1px solid #1a1a1a", scrollbarWidth: "none", marginBottom: 4 },
   tab: { whiteSpace: "nowrap", border: 0, background: "transparent", color: "#7a7a7a", padding: "12px 12px", display: "inline-flex", alignItems: "center", cursor: "pointer", fontWeight: 600, fontSize: 14 },
   tabActive: { color: "#fff", borderBottom: "2px solid #f0b90b" },
   marketHeader: { display: "none" },
-  marketRow: { width: "100%", minHeight: 60, display: "grid", gridTemplateColumns: "22px 34px 1.2fr auto auto", alignItems: "center", gap: 8, padding: "10px 4px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "1px solid #121212", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
+  marketRow: { width: "100%", minHeight: 64, display: "grid", gridTemplateColumns: "22px 36px 1.2fr auto auto", alignItems: "center", gap: 10, padding: "12px 2px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "1px solid #141414", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
   starButton: { border: 0, background: "transparent", color: "#555", padding: 0, cursor: "pointer", borderRadius: 7, width: 22, height: 22, display: "grid", placeItems: "center" },
   starHit: { border: 0, background: "transparent", color: "#4a4a4a", padding: 0, cursor: "pointer", width: 22, height: 22, display: "grid", placeItems: "center" },
   starButtonActive: { color: "#f0b90b" },
@@ -3391,7 +3492,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: 16,
   },
-  pullRefresh: {
+  pullRefresh: { position: "relative",
     position: "sticky",
     top: 0,
     zIndex: 30,

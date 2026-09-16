@@ -83,12 +83,6 @@ export default function UserCenter({
       action: () => onOpenSettings("My Info"),
     },
     {
-      label: "Security",
-      sub: "Password, 2FA, devices",
-      icon: "🛡",
-      action: () => onOpenSettings("Security"),
-    },
-    {
       label: "Inbox",
       sub: "Alerts, updates, activity",
       icon: "🔔",
