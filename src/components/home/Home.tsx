@@ -397,6 +397,8 @@ export default function Home({
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  /** When modal === "profile", which user to show (null = self). */
+  const [viewProfileUserId, setViewProfileUserId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("My Info");
   const [depositResult, setDepositResult] = useState<any>(null);
@@ -733,7 +735,7 @@ export default function Home({
   ).length + warningCountDelta;
   const unreadTotal = unreadAnnouncements + unreadTransactions + unreadSecurity;
 
-  const closeModal = () => { setModal(null); if (modal === "deposit") setDepositResult(null); };
+  const closeModal = () => { setModal(null); setViewProfileUserId(null); if (modal === "deposit") setDepositResult(null); };
 
   const toggleFavorite = async (symbol: string) => {
     if (!userId) return;
@@ -1128,8 +1130,6 @@ export default function Home({
           {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={16} /></button>}
         </div>
         <div style={styles.headerActions}>
-          <button type="button" style={styles.iconRound} onClick={() => setModal("support")} aria-label="Support"><Icon name="headset" size={22} /></button>
-          <button type="button" style={styles.iconRound} onClick={() => setModal("notifications")} aria-label="Notifications"><Icon name="bell" size={22} />{unreadTotal > 0 && <span style={styles.badge}>{unreadTotal > 99 ? "99+" : unreadTotal}</span>}</button>
           <button type="button" style={styles.iconRound} onClick={() => setModal("menu")} aria-label="Menu"><Icon name="menu" size={22} /></button>
         </div>
       </header>
@@ -1167,10 +1167,14 @@ export default function Home({
         </section>
 
         <section style={styles.quickGrid}>
+          <QuickAction icon="percent" label="CEO Earn" onClick={() => notify("CEO Earn is coming soon.")} />
           <QuickAction icon="userPlus" label="Invite Friends" onClick={() => setModal("invite")} />
           <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
-          <QuickAction icon="wallet" label="Web3 Wallet" onClick={() => notify("Web3 Wallet is coming soon.")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
+          <QuickAction icon="wallet" label="Deposit" onClick={() => setModal("deposit")} />
+          <QuickAction icon="trade" label="Convert" onClick={() => notify("Convert is coming soon.")} />
+          <QuickAction icon="trade" label="P2P Trading" onClick={() => onP2P?.()} />
+          <QuickAction icon="menu" label="More" onClick={() => setModal("menu")} />
         </section>
 
         <section style={styles.marketSection}>
@@ -1241,7 +1245,7 @@ export default function Home({
           {(feedTab === "CEO" || feedTab === "Following") && <>
             {filteredPosts.map((p, idx) => (
               <div key={p.id} style={{ animation: `homeFadeUp 0.35s ease-out both`, animationDelay: `${Math.min(idx, 8) * 0.04}s` }}>
-                <PostCard post={p} currentUserId={userId} nowMs={nowTick} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} />
+                <PostCard post={p} currentUserId={userId} nowMs={nowTick} onView={() => void recordView(p.id)} onLike={() => void toggleLike(p)} onComment={() => void openComments(p.id)} onRepost={() => void repost(p)} onShare={() => void sharePost(p)} onDelete={() => void deletePost(p)} onOpenProfile={(uid) => { setViewProfileUserId(uid); setModal("profile"); }} />
               </div>
             ))}
             {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
@@ -1254,7 +1258,7 @@ export default function Home({
         <div style={styles.fabWrap}>
           {fabOpen && (
             <div style={styles.fabMenu}>
-              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setModal("profile"); }}>
+              <button type="button" style={styles.fabMenuItem} onClick={() => { setFabOpen(false); setViewProfileUserId(userId); setModal("profile"); }}>
                 <span style={styles.fabMenuIcon}><Icon name="userPlus" size={16} /></span>
                 <span>Personal center</span>
               </button>
@@ -1328,8 +1332,8 @@ export default function Home({
         />
       )}
 
-      {modal === "profile" && userId && (
-        <SocialProfile profileUserId={userId} currentUserId={userId} onClose={closeModal} notify={notify} />
+      {modal === "profile" && userId && viewProfileUserId && (
+        <SocialProfile profileUserId={viewProfileUserId} currentUserId={userId} onClose={closeModal} notify={notify} />
       )}
       {modal === "messages" && userId && (
         <SocialMessages userId={userId} onClose={closeModal} />
@@ -1403,7 +1407,7 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
   );
 }
 
-function PostCard({ post, currentUserId, nowMs, onView, onLike, onComment, onRepost, onShare, onDelete }: {
+function PostCard({ post, currentUserId, nowMs, onView, onLike, onComment, onRepost, onShare, onDelete, onOpenProfile }: {
   post: Post;
   currentUserId: string | null;
   nowMs?: number;
@@ -1413,20 +1417,26 @@ function PostCard({ post, currentUserId, nowMs, onView, onLike, onComment, onRep
   onRepost: () => void;
   onShare: () => void;
   onDelete: () => void;
+  onOpenProfile?: (userId: string) => void;
 }) {
   const name = (post.profile?.nickname && post.profile.nickname.trim()) || "User";
   const [menuOpen, setMenuOpen] = useState(false);
   const isOwner = Boolean(currentUserId && post.user_id === currentUserId);
   useEffect(() => { onView(); }, []);
   const ts = timeAgo(post.created_at, typeof nowMs === "number" ? nowMs : Date.now());
+  const openAuthor = () => {
+    if (post.user_id && onOpenProfile) onOpenProfile(post.user_id);
+  };
   return (
     <article style={styles.postCard}>
       <div style={styles.postHead}>
-        <Avatar url={post.profile?.profile_picture_url} text={name} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <b style={{ fontSize: 14 }}>{name}</b>
-          <div style={styles.postTime}>{ts}</div>
-        </div>
+        <button type="button" onClick={openAuthor} style={{ border: 0, background: "transparent", padding: 0, cursor: post.user_id ? "pointer" : "default", display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, textAlign: "left" }}>
+          <Avatar url={post.profile?.profile_picture_url} text={name} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <b style={{ fontSize: 14, color: "#f2f2f2" }}>{name}</b>
+            <div style={styles.postTime}>{ts}</div>
+          </div>
+        </button>
         {isOwner && (
           <div style={{ position: "relative" }}>
             <button type="button" style={styles.moreButton} onClick={() => setMenuOpen((v) => !v)}>•••</button>
