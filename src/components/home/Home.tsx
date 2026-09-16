@@ -1339,7 +1339,27 @@ export default function Home({
         <SocialMessages userId={userId} onClose={closeModal} />
       )}
       {modal === "post" && commentPostId ? (
-        <CommentsModal comments={comments} currentUserId={userId} onClose={closeModal} onAdd={addComment} onDelete={deleteComment} />
+        <PostDetailModal
+          post={posts.find((p) => p.id === commentPostId) || null}
+          comments={comments}
+          currentUserId={userId}
+          onClose={closeModal}
+          onAdd={addComment}
+          onDelete={deleteComment}
+          onLikePost={() => {
+            const p = posts.find((x) => x.id === commentPostId);
+            if (p) void toggleLike(p);
+          }}
+          onRepost={() => {
+            const p = posts.find((x) => x.id === commentPostId);
+            if (p) void repost(p);
+          }}
+          onOpenProfile={(uid) => {
+            setViewProfileUserId(uid);
+            setModal("profile");
+          }}
+          notify={notify}
+        />
       ) : modal === "post" ? (
         <PostComposer
           onClose={closeModal}
@@ -2551,17 +2571,40 @@ function CreateAnnouncementModal({ defaultType, onClose, onCreate }: { defaultTy
   return <ModalShell title="Admin post" onClose={onClose}><p style={styles.modalHint}>Publish to the announcements table (title, body, posted_by). Appears in the home feed and notification announcements.</p><label style={styles.label}>Type<input style={styles.input} value={type} onChange={(e) => setType(e.target.value)} /></label><label style={styles.label}>Title<input style={styles.input} value={title} onChange={(e) => setTitle(e.target.value)} /></label><label style={styles.label}>Content<textarea style={styles.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label><button style={styles.primaryButtonFull} onClick={() => void onCreate(title, content, type)}>Publish</button></ModalShell>;
 }
 
-function CommentsModal({ comments, currentUserId, onClose, onAdd, onDelete }: {
+function PostDetailModal({
+  post,
+  comments,
+  currentUserId,
+  onClose,
+  onAdd,
+  onDelete,
+  onLikePost,
+  onRepost,
+  onOpenProfile,
+  notify,
+}: {
+  post: Post | null;
   comments: Comment[];
   currentUserId: string | null;
   onClose: () => void;
   onAdd: (content: string) => Promise<void>;
   onDelete: (commentId: string) => Promise<void>;
+  onLikePost: () => void;
+  onRepost: () => void;
+  onOpenProfile?: (userId: string) => void;
+  notify?: (m: string) => void;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [commentLikes, setCommentLikes] = useState<Record<string, number>>({});
   const count = comments.length;
-  const title = count === 0 ? "Comments" : `${count} comment${count === 1 ? "" : "s"}`;
+  const name = (post?.profile?.nickname && post.profile.nickname.trim()) || "User";
+  const link = post
+    ? `${typeof window !== "undefined" ? window.location.origin : ""}/?post=${encodeURIComponent(post.id)}`
+    : "";
+  const shareText = post?.content
+    ? post.content.slice(0, 120) + (post.content.length > 120 ? "…" : "")
+    : "Check this post on CEO Exchange";
 
   const submit = async () => {
     const body = text.trim();
@@ -2575,93 +2618,328 @@ function CommentsModal({ comments, currentUserId, onClose, onAdd, onDelete }: {
     }
   };
 
-  return (
-    <ModalShell title={title} onClose={onClose}>
-      {/* Composer — Bybit-style "Leave a comment" row */}
-      <div style={cmtStyles.composer}>
-        <div style={cmtStyles.composerAv}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#f5b51b" }}>
-            {(currentUserId || "U").slice(0, 1).toUpperCase()}
-          </span>
-        </div>
-        <input
-          style={cmtStyles.composerInput}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Leave a comment"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
-        <button
-          type="button"
-          style={{
-            ...cmtStyles.postBtn,
-            opacity: text.trim() && !busy ? 1 : 0.45,
-          }}
-          disabled={!text.trim() || busy}
-          onClick={() => void submit()}
-        >
-          Post
-        </button>
-      </div>
+  const shareX = () => {
+    const u = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(link)}`;
+    window.open(u, "_blank", "noopener,noreferrer");
+    notify?.("Opened X to share");
+  };
+  const shareWa = () => {
+    const u = `https://wa.me/?text=${encodeURIComponent(shareText + "\n" + link)}`;
+    window.open(u, "_blank", "noopener,noreferrer");
+  };
+  const shareTg = () => {
+    const u = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(shareText)}`;
+    window.open(u, "_blank", "noopener,noreferrer");
+  };
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      notify?.("Link copied");
+    } catch {
+      notify?.("Could not copy link");
+    }
+  };
 
-      <div style={cmtStyles.list}>
-        {comments.map((c) => {
-          const name = (c.profile?.nickname && c.profile.nickname.trim()) || "User";
-          const isMine = Boolean(currentUserId && c.user_id === currentUserId);
-          return (
-            <div key={c.id} style={cmtStyles.row}>
-              <Avatar url={c.profile?.profile_picture_url} text={name} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={cmtStyles.name}>{name}</div>
-                <div style={cmtStyles.body}>{c.content}</div>
-                <div style={cmtStyles.meta}>
-                  <span>{timeAgo(c.created_at)}</span>
-                  <button
-                    type="button"
-                    style={cmtStyles.replyBtn}
-                    onClick={() => setText((t) => (t ? t : `@${name} `))}
-                  >
-                    Reply
-                  </button>
-                  {isMine && (
+  const bumpCommentLike = (id: string) => {
+    setCommentLikes((m) => ({ ...m, [id]: (m[id] || 0) + 1 }));
+  };
+
+  return (
+    <div style={pd.shell}>
+      <header style={pd.header}>
+        <button type="button" style={pd.iconBtn} onClick={onClose} aria-label="Back">
+          ←
+        </button>
+        <h2 style={pd.title}>Post</h2>
+        <span style={{ width: 40 }} />
+      </header>
+
+      <div style={pd.body}>
+        {/* Author row */}
+        {post && (
+          <div style={pd.authorRow}>
+            <button
+              type="button"
+              style={pd.authorBtn}
+              onClick={() => post.user_id && onOpenProfile?.(post.user_id)}
+            >
+              <Avatar url={post.profile?.profile_picture_url} text={name} />
+              <div style={{ textAlign: "left" }}>
+                <div style={pd.authorName}>{name}</div>
+                <div style={pd.authorTime}>{timeAgo(post.created_at)}</div>
+              </div>
+            </button>
+            {currentUserId && post.user_id && post.user_id !== currentUserId && (
+              <button
+                type="button"
+                style={pd.followBtn}
+                onClick={() => post.user_id && onOpenProfile?.(post.user_id)}
+              >
+                Follow
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Post content */}
+        {post?.content && <div style={pd.content}>{post.content}</div>}
+        {post?.image_url && (
+          <img
+            src={post.image_url}
+            alt=""
+            style={pd.image}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+        )}
+
+        {/* Share row — X, WhatsApp, Telegram, Copy */}
+        <div style={pd.shareRow}>
+          <button type="button" style={pd.shareIcon} onClick={shareX} aria-label="Share on X" title="X">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.227-8.451L1.99 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z" />
+            </svg>
+          </button>
+          <button type="button" style={pd.shareIcon} onClick={shareWa} aria-label="WhatsApp" title="WhatsApp">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+            </svg>
+          </button>
+          <button type="button" style={pd.shareIcon} onClick={shareTg} aria-label="Telegram" title="Telegram">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
+            </svg>
+          </button>
+          <button type="button" style={pd.shareIcon} onClick={() => void copyLink()} aria-label="Copy link" title="Copy link">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Engagement row */}
+        <div style={pd.engageRow}>
+          <button type="button" style={pd.engageBtn} onClick={onLikePost}>
+            <Icon name="heart" size={18} /> {post?.likes_count ?? post?.likes ?? 0}
+          </button>
+          <button type="button" style={pd.engageBtn}>
+            <Icon name="comment" size={18} /> {count}
+          </button>
+          <button type="button" style={pd.engageBtn} onClick={onRepost}>
+            <Icon name="repost" size={18} /> {post?.reposts_count ?? 0}
+          </button>
+          <button type="button" style={pd.engageBtn} onClick={() => void copyLink()}>
+            <Icon name="share" size={18} /> {post?.shares_count ?? 0}
+          </button>
+        </div>
+
+        {/* Comments header + composer */}
+        <div style={pd.commentsHead}>
+          {count} comment{count === 1 ? "" : "s"}
+        </div>
+        <div style={pd.composer}>
+          <div style={pd.composerAv}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#f5b51b" }}>
+              {(currentUserId || "U").slice(0, 1).toUpperCase()}
+            </span>
+          </div>
+          <input
+            style={pd.composerInput}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Leave a comment"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          <button
+            type="button"
+            style={{ ...pd.postBtn, opacity: text.trim() && !busy ? 1 : 0.45 }}
+            disabled={!text.trim() || busy}
+            onClick={() => void submit()}
+          >
+            Post
+          </button>
+        </div>
+
+        {/* Comment list */}
+        <div style={pd.list}>
+          {comments.map((c) => {
+            const cname = (c.profile?.nickname && c.profile.nickname.trim()) || "User";
+            const isMine = Boolean(currentUserId && c.user_id === currentUserId);
+            const likes = commentLikes[c.id] || 0;
+            return (
+              <div key={c.id} style={pd.cRow}>
+                <Avatar url={c.profile?.profile_picture_url} text={cname} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={pd.cName}>{cname}</div>
+                  <div style={pd.cBody}>{c.content}</div>
+                  <div style={pd.cMeta}>
+                    <span>{timeAgo(c.created_at)}</span>
                     <button
                       type="button"
-                      style={cmtStyles.deleteBtn}
-                      onClick={() => void onDelete(c.id)}
+                      style={pd.replyBtn}
+                      onClick={() => setText((t) => (t ? t : `@${cname} `))}
                     >
-                      Delete
+                      Reply
                     </button>
-                  )}
+                    {isMine && (
+                      <button type="button" style={pd.delBtn} onClick={() => void onDelete(c.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
+                <button type="button" style={pd.likeCol} onClick={() => bumpCommentLike(c.id)}>
+                  <Icon name="heart" size={16} />
+                  <span style={{ fontSize: 11, color: "#888" }}>{likes}</span>
+                </button>
               </div>
-              <div style={cmtStyles.likeCol}>
-                <Icon name="heart" size={16} />
-                <span style={{ fontSize: 11, color: "#666" }}>0</span>
-              </div>
-            </div>
-          );
-        })}
-        {!comments.length && (
-          <p style={cmtStyles.empty}>No comments yet.</p>
-        )}
+            );
+          })}
+          {!comments.length && <p style={pd.empty}>No comments yet.</p>}
+        </div>
       </div>
-    </ModalShell>
+    </div>
   );
 }
 
-const cmtStyles: Record<string, React.CSSProperties> = {
+const pd: Record<string, React.CSSProperties> = {
+  shell: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 95,
+    background: "#050505",
+    display: "flex",
+    flexDirection: "column",
+    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif",
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 14px",
+    paddingTop: "calc(12px + env(safe-area-inset-top))",
+    borderBottom: "1px solid #1a1a1a",
+  },
+  title: { margin: 0, fontSize: 17, fontWeight: 800, color: "#f5f5f5" },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    border: 0,
+    borderRadius: 12,
+    background: "transparent",
+    color: "#eee",
+    fontSize: 20,
+    cursor: "pointer",
+  },
+  body: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "14px 14px calc(24px + env(safe-area-inset-bottom))",
+    WebkitOverflowScrolling: "touch",
+  },
+  authorRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 14,
+  },
+  authorBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+    border: 0,
+    background: "transparent",
+    padding: 0,
+    cursor: "pointer",
+    color: "inherit",
+  },
+  authorName: { fontWeight: 800, fontSize: 15, color: "#f2f2f2" },
+  authorTime: { fontSize: 12, color: "#777", marginTop: 2 },
+  followBtn: {
+    border: 0,
+    borderRadius: 20,
+    padding: "8px 16px",
+    background: "#f5b51b",
+    color: "#0a0a0a",
+    fontWeight: 800,
+    fontSize: 13,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  content: {
+    color: "#eee",
+    fontSize: 15,
+    lineHeight: 1.5,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    marginBottom: 12,
+  },
+  image: {
+    width: "100%",
+    maxHeight: 320,
+    objectFit: "cover",
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  shareRow: {
+    display: "flex",
+    gap: 18,
+    padding: "12px 0",
+    borderBottom: "1px solid #1a1a1a",
+    marginBottom: 4,
+  },
+  shareIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    border: "1px solid #2a2a2a",
+    background: "#121212",
+    color: "#ddd",
+    display: "grid",
+    placeItems: "center",
+    cursor: "pointer",
+  },
+  engageRow: {
+    display: "flex",
+    gap: 8,
+    padding: "10px 0 14px",
+    borderBottom: "1px solid #1a1a1a",
+    marginBottom: 12,
+  },
+  engageBtn: {
+    flex: 1,
+    border: 0,
+    background: "transparent",
+    color: "#aaa",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    padding: "8px 0",
+  },
+  commentsHead: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#f2f2f2",
+    marginBottom: 12,
+  },
   composer: {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "4px 0 14px",
-    borderBottom: "1px solid #1a1a1a",
-    marginBottom: 4,
+    marginBottom: 8,
   },
   composerAv: {
     width: 36,
@@ -2695,35 +2973,23 @@ const cmtStyles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     flexShrink: 0,
   },
-  list: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 0,
-    maxHeight: "55vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
-  },
-  row: {
+  list: { display: "flex", flexDirection: "column" },
+  cRow: {
     display: "flex",
     alignItems: "flex-start",
     gap: 12,
     padding: "14px 0",
     borderBottom: "1px solid #151515",
   },
-  name: {
-    fontWeight: 700,
-    fontSize: 14,
-    color: "#f2f2f2",
-    marginBottom: 4,
-  },
-  body: {
+  cName: { fontWeight: 700, fontSize: 14, color: "#f2f2f2", marginBottom: 4 },
+  cBody: {
     fontSize: 14,
     color: "#ddd",
     lineHeight: 1.45,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
-  meta: {
+  cMeta: {
     display: "flex",
     alignItems: "center",
     gap: 14,
@@ -2740,7 +3006,7 @@ const cmtStyles: Record<string, React.CSSProperties> = {
     padding: 0,
     cursor: "pointer",
   },
-  deleteBtn: {
+  delBtn: {
     border: 0,
     background: "transparent",
     color: "#ff6574",
@@ -2757,6 +3023,9 @@ const cmtStyles: Record<string, React.CSSProperties> = {
     color: "#666",
     flexShrink: 0,
     paddingTop: 4,
+    border: 0,
+    background: "transparent",
+    cursor: "pointer",
   },
   empty: {
     color: "#666",
@@ -2766,6 +3035,7 @@ const cmtStyles: Record<string, React.CSSProperties> = {
     margin: 0,
   },
 };
+
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) { return <div style={styles.stat}><span>{label}</span><b>{value}</b></div>; }
 
