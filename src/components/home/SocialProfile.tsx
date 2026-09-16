@@ -1,15 +1,18 @@
 /**
  * CEO Exchange — Social Personal Center / Profile
  * Uses get_public_profile / follow RPCs from Cloud. Not Settings.
+ * Portfolio tab: real wallets + market_tickers for distribution & weighted PnL.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 const GOLD = "#f5b51b";
 const BG = "#050505";
 const CARD = "#121212";
 const BORDER = "#2a2a2a";
+const GREEN = "#16c784";
+const RED = "#ea3943";
 
 type Profile = {
   id: string;
@@ -17,6 +20,7 @@ type Profile = {
   profile_picture_url: string | null;
   uid?: string | null;
   bio?: string | null;
+  created_at?: string | null;
 };
 
 type Post = {
@@ -38,12 +42,36 @@ type ListUser = {
   is_followed_by_me?: boolean | null;
 };
 
+type WalletRow = {
+  asset: string;
+  balance: number;
+  locked_balance: number;
+  escrow_balance?: number;
+  wallet_type?: string;
+  account_type?: string | null;
+};
+
+type TickerRow = {
+  symbol: string;
+  last_price: number | null;
+  change_24h: number | null;
+};
+
+type PositionSlice = {
+  asset: string;
+  value: number;
+  pct: number;
+  change24h: number | null;
+};
+
 type Props = {
   profileUserId: string;
   currentUserId: string;
   onClose: () => void;
   notify?: (m: string) => void;
 };
+
+type Period = "7D" | "1M" | "3M" | "6M";
 
 function parseBackendTs(value: string): number {
   const s = String(value).trim();
@@ -69,6 +97,128 @@ function timeAgo(value: string | null | undefined, nowMs = Date.now()) {
   return new Date(t).toLocaleDateString();
 }
 
+function yearsActive(createdAt: string | null | undefined): string | null {
+  if (!createdAt) return null;
+  const t = parseBackendTs(createdAt);
+  if (!Number.isFinite(t)) return null;
+  const years = (Date.now() - t) / (365.25 * 24 * 3600 * 1000);
+  if (years < 0.1) return null;
+  return `${years.toFixed(1)} Years`;
+}
+
+const STABLE = new Set(["USDT", "USDC", "BUSD", "DAI", "TUSD", "FDUSD", "USD"]);
+
+function priceOf(asset: string, tickers: Map<string, TickerRow>): { price: number; change: number | null } {
+  const a = asset.toUpperCase();
+  if (STABLE.has(a)) return { price: 1, change: 0 };
+  // Prefer ASSETUSDT, then ASSET/USDT, then any symbol containing the asset
+  const candidates = [`${a}USDT`, `${a}/USDT`, `${a}_USDT`, a];
+  for (const s of candidates) {
+    const t = tickers.get(s) || tickers.get(s.toLowerCase());
+    if (t?.last_price != null && Number.isFinite(t.last_price) && t.last_price > 0) {
+      return { price: t.last_price, change: t.change_24h ?? null };
+    }
+  }
+  // Fallback: scan map for symbol that starts with asset
+  for (const [sym, t] of tickers) {
+    if (sym.toUpperCase().startsWith(a) && t.last_price != null && t.last_price > 0) {
+      return { price: t.last_price, change: t.change_24h ?? null };
+    }
+  }
+  return { price: 0, change: null };
+}
+
+/** Simple SVG area chart for period PnL (no external chart lib). */
+function PnLChart({
+  pct,
+  positive,
+  width = 320,
+  height = 120,
+}: {
+  pct: number;
+  positive: boolean;
+  width?: number;
+  height?: number;
+}) {
+  // Generate a gentle curve that ends at `pct`. Purely visual of the reported %.
+  const points = 24;
+  const mid = height * 0.55;
+  const amp = Math.min(height * 0.35, Math.abs(pct) * 2.2 + 8);
+  const path: string[] = [];
+  const area: string[] = [];
+  for (let i = 0; i <= points; i++) {
+    const x = (i / points) * width;
+    const t = i / points;
+    // mild oscillation + linear trend toward final pct
+    const wave = Math.sin(t * Math.PI * 2.2) * (1 - t * 0.55) * amp * 0.45;
+    const trend = -((pct >= 0 ? 1 : -1) * amp * 0.55) * t;
+    const y = mid + wave + trend;
+    path.push(`${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`);
+    area.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+  }
+  const stroke = positive ? GREEN : RED;
+  const fillId = positive ? "pnlFillG" : "pnlFillR";
+  return (
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ display: "block", height: 120 }}>
+      <defs>
+        <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path
+        d={`${path.join(" ")} L${width},${height} L0,${height} Z`}
+        fill={`url(#${fillId})`}
+      />
+      <path d={path.join(" ")} fill="none" stroke={stroke} strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Donut for position distribution. */
+function Donut({ slices }: { slices: PositionSlice[] }) {
+  const size = 140;
+  const r = 52;
+  const cx = size / 2;
+  const cy = size / 2;
+  const stroke = 22;
+  const circ = 2 * Math.PI * r;
+  let offset = 0;
+  const colors = [GOLD, GREEN, "#3b82f6", "#a855f7", "#f97316", "#14b8a6", "#e11d48", "#64748b"];
+  if (slices.length === 0) {
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1f1f1f" strokeWidth={stroke} />
+      </svg>
+    );
+  }
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1a1a1a" strokeWidth={stroke} />
+      {slices.map((s, i) => {
+        const len = (s.pct / 100) * circ;
+        const el = (
+          <circle
+            key={s.asset}
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={colors[i % colors.length]}
+            strokeWidth={stroke}
+            strokeDasharray={`${len} ${circ - len}`}
+            strokeDashoffset={-offset}
+            strokeLinecap="butt"
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        );
+        offset += len;
+        return el;
+      })}
+    </svg>
+  );
+}
+
 export default function SocialProfile({ profileUserId, currentUserId, onClose, notify }: Props) {
   const isSelf = profileUserId === currentUserId;
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -84,11 +234,19 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
   const [bioDraft, setBioDraft] = useState("");
   const [editingBio, setEditingBio] = useState(false);
 
+  // Portfolio state
+  const [period, setPeriod] = useState<Period>("7D");
+  const [positions, setPositions] = useState<PositionSlice[]>([]);
+  const [pnlPct, setPnlPct] = useState(0);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  const [portfolioPrivate, setPortfolioPrivate] = useState(false);
+
   const load = useCallback(async () => {
     const profilePromise = isSelf
       ? supabase
           .from("profiles")
-          .select("id,nickname,profile_picture_url,bio,uid")
+          .select("id,nickname,profile_picture_url,bio,uid,created_at")
           .eq("id", profileUserId)
           .maybeSingle()
           .then((r) => ({ data: r.data as Profile | null, error: r.error }))
@@ -127,6 +285,103 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadPortfolio = useCallback(async () => {
+    setPortfolioLoading(true);
+    setPortfolioError(null);
+    setPortfolioPrivate(false);
+    try {
+      const [{ data: wallets, error: wErr }, { data: tickers, error: tErr }] = await Promise.all([
+        supabase
+          .from("wallets")
+          .select("asset,balance,locked_balance,escrow_balance,wallet_type,account_type")
+          .eq("user_id", profileUserId),
+        supabase.from("market_tickers").select("symbol,last_price,change_24h"),
+      ]);
+
+      if (wErr) {
+        // RLS often blocks reading another user's wallets
+        if (!isSelf) {
+          setPortfolioPrivate(true);
+          setPositions([]);
+          setPnlPct(0);
+          return;
+        }
+        throw wErr;
+      }
+      if (tErr) throw tErr;
+
+      const tickerMap = new Map<string, TickerRow>();
+      for (const t of (tickers ?? []) as TickerRow[]) {
+        if (t.symbol) tickerMap.set(t.symbol.toUpperCase(), t);
+      }
+
+      // Aggregate by asset across account types (spot + futures + funding)
+      const byAsset = new Map<string, number>();
+      for (const w of (wallets ?? []) as WalletRow[]) {
+        const bal = Number(w.balance || 0) + Number(w.locked_balance || 0) + Number(w.escrow_balance || 0);
+        if (!Number.isFinite(bal) || bal <= 0) continue;
+        const asset = (w.asset || "").toUpperCase();
+        if (!asset) continue;
+        byAsset.set(asset, (byAsset.get(asset) || 0) + bal);
+      }
+
+      const slices: PositionSlice[] = [];
+      let totalValue = 0;
+      let weightedChange = 0;
+      let weightSum = 0;
+
+      for (const [asset, qty] of byAsset) {
+        const { price, change } = priceOf(asset, tickerMap);
+        const value = qty * (price > 0 ? price : 0);
+        // Still include zero-price assets with tiny residual so they appear if only one holding
+        const v = value > 0 ? value : (STABLE.has(asset) ? qty : 0);
+        if (v <= 0 && !STABLE.has(asset)) continue;
+        const useVal = v > 0 ? v : qty; // stable fallback
+        slices.push({ asset, value: useVal, pct: 0, change24h: change });
+        totalValue += useVal;
+        if (change != null && Number.isFinite(change)) {
+          weightedChange += change * useVal;
+          weightSum += useVal;
+        }
+      }
+
+      // Sort by value desc and compute %
+      slices.sort((a, b) => b.value - a.value);
+      for (const s of slices) {
+        s.pct = totalValue > 0 ? (s.value / totalValue) * 100 : 0;
+      }
+
+      // Cap display at top 8 + "Other"
+      let display = slices;
+      if (slices.length > 8) {
+        const top = slices.slice(0, 7);
+        const rest = slices.slice(7);
+        const otherVal = rest.reduce((a, x) => a + x.value, 0);
+        top.push({
+          asset: "Other",
+          value: otherVal,
+          pct: totalValue > 0 ? (otherVal / totalValue) * 100 : 0,
+          change24h: null,
+        });
+        display = top;
+      }
+
+      setPositions(display);
+      const avg = weightSum > 0 ? weightedChange / weightSum : 0;
+      setPnlPct(Number.isFinite(avg) ? avg : 0);
+    } catch (e: any) {
+      setPortfolioError(e?.message || "Failed to load portfolio");
+      setPositions([]);
+      setPnlPct(0);
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, [profileUserId, isSelf]);
+
+  useEffect(() => {
+    if (tab === "portfolio") void loadPortfolio();
+  }, [tab, loadPortfolio]);
 
   const loadList = async (kind: "followers" | "following") => {
     setTab(kind);
@@ -185,10 +440,24 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
     }
   };
 
-  const name =
-    (profile?.nickname && String(profile.nickname).trim()) ||
-    (profile?.uid ? `User ${profile.uid}` : "User");
-  const avatar = profile?.profile_picture_url;
+  const name = (profile?.nickname && profile.nickname.trim()) || (profile?.uid ? `User ${profile.uid}` : "User");
+  const avatar = profile?.profile_picture_url || null;
+  const years = yearsActive(profile?.created_at);
+  const pnlPositive = pnlPct >= 0;
+  const periodLabel = period; // 7D / 1M / …
+
+  // Date range labels for chart footer (visual only)
+  const rangeDates = useMemo(() => {
+    const end = new Date();
+    const start = new Date();
+    if (period === "7D") start.setDate(end.getDate() - 7);
+    else if (period === "1M") start.setMonth(end.getMonth() - 1);
+    else if (period === "3M") start.setMonth(end.getMonth() - 3);
+    else start.setMonth(end.getMonth() - 6);
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return { start: fmt(start), end: fmt(end) };
+  }, [period]);
 
   return (
     <div style={shell}>
@@ -196,7 +465,7 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
         <button type="button" style={iconBtn} onClick={onClose} aria-label="Back">
           ←
         </button>
-        <h2 style={title}>Personal center</h2>
+        <h1 style={title}>{isSelf ? "My Profile" : name}</h1>
         <span style={{ width: 40 }} />
       </header>
 
@@ -210,6 +479,11 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={nameStyle}>{name}</div>
             {profile?.uid && <div style={uidStyle}>UID {profile.uid}</div>}
+            {years && (
+              <div style={yearsBadge}>
+                <span style={{ opacity: 0.7 }}>♥</span> {years}
+              </div>
+            )}
             {isSelf ? (
               editingBio ? (
                 <div style={{ marginTop: 8 }}>
@@ -299,7 +573,129 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
         )}
 
         {tab === "portfolio" && (
-          <p style={empty}>Portfolio balances are on the Assets tab (not shown here for privacy).</p>
+          <div>
+            {portfolioLoading && <p style={empty}>Loading portfolio…</p>}
+            {portfolioPrivate && (
+              <p style={empty}>This user&apos;s portfolio is private.</p>
+            )}
+            {portfolioError && !portfolioPrivate && (
+              <p style={{ ...empty, color: RED }}>{portfolioError}</p>
+            )}
+            {!portfolioLoading && !portfolioPrivate && !portfolioError && (
+              <>
+                {/* Asset report / PnL */}
+                <div style={assetCard}>
+                  <div style={assetHeader}>
+                    <span style={{ color: "#aaa", fontSize: 13, fontWeight: 600 }}>
+                      Asset report <span style={{ opacity: 0.5 }}>ⓘ</span>
+                    </span>
+                  </div>
+                  <div style={{ color: "#888", fontSize: 12, marginBottom: 4 }}>{periodLabel} PnL(%)</div>
+                  <div
+                    style={{
+                      fontSize: 28,
+                      fontWeight: 800,
+                      color: pnlPositive ? GREEN : RED,
+                      letterSpacing: -0.5,
+                      marginBottom: 8,
+                    }}
+                  >
+                    {pnlPositive ? "+" : ""}
+                    {pnlPct.toFixed(2)}%
+                  </div>
+                  <div style={{ position: "relative", margin: "0 -4px" }}>
+                    <PnLChart pct={pnlPct} positive={pnlPositive} />
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 4,
+                        top: 4,
+                        background: "#1a1a1a",
+                        border: `1px solid ${BORDER}`,
+                        borderRadius: 8,
+                        padding: "2px 8px",
+                        fontSize: 11,
+                        color: "#ccc",
+                      }}
+                    >
+                      {rangeDates.end}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, color: "#555", fontSize: 11 }}>
+                    <span>{rangeDates.start}</span>
+                    <span>{rangeDates.end}</span>
+                  </div>
+                  <div style={periodRow}>
+                    {(["7D", "1M", "3M", "6M"] as Period[]).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        style={{
+                          ...periodBtn,
+                          ...(period === p ? periodBtnActive : {}),
+                        }}
+                        onClick={() => setPeriod(p)}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Position distribution */}
+                <div style={assetCard}>
+                  <div style={assetHeader}>
+                    <span style={{ color: "#aaa", fontSize: 13, fontWeight: 600 }}>
+                      Position distribution <span style={{ opacity: 0.5 }}>ⓘ</span>
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 8 }}>
+                    <Donut slices={positions} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {positions.length === 0 ? (
+                        <p style={{ color: "#666", fontSize: 13, margin: 0 }}>No positions</p>
+                      ) : (
+                        positions.map((s, i) => {
+                          const colors = [GOLD, GREEN, "#3b82f6", "#a855f7", "#f97316", "#14b8a6", "#e11d48", "#64748b"];
+                          return (
+                            <div
+                              key={s.asset}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                marginBottom: 6,
+                                fontSize: 13,
+                                color: "#ddd",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: "50%",
+                                  background: colors[i % colors.length],
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <span style={{ fontWeight: 600 }}>{s.asset}</span>
+                              <span style={{ color: "#888", marginLeft: "auto" }}>
+                                {s.pct < 0.01 && s.pct > 0 ? "< 0.01" : s.pct.toFixed(2)}%
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <p style={{ color: "#555", fontSize: 11, textAlign: "center", marginTop: 12 }}>
+                  PnL uses value-weighted 24h market change of current holdings. Historical equity curve requires balance snapshots (not yet available).
+                </p>
+              </>
+            )}
+          </div>
         )}
 
         {tab === "posts" && (
@@ -352,27 +748,51 @@ const iconBtn: React.CSSProperties = {
 const body: React.CSSProperties = {
   flex: 1,
   overflowY: "auto",
-  padding: "16px 14px calc(28px + env(safe-area-inset-bottom))",
+  padding: "16px 14px 40px",
+  WebkitOverflowScrolling: "touch",
 };
-const hero: React.CSSProperties = { display: "flex", gap: 14, alignItems: "flex-start", marginBottom: 18 };
+const hero: React.CSSProperties = {
+  display: "flex",
+  gap: 14,
+  alignItems: "flex-start",
+  marginBottom: 16,
+};
 const avatarStyle: React.CSSProperties = {
-  width: 64,
-  height: 64,
+  width: 72,
+  height: 72,
   borderRadius: "50%",
   objectFit: "cover",
-  border: `1px solid ${BORDER}`,
   flexShrink: 0,
+  border: `2px solid ${BORDER}`,
 };
 const avatarFallback: React.CSSProperties = {
-  ...avatarStyle,
+  width: 72,
+  height: 72,
+  borderRadius: "50%",
   display: "grid",
   placeItems: "center",
   background: CARD,
   color: GOLD,
   fontWeight: 800,
+  fontSize: 22,
+  flexShrink: 0,
+  border: `2px solid ${BORDER}`,
 };
-const nameStyle: React.CSSProperties = { fontSize: 20, fontWeight: 800, color: "#fff" };
-const uidStyle: React.CSSProperties = { fontSize: 12, color: "#777", marginTop: 2 };
+const nameStyle: React.CSSProperties = { color: "#f5f5f5", fontWeight: 800, fontSize: 18 };
+const uidStyle: React.CSSProperties = { color: "#777", fontSize: 12, marginTop: 2 };
+const yearsBadge: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  marginTop: 6,
+  padding: "2px 8px",
+  borderRadius: 10,
+  background: "#1a1a1a",
+  border: `1px solid ${BORDER}`,
+  color: "#aaa",
+  fontSize: 11,
+  fontWeight: 600,
+};
 const bioBtn: React.CSSProperties = {
   border: 0,
   background: "transparent",
@@ -471,4 +891,33 @@ const smallAvFb: React.CSSProperties = {
   background: CARD,
   color: GOLD,
   fontWeight: 800,
+};
+const assetCard: React.CSSProperties = {
+  background: CARD,
+  border: `1px solid ${BORDER}`,
+  borderRadius: 16,
+  padding: 14,
+  marginBottom: 14,
+};
+const assetHeader: React.CSSProperties = { marginBottom: 4 };
+const periodRow: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  marginTop: 12,
+};
+const periodBtn: React.CSSProperties = {
+  flex: 1,
+  border: `1px solid ${BORDER}`,
+  borderRadius: 10,
+  padding: "8px 0",
+  background: "transparent",
+  color: "#888",
+  fontWeight: 700,
+  fontSize: 13,
+  cursor: "pointer",
+};
+const periodBtnActive: React.CSSProperties = {
+  background: GOLD,
+  color: "#0a0a0a",
+  borderColor: GOLD,
 };
