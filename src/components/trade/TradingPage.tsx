@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { getExecutionProvider } from "../../trading/providers";
 
 type Props = { symbol?: string; onBack?: () => void; onAddFunds?: () => void };
 type Pair = { id: string; symbol: string; base_asset: string; quote_asset: string; is_active: boolean };
@@ -399,31 +400,20 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setBusy(false);
   }, [symbol]);
 
-  // Market data: OHLC sync → candles + ticker + order book
+  // Market data: candles (via the Kraken execution provider) + ticker + order book
   const loadMarket = useCallback(async () => {
     if (!pair) return;
-    const { error: ohlcErr } = await supabase.functions.invoke(
-      `kraken-spot?action=ohlc&symbol=${encodeURIComponent(pair.symbol)}&timeframe=${tf}`,
-      { method: "GET" }
-    );
-    if (ohlcErr) console.error("Kraken OHLC sync failed:", ohlcErr.message);
-    const [{ data: t }, { data: c }, { data: b, error: be }] = await Promise.all([
+    const [candleRows, { data: t }, { data: b, error: be }] = await Promise.all([
+      getExecutionProvider("kraken").getCandles(pair.symbol, tf),
       supabase
         .from("market_tickers")
         .select("symbol,last_price,bid_price,ask_price,high_24h,low_24h,volume_24h,change_24h")
         .eq("symbol", pair.symbol)
         .maybeSingle(),
-      supabase
-        .from("market_candles")
-        .select("open_time,open,high,low,close,volume")
-        .eq("trading_pair", pair.symbol)
-        .eq("timeframe", tf)
-        .order("open_time", { ascending: true })
-        .limit(500),
       supabase.rpc("get_order_book", { p_trading_pair: pair.symbol }),
     ]);
     setTicker((t || null) as Ticker | null);
-    setCandles((c || []) as Candle[]);
+    setCandles((candleRows || []) as Candle[]);
     if (!be) setBook((b || []) as BookRow[]);
     if (!p && t?.last_price != null) setP(String(t.last_price));
   }, [pair, tf, p]);
