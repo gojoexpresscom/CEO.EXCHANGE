@@ -1,11 +1,17 @@
 /**
- * Static promotional catalog for CEO EXCHANGE.
+ * Static promotional catalog — SOURCE OF TRUTH
  *
- * SOURCE OF TRUTH — edit this file, add media under public/promotions/,
- * commit to GitHub, deploy via Vercel.
+ * HOW TO PUBLISH MEDIA (GitHub + Vercel only):
+ * 1. Put files in:
+ *      public/promotions/images/   → .jpg .png .webp
+ *      public/promotions/videos/   → .mp4 .webm
+ * 2. Reference them BELOW with paths starting with /promotions/...
+ *      image: "/promotions/images/my-shot.webp"
+ *      video: "/promotions/videos/launch.mp4"
+ * 3. Set published: true, commit, deploy.
  *
- * No database. No Supabase. No runtime CMS writes.
- * Only items with published: true are shown to users.
+ * Uploading a file without a matching entry here will NOT show it.
+ * Only published: true items appear on Experience.
  */
 
 import type { PromoScene } from "./Promotion3DVisual";
@@ -22,42 +28,39 @@ export type PromoCategory =
 
 export type PromoCardItem = {
   id: string;
-  /** Shown only when true */
   published: boolean;
   category: PromoCategory;
-  /** Optional 3D scene hint for future specialized cards */
   scene?: PromoScene;
   title: string;
   description: string;
-  /** Path under public/, e.g. /promotions/images/markets.webp */
+  /** e.g. "/promotions/images/markets.webp" */
   image?: string;
-  /** Path under public/, e.g. /promotions/videos/intro.mp4 */
+  /** e.g. "/promotions/videos/intro.mp4" */
   video?: string;
-  /** Show the CSS 3D visual instead of / in addition to media */
+  /** CSS 3D visual when no image/video */
   show3D?: boolean;
   ctaLabel?: string;
-  /**
-   * Destination for CTA:
-   * - "markets" → open trade
-   * - "p2p" → open P2P
-   * - "close" → dismiss promo
-   * - absolute URL (https://...) opens in same window
-   * - path starting with / uses history
-   */
+  /** markets | p2p | close | /path | https://... */
   ctaHref?: string;
-  /** Sort order, lower first */
   order?: number;
 };
 
-/**
- * Hero cinematic video shown at the top of the Experience/Promotions page.
- * Path is under public/, matches the committed file exactly.
- */
-export const PROMOTIONS_HERO_VIDEO = "/promotions/videos/ceo-launch.mp4";
+/** Optional full-bleed hero video (path under public/) */
+export const PROMOTIONS_HERO_VIDEO: string | undefined = undefined;
+// Example when you upload: "/promotions/videos/ceo-launch.mp4"
+
+/** Optional hero background image */
+export const PROMOTIONS_HERO_IMAGE: string | undefined = undefined;
+// Example: "/promotions/images/hero.webp"
+
+/** Landing headline */
+export const PROMOTIONS_HERO_TITLE = "Elevate Your\nTrading Experience";
+export const PROMOTIONS_HERO_SUBTITLE =
+  "Premium markets, P2P, and account protection — built for clarity on mobile.";
 
 /**
- * Published promotional cards.
- * Keep claims limited to real product capabilities.
+ * Add a card per image / video / text block you want on Experience.
+ * Copy an entry, change id/title/paths, set published: true.
  */
 export const PROMO_CARDS: PromoCardItem[] = [
   {
@@ -68,7 +71,9 @@ export const PROMO_CARDS: PromoCardItem[] = [
     title: "Spot markets, mobile-first",
     description:
       "Trade listed pairs with live pricing and a clean order interface designed for phone portrait.",
-    show3D: false,
+    // image: "/promotions/images/markets.webp",
+    // video: "/promotions/videos/markets.mp4",
+    show3D: true,
     ctaLabel: "Open markets",
     ctaHref: "markets",
     order: 10,
@@ -81,7 +86,8 @@ export const PROMO_CARDS: PromoCardItem[] = [
     title: "P2P with structured offers",
     description:
       "Buy and sell with other users through clear offers and an escrow-backed flow.",
-    show3D: false,
+    // image: "/promotions/images/p2p.webp",
+    show3D: true,
     ctaLabel: "Explore P2P",
     ctaHref: "p2p",
     order: 20,
@@ -94,9 +100,7 @@ export const PROMO_CARDS: PromoCardItem[] = [
     title: "Account protection",
     description:
       "2FA, withdrawal locks, and security settings that keep control in your hands.",
-    show3D: false,
-    ctaLabel: undefined,
-    ctaHref: undefined,
+    show3D: true,
     order: 30,
   },
   {
@@ -107,19 +111,17 @@ export const PROMO_CARDS: PromoCardItem[] = [
     title: "Identity verification",
     description:
       "Complete KYC when required to unlock higher limits and stronger trust signals.",
-    show3D: false,
+    show3D: true,
     order: 40,
   },
 ];
 
-/** Published items only, sorted for display */
 export function getPublishedPromoCards(): PromoCardItem[] {
   return PROMO_CARDS.filter((c) => c.published).sort(
     (a, b) => (a.order ?? 100) - (b.order ?? 100)
   );
 }
 
-/** Full catalog for admin preview (includes unpublished) */
 export function getAllPromoCards(): PromoCardItem[] {
   return [...PROMO_CARDS].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
 }

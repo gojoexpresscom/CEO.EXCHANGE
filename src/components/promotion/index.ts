@@ -4,7 +4,6 @@ export { default as PromotionHero } from "./PromotionHero";
 export { default as PromotionFeature } from "./PromotionFeature";
 export { default as PromotionCTA } from "./PromotionCTA";
 export { default as PromotionCard } from "./PromotionCard";
-export { default as PromotionVideoHero } from "./PromotionVideoHero";
 export { default as ExchangePromo } from "./ExchangePromo";
 export { default as PromotionsPage } from "./PromotionsPage";
 export {
@@ -12,6 +11,9 @@ export {
   getPublishedPromoCards,
   getAllPromoCards,
   PROMOTIONS_HERO_VIDEO,
+  PROMOTIONS_HERO_IMAGE,
+  PROMOTIONS_HERO_TITLE,
+  PROMOTIONS_HERO_SUBTITLE,
 } from "./content";
 export type { PromoCardItem, PromoCategory } from "./content";
 export * from "./tokens";
