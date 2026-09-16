@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { getExecutionProvider } from "../../trading/providers";
 import TradingChart from "./TradingChart";
+import { useBybitMarketData } from "../../trading/useBybitMarketData";
 
 type Props = { symbol?: string; onBack?: () => void; onAddFunds?: () => void };
 type Pair = { id: string; symbol: string; base_asset: string; quote_asset: string; is_active: boolean };
@@ -38,7 +38,7 @@ type Order = {
   status: string;
   created_at: string;
 };
-type RecentTrade = { id: string; trading_pair: string; price: number; amount: number; created_at: string };
+type RecentTrade = { id: string; trading_pair?: string; price: number; amount: number; created_at: string };
 type HotMarket = {
   symbol: string;
   base: string;
@@ -70,11 +70,18 @@ const BOTTOM_TABS = [
 
 const CANCELLABLE = new Set(["open", "partially_filled"]);
 
-// All data comes from real sources only:
-// trading_pairs, market_tickers, market_candles, get_order_book,
-// orders, trades, wallets (with account_type), kraken-spot edge function,
-// and CoinGecko free /coins/markets for Hot ranking (cross-matched to Kraken pairs).
-// No mock data, no demo buttons, no placeholder prices.
+// Data sources:
+// - trading_pairs, orders, wallets (with account_type): Supabase — unchanged.
+// - Order routing/cancellation: kraken-spot Edge Function — unchanged. Order
+//   execution was NOT touched by the Bybit market-data migration below.
+// - LIVE MARKET DATA for the Trading UI (ticker, candles, order book, recent
+//   trades/tape): Bybit's PUBLIC REST API (initial snapshot) + Bybit's
+//   PUBLIC WebSocket (live updates), via useBybitMarketData/BybitProvider.
+//   market_tickers and market_candles are no longer read for the live
+//   Trading UI. No Bybit credentials are used anywhere — public
+//   market-data endpoints only.
+// - CoinGecko free /coins/markets for Hot ranking — unchanged.
+// No mock data, no demo buttons, no placeholder prices, no simulated candles.
 
 const css = `
 :root{
@@ -130,6 +137,10 @@ const css = `
 .stat-price{font-size:25px;font-weight:750;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
 .stat-mini{font-size:11px;color:var(--ceo-text-dim)}
 .stat-mini b{color:#d4d4d4;font-weight:600;font-variant-numeric:tabular-nums}
+.data-status{font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;border:1px solid transparent}
+.data-status.ok{color:var(--ceo-text-faint)}
+.data-status.warn{color:var(--ceo-gold-bright);border-color:var(--ceo-gold-dim);background:rgba(212,175,90,0.08)}
+.data-status.bad{color:var(--ceo-down);border-color:rgba(224,71,90,0.35);background:rgba(224,71,90,0.08)}
 .market-tabs{display:flex;border-bottom:1px solid var(--ceo-border)}
 .market-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:10px 4px;font-size:11.5px;font-weight:700;letter-spacing:.2px;cursor:pointer;transition:color .15s ease}
 .market-tab.active{color:var(--ceo-gold-bright);border-bottom:2px solid var(--ceo-gold-bright)}
@@ -306,10 +317,6 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   const [symbol, setSymbol] = useState((propSymbol || routeSymbol()).toUpperCase());
   const [pair, setPair] = useState<Pair | null>(null);
   const [pairs, setPairs] = useState<Pair[]>([]);
-  const [ticker, setTicker] = useState<Ticker | null>(null);
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [book, setBook] = useState<BookRow[]>([]);
-  const [recentTrades, setRecentTrades] = useState<RecentTrade[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [tf, setTf] = useState<(typeof TF)[number]["value"]>("15m");
@@ -336,6 +343,25 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   const [transferDirection, setTransferDirection] = useState<"from_spot" | "to_spot">("from_spot");
   const [transferAmount, setTransferAmount] = useState("");
   const [transferring, setTransferring] = useState(false);
+
+  // LIVE MARKET DATA — Bybit public REST snapshot + public WebSocket only.
+  // Ticker/candles/order book/recent-trade tape for the Trading UI come
+  // exclusively from this hook; Supabase's market_tickers/market_candles
+  // tables are no longer read here. Order execution below is untouched
+  // and continues to route through Kraken.
+  const {
+    ticker,
+    candles,
+    book,
+    trades: recentTrades,
+    status: bybitStatus,
+  } = useBybitMarketData(pair?.base_asset ?? null, pair?.quote_asset ?? null, tf) as {
+    ticker: Ticker | null;
+    candles: Candle[];
+    book: BookRow[];
+    trades: RecentTrade[];
+    status: "connecting" | "connected" | "disconnected" | "unsupported";
+  };
 
   // Load pair + all active pairs
   const loadPair = useCallback(async () => {
@@ -365,35 +391,6 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setActivePct(null);
     setBusy(false);
   }, [symbol]);
-
-  // Market data: candles (via the Kraken execution provider) + ticker + order book
-  const loadMarket = useCallback(async () => {
-    if (!pair) return;
-    const [candleRows, { data: t }, { data: b, error: be }] = await Promise.all([
-      getExecutionProvider("kraken").getCandles(pair.symbol, tf),
-      supabase
-        .from("market_tickers")
-        .select("symbol,last_price,bid_price,ask_price,high_24h,low_24h,volume_24h,change_24h")
-        .eq("symbol", pair.symbol)
-        .maybeSingle(),
-      supabase.rpc("get_order_book", { p_trading_pair: pair.symbol }),
-    ]);
-    setTicker((t || null) as Ticker | null);
-    setCandles((candleRows || []) as Candle[]);
-    if (!be) setBook((b || []) as BookRow[]);
-    if (!p && t?.last_price != null) setP(String(t.last_price));
-  }, [pair, tf, p]);
-
-  const loadTrades = useCallback(async () => {
-    if (!pair) return;
-    const { data } = await supabase
-      .from("trades")
-      .select("id,trading_pair,price,amount,created_at")
-      .eq("trading_pair", pair.symbol)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    setRecentTrades((data || []) as RecentTrade[]);
-  }, [pair]);
 
   const loadUser = useCallback(async () => {
     if (!pair) return;
@@ -484,54 +481,35 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     void loadPair();
   }, [loadPair]);
   useEffect(() => {
-    void loadMarket();
     void loadUser();
-    void loadTrades();
-  }, [loadMarket, loadUser, loadTrades]);
+  }, [loadUser]);
   useEffect(() => {
     if (pairs.length) void loadHot();
   }, [pairs, loadHot]);
+  // Pre-fill the price field with the live Bybit last price once, without
+  // overwriting anything the user has already typed.
   useEffect(() => {
-    if (!pair) return;
-    const id = window.setInterval(() => {
-      void loadMarket();
-    }, 60000);
-    return () => window.clearInterval(id);
-  }, [pair, loadMarket]);
+    if (!p && ticker?.last_price != null) setP(String(ticker.last_price));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticker?.last_price]);
 
-  // Realtime
+  // Realtime: internal account data only (orders + wallets). Market data
+  // (ticker/candles/book/tape) now comes live from Bybit's public
+  // WebSocket via useBybitMarketData — Supabase Realtime is no longer
+  // part of the live market-data path.
   useEffect(() => {
     if (!pair) return;
     const ch = supabase
-      .channel(`trade-${pair.symbol}-${tf}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "market_tickers", filter: `symbol=eq.${pair.symbol}` }, (x) =>
-        setTicker((x.new || null) as Ticker)
-      )
-      .on("postgres_changes", { event: "*", schema: "public", table: "market_candles", filter: `trading_pair=eq.${pair.symbol}` }, (x) => {
-        const r = x.new as Candle & { timeframe: string };
-        if (r?.timeframe !== tf) return;
-        setCandles((prev) => {
-          const i = prev.findIndex((c) => c.open_time === r.open_time);
-          if (i < 0) return [...prev, r].slice(-500);
-          const n = [...prev];
-          n[i] = r;
-          return n;
-        });
-      })
+      .channel(`trade-account-${pair.symbol}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `trading_pair=eq.${pair.symbol}` }, () => {
-        void loadMarket();
         void loadUser();
-      })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "trades", filter: `trading_pair=eq.${pair.symbol}` }, (x) => {
-        void loadMarket();
-        setRecentTrades((prev) => [x.new as RecentTrade, ...prev].slice(0, 50));
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, () => void loadUser())
       .subscribe();
     return () => {
       void supabase.removeChannel(ch);
     };
-  }, [pair, tf, loadMarket, loadUser]);
+  }, [pair, loadUser]);
 
   const wallet = useMemo(() => {
     if (!pair) return null;
@@ -585,6 +563,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setActivePct(null);
   };
 
+  // ===== Order execution — UNCHANGED. Still routes through Kraken. =====
   const submit = async () => {
     setNotice("");
     if (!pair) return;
@@ -644,7 +623,6 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setActivePct(null);
     setNotice(`Order routed to Kraken (ref ${data.kraken_order_id}). It settles automatically once Kraken reports a real fill.`);
     setNoticeOk(true);
-    void loadMarket();
     void loadUser();
   };
 
@@ -677,6 +655,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setNoticeOk(true);
     void loadUser();
   };
+  // ===== End order execution (unchanged) =====
 
   const switchPair = (s: string) => {
     setSymbol(s);
@@ -755,6 +734,10 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     }
     return list;
   }, [pairs, marketsFilter, hotMarkets]);
+
+  const bybitStatusLabel =
+    bybitStatus === "unsupported" ? "Bybit: unsupported pair" : bybitStatus === "connecting" ? "Bybit: connecting…" : "Bybit: disconnected";
+  const bybitStatusClass = bybitStatus === "unsupported" ? "bad" : "warn";
 
   if (busy)
     return (
@@ -866,6 +849,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                         {fmt(ticker?.volume_24h, 4)} {pair.base_asset}
                       </b>
                     </div>
+                    {bybitStatus !== "connected" && <div className={`data-status ${bybitStatusClass}`}>{bybitStatusLabel}</div>}
                   </div>
                   <div className="market-tabs">
                     <button className={`market-tab ${marketTab === "chart" ? "active" : ""}`} onClick={() => setMarketTab("chart")}>
@@ -893,7 +877,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                           <TradingChart candles={candles} />
                         ) : (
                           <div className="empty" style={{ height: "100%" }}>
-                            No chart data available yet for {pair.symbol} ({tf}).
+                            {bybitStatus === "unsupported"
+                              ? `Bybit does not support live data for ${pair.symbol}.`
+                              : bybitStatus === "disconnected"
+                              ? "Live market data is disconnected. Reconnecting…"
+                              : bybitStatus === "connecting"
+                              ? `Connecting to Bybit for ${pair.symbol}…`
+                              : `No chart data available yet for ${pair.symbol} (${tf}).`}
                           </div>
                         )}
                       </div>
@@ -944,7 +934,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                       })}
                       {!asks.length && !bids.length && (
                         <div className="empty" style={{ height: 120 }}>
-                          No open orders for this pair yet.
+                          {bybitStatus === "unsupported"
+                            ? `Bybit does not support an order book for ${pair.symbol}.`
+                            : bybitStatus !== "connected"
+                            ? "Order book disconnected. Reconnecting…"
+                            : "No open orders for this pair yet."}
                         </div>
                       )}
                     </div>
@@ -959,7 +953,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                       </div>
                       {!recentTrades.length ? (
                         <div className="empty" style={{ height: 120 }}>
-                          No trades have executed on {pair.symbol} yet.
+                          {bybitStatus === "unsupported"
+                            ? `Bybit does not support a trade feed for ${pair.symbol}.`
+                            : bybitStatus !== "connected"
+                            ? "Trade feed disconnected. Reconnecting…"
+                            : `No trades have executed on ${pair.symbol} yet.`}
                         </div>
                       ) : (
                         recentTrades.map((t, i) => {
