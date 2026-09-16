@@ -1,6 +1,9 @@
 name: Build CEO EXCHANGE Android APK
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
