@@ -8,7 +8,11 @@ import {
   p2pTradeErrorMessage,
 } from "../../lib/p2p-types";
 
-type Props = { onBack?: () => void };
+type Props = {
+  onBack?: () => void;
+  onOpenTrade?: (tradeId: string) => void;
+  onOpenMerchant?: (merchantId: string) => void;
+};
 
 // All data on this page comes straight from Supabase (p2p_orders,
 // p2p_payment_methods, get_merchant_reputation, create_p2p_trade_with_escrow).
