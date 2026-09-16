@@ -38,6 +38,7 @@ type ListUser = {
   nickname: string | null;
   profile_picture_url: string | null;
   uid?: string | null;
+  bio?: string | null;
   followed_at?: string | null;
   is_followed_by_me?: boolean | null;
 };
@@ -556,19 +557,123 @@ export default function SocialProfile({ profileUserId, currentUserId, onClose, n
 
         {(tab === "followers" || tab === "following") && (
           <div>
-            {list.length === 0 && <p style={empty}>No users yet.</p>}
-            {list.map((u) => (
-              <div key={u.user_id} style={userRow}>
-                {u.profile_picture_url ? (
-                  <img src={u.profile_picture_url} alt="" style={smallAv} />
-                ) : (
-                  <div style={smallAvFb}>{(u.nickname || u.uid || "U").slice(0, 1).toUpperCase()}</div>
-                )}
-                <span style={{ fontWeight: 700 }}>
-                  {(u.nickname && u.nickname.trim()) || (u.uid ? `User ${u.uid}` : "User")}
-                </span>
+            {list.length === 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "72px 24px",
+                }}
+              >
+                <div
+                  style={{
+                    width: 72,
+                    height: 72,
+                    borderRadius: 16,
+                    background: "linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%)",
+                    border: `1px solid ${BORDER}`,
+                    display: "grid",
+                    placeItems: "center",
+                    marginBottom: 16,
+                    boxShadow: "0 0 40px rgba(245,181,27,0.08)",
+                  }}
+                >
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+                      stroke="#666"
+                      strokeWidth="1.5"
+                      strokeLinejoin="round"
+                    />
+                    <path d="M14 2v6h6" stroke="#666" strokeWidth="1.5" strokeLinejoin="round" />
+                    <path d="M8 13h8M8 17h5" stroke={GOLD} strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <p style={{ color: "#777", fontSize: 14, margin: 0 }}>
+                  {tab === "followers" ? "No followers yet" : "Not following anyone yet"}
+                </p>
               </div>
-            ))}
+            )}
+            {list.map((u) => {
+              const displayName =
+                (u.nickname && u.nickname.trim()) || (u.uid ? `User ${u.uid}` : "User");
+              const alreadyFollow = Boolean(u.is_followed_by_me);
+              return (
+                <div key={u.user_id} style={userRow}>
+                  {u.profile_picture_url ? (
+                    <img src={u.profile_picture_url} alt="" style={smallAv} />
+                  ) : (
+                    <div style={smallAvFb}>{(u.nickname || u.uid || "U").slice(0, 1).toUpperCase()}</div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#eee" }}>{displayName}</div>
+                    {(u.bio || u.uid) && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#888",
+                          marginTop: 2,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {u.bio || (u.uid ? `UID ${u.uid}` : "")}
+                      </div>
+                    )}
+                  </div>
+                  {/* Show Follow / Following chip for other users when viewing a list */}
+                  {u.user_id !== currentUserId && (
+                    <button
+                      type="button"
+                      style={alreadyFollow ? listGhostBtn : listFollowBtn}
+                      disabled={busy}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setBusy(true);
+                        try {
+                          if (alreadyFollow) {
+                            const { error } = await supabase.rpc("unfollow_user", {
+                              p_target_user_id: u.user_id,
+                            });
+                            if (error) throw error;
+                            setList((prev) =>
+                              prev.map((x) =>
+                                x.user_id === u.user_id ? { ...x, is_followed_by_me: false } : x
+                              )
+                            );
+                            if (tab === "following" && isSelf) {
+                              setFollowing((n) => Math.max(0, n - 1));
+                            }
+                          } else {
+                            const { error } = await supabase.rpc("follow_user", {
+                              p_target_user_id: u.user_id,
+                            });
+                            if (error) throw error;
+                            setList((prev) =>
+                              prev.map((x) =>
+                                x.user_id === u.user_id ? { ...x, is_followed_by_me: true } : x
+                              )
+                            );
+                            if (tab === "following" && isSelf) {
+                              setFollowing((n) => n + 1);
+                            }
+                          }
+                        } catch (err: any) {
+                          notify?.(err?.message || "Could not update follow.");
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      {alreadyFollow ? "Following" : "Follow"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -891,6 +996,28 @@ const smallAvFb: React.CSSProperties = {
   background: CARD,
   color: GOLD,
   fontWeight: 800,
+};
+const listFollowBtn: React.CSSProperties = {
+  border: 0,
+  borderRadius: 20,
+  padding: "6px 14px",
+  background: GOLD,
+  color: "#0a0a0a",
+  fontWeight: 800,
+  fontSize: 12,
+  cursor: "pointer",
+  flexShrink: 0,
+};
+const listGhostBtn: React.CSSProperties = {
+  border: `1px solid ${BORDER}`,
+  borderRadius: 20,
+  padding: "6px 14px",
+  background: CARD,
+  color: "#ddd",
+  fontWeight: 700,
+  fontSize: 12,
+  cursor: "pointer",
+  flexShrink: 0,
 };
 const assetCard: React.CSSProperties = {
   background: CARD,
