@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CEO EXCHANGE</string>
+    <string name="title_activity_main">CEO EXCHANGE</string>
+    <string name="package_name">com.ceoexchange.app</string>
+    <string name="custom_url_scheme">com.ceoexchange.app</string>
+</resources>
