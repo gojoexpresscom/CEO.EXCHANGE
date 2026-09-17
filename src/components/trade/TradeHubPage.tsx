@@ -129,10 +129,21 @@ export default function TradeHubPage({ onNavigate, onOpenPair }: Props) {
       setErr(String(data.error));
       return;
     }
-    const id = data?.id ?? data?.exchange_id ?? data?.orderId ?? null;
+    const id =
+      data?.id ??
+      data?.exchange_id ??
+      data?.orderId ??
+      data?.exchangeId ??
+      null;
     const status = data?.status ?? null;
+    if (!id) {
+      setErr(
+        "Conversion ID was not returned by changenow-create-exchange. Exchange not confirmed."
+      );
+      return;
+    }
     setMsg(
-      `Exchange submitted${status ? ` (${status})` : ""}${id ? ` · ${id}` : ""}.`
+      `Exchange submitted${status ? ` (${status})` : ""} · ${id}.`
     );
   };
 
@@ -481,3 +492,4 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: 14,
   },
 };
+
