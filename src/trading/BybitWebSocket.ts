@@ -17,6 +17,16 @@ const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 const HEARTBEAT_INTERVAL = 20000;
 
+// Per Bybit's own docs (bybit-exchange.github.io/docs/v5/ws/connect):
+// "Spot can input up to 10 args for each subscription request sent to one
+// connection." Sending more than 10 topics in a single subscribe message
+// gets silently truncated by Bybit — the rest never receive live pushes,
+// even though the connection itself stays open. Anything subscribing to
+// more than ~10 topics at once (e.g. a market list with many symbols)
+// MUST be chunked, or those symbols will look "stuck" until the next
+// full page reload re-fetches a fresh REST snapshot.
+const MAX_ARGS_PER_MESSAGE = 10;
+
 export class BybitWebSocket {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -72,17 +82,11 @@ export class BybitWebSocket {
     );
 
     if (removed.length > 0) {
-      this.send({
-        op: "unsubscribe",
-        args: removed,
-      });
+      this.sendChunked("unsubscribe", removed);
     }
 
     if (added.length > 0) {
-      this.send({
-        op: "subscribe",
-        args: added,
-      });
+      this.sendChunked("subscribe", added);
     }
   }
 
@@ -141,10 +145,7 @@ export class BybitWebSocket {
       const topics = Array.from(this.topics);
 
       if (topics.length > 0) {
-        this.send({
-          op: "subscribe",
-          args: topics,
-        });
+        this.sendChunked("subscribe", topics);
       }
     };
 
@@ -216,6 +217,18 @@ export class BybitWebSocket {
     }
   }
 
+  // Splits a subscribe/unsubscribe into multiple messages of at most
+  // MAX_ARGS_PER_MESSAGE args each — see the constant's comment above for
+  // why this matters for spot.
+  private sendChunked(op: "subscribe" | "unsubscribe", args: string[]) {
+    for (let i = 0; i < args.length; i += MAX_ARGS_PER_MESSAGE) {
+      this.send({
+        op,
+        args: args.slice(i, i + MAX_ARGS_PER_MESSAGE),
+      });
+    }
+  }
+
   private startHeartbeat() {
     this.clearHeartbeat();
 
@@ -267,4 +280,4 @@ export class BybitWebSocket {
       this.reconnectTimer = null;
     }
   }
-  }
+}
