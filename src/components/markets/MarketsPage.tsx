@@ -69,7 +69,7 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
     };
   }, []);
 
-  const { markets, loading, error, toggleFavorite, refresh } =
+  const { markets, loading, error, bybitStatus, toggleFavorite, refresh } =
     useMarketsData(userId);
 
   const filtered = useMemo(() => {
@@ -161,14 +161,23 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
           )}
           <h1 style={styles.title}>Markets</h1>
         </div>
-        <button
-          type="button"
-          style={styles.refreshBtn}
-          onClick={() => void onRefresh()}
-          disabled={refreshing || loading}
-        >
-          {refreshing ? "…" : "Refresh"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{
+            fontSize: 10,
+            color: bybitStatus === "connected" ? "#16c784" : "#666",
+            fontWeight: 600,
+          }}>
+            {bybitStatus === "connected" ? "● Live" : bybitStatus === "connecting" ? "○ Connecting" : "○ Offline"}
+          </span>
+          <button
+            type="button"
+            style={styles.refreshBtn}
+            onClick={() => void onRefresh()}
+            disabled={refreshing || loading}
+          >
+            {refreshing ? "…" : "Refresh"}
+          </button>
+        </div>
       </header>
 
       <div style={styles.searchWrap}>
@@ -568,4 +577,4 @@ const styles: Record<string, CSSProperties> = {
     backgroundSize: "200% 100%",
   },
 };
-      
+          
