@@ -10,6 +10,80 @@ import SocialProfile from "./SocialProfile";
 import SupportChat from "./SupportChat";
 import { PROMO_CARDS, type PromoCardItem } from "../promotion/content";
 
+
+/** Catches render errors so one failed child cannot blank the entire Home page. */
+class HomeErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  state = { hasError: false, message: "" };
+
+  static getDerivedStateFromError(error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+        ? error
+        : "Something went wrong on Home.";
+    return { hasError: true, message };
+  }
+
+  componentDidCatch(error: unknown, info: React.ErrorInfo) {
+    console.error("[HomeErrorBoundary]", error, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            minHeight: "100vh",
+            background: "#050505",
+            color: "#eee",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 14,
+            padding: 24,
+            fontFamily:
+              "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 28 }}>⚠️</div>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#fff" }}>
+            Home failed to render
+          </h2>
+          <p style={{ margin: 0, maxWidth: 340, color: "#999", fontSize: 13, lineHeight: 1.5 }}>
+            {this.state.message || "An unexpected error occurred."}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, message: "" })}
+            style={{
+              marginTop: 8,
+              minHeight: 40,
+              padding: "0 18px",
+              borderRadius: 10,
+              border: "1px solid #2a2110",
+              background: "#f5b51b",
+              color: "#111",
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
 type Profile = {
   id: string;
   user_id: string | null;
@@ -297,6 +371,8 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
     shield: <><path d="M12 3 20 6v5c0 5-3.2 8.2-8 10-4.8-1.8-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/></>,
     lock: <><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>,
     ticket: <><path d="M4 7a2 2 0 0 0 0 4 2 2 0 0 0 0 4v3h16v-3a2 2 0 0 0 0-4 2 2 0 0 0 0-4V4H4z"/><path d="M12 4v16"/></>,
+        more: <><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></>,
+    dots: <><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></>,
     logout: <><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 19V5a2 2 0 0 0-2-2h-5"/></>,
     camera: <><path d="M4 7h3l2-2h6l2 2h3v12H4z"/><circle cx="12" cy="13" r="3"/></>,
     check: <path d="m5 12 4 4L19 6"/>,
@@ -364,7 +440,7 @@ function initials(name: string) {
   return name.trim().slice(0, 2).toUpperCase() || "CE";
 }
 
-export default function Home({
+function Home({
   onLogout,
   onTrade,
   onP2P,
@@ -466,8 +542,15 @@ export default function Home({
       supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active,listed_at").eq("is_active", true).order("symbol").limit(200),
       supabase.from("assets").select("symbol,name,is_active").eq("is_active", true).order("symbol").limit(200),
     ]);
-    if (pairError) throw pairError;
-    if (assetError) throw assetError;
+    if (pairError) {
+      console.error("[Home] trading_pairs load failed:", pairError);
+      setMarketPairs([]);
+      return;
+    }
+    if (assetError) {
+      console.error("[Home] assets load failed:", assetError);
+      // pairs still usable without asset names
+    }
 
     const assetMap = new Map((assets ?? []).map((asset: any) => [String(asset.symbol ?? "").toUpperCase(), asset]));
     const rows = (pairs ?? []).map((pair: any) => {
@@ -1142,6 +1225,7 @@ export default function Home({
   if (!userId && loading) {
     return (
       <div style={styles.brandedLoader}>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <div style={styles.brandedSpinner} />
         <span style={styles.brandedLoaderText}>Loading…</span>
       </div>
@@ -1238,7 +1322,7 @@ export default function Home({
           <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
           <QuickAction icon="wallet" label="Deposit" onClick={() => setModal("deposit")} />
-          <QuickAction icon="menu" label="More" onClick={() => setModal("services")} />
+          <QuickAction icon="more" label="More" onClick={() => setModal("services")} />
         </section>
 
         <PromoCarousel
@@ -1806,7 +1890,26 @@ function PromoCarousel({
     return () => window.clearInterval(t);
   }, [slides.length]);
   const slide = slides[idx] || slides[0];
-  if (!slide) return null;
+  if (!slide) {
+    return (
+      <div
+        style={{
+          margin: "4px 0 14px",
+          minHeight: 72,
+          borderRadius: 14,
+          border: "1px solid #1e1e22",
+          background: "#121214",
+          display: "flex",
+          alignItems: "center",
+          padding: "12px 14px",
+          color: "#888",
+          fontSize: 13,
+        }}
+      >
+        Promotions unavailable
+      </div>
+    );
+  }
   const go = () => {
     if (slide.cta === "p2p") onOpenP2P();
     else if (slide.cta === "invite") onOpenInvite();
@@ -3584,21 +3687,21 @@ const styles: Record<string, React.CSSProperties> = {
   walletVisual: { display: "none" },
   walletShape: { display: "none" },
   walletLogo: { display: "none" },
-  quickGrid: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "12px 6px", margin: "8px 0 12px" },
-  quickAction: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", padding: "2px 0", minHeight: 64 },
-  quickIcon: { width: 40, height: 40, borderRadius: 999, background: "#141414", border: "1px solid #252525", color: "#f0f0f0", display: "grid", placeItems: "center" },
-  quickLabel: { fontSize: 11, fontWeight: 500, color: "#c8c8c8", textAlign: "center", lineHeight: 1.2 },
-  marketSection: { marginTop: 4 },
+  quickGrid: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "14px 4px", margin: "6px 0 12px" },
+  quickAction: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", padding: "2px 0", minHeight: 0 },
+  quickIcon: { width: 44, height: 44, borderRadius: 999, background: "#161616", border: "1px solid #222", color: "#f0f0f0", display: "grid", placeItems: "center" },
+  quickLabel: { fontSize: 11, fontWeight: 500, color: "#b8b8b8", textAlign: "center", lineHeight: 1.25, maxWidth: 72 },
+  marketSection: { marginTop: 6, marginBottom: 12, borderRadius: 16, border: "1px solid #1e1e22", background: "#0e0e10", padding: "10px 10px 6px", overflow: "hidden" },
   tabsRow: { display: "flex", overflowX: "auto", gap: 2, borderBottom: "1px solid #1a1a1a", scrollbarWidth: "none", marginBottom: 4 },
   tab: { whiteSpace: "nowrap", border: 0, background: "transparent", color: "#7a7a7a", padding: "12px 12px", display: "inline-flex", alignItems: "center", cursor: "pointer", fontWeight: 600, fontSize: 14 },
   tabActive: { color: "#fff", borderBottom: "2px solid #f0b90b" },
   marketHeader: { display: "none" },
-  marketRow: { width: "100%", minHeight: 56, display: "grid", gridTemplateColumns: "20px 32px 1.15fr auto auto", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 12, background: "#121214", border: "1px solid #1e1e22", marginBottom: 6, cursor: "pointer", textAlign: "left", color: "inherit" },
+  marketRow: { width: "100%", minHeight: 52, display: "grid", gridTemplateColumns: "20px 28px 1.15fr auto auto", alignItems: "center", gap: 8, padding: "8px 6px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "1px solid #161618", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
   starButton: { border: 0, background: "transparent", color: "#555", padding: 0, cursor: "pointer", borderRadius: 7, width: 22, height: 22, display: "grid", placeItems: "center" },
   starHit: { border: 0, background: "transparent", color: "#4a4a4a", padding: 0, cursor: "pointer", width: 22, height: 22, display: "grid", placeItems: "center" },
   starButtonActive: { color: "#f0b90b" },
-  coinAvatar: { width: 32, height: 32, borderRadius: 999, background: "linear-gradient(145deg,#2a2a2a,#141414)", border: "1px solid #2e2e2e", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#eee", flexShrink: 0 },
-  coinImg: { width: 32, height: 32, borderRadius: 999, objectFit: "cover", background: "#1a1a1a", flexShrink: 0 },
+  coinAvatar: { width: 28, height: 28, borderRadius: 999, background: "linear-gradient(145deg,#2a2a2a,#141414)", border: "1px solid #2e2e2e", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700, color: "#eee", flexShrink: 0 },
+  coinImg: { width: 28, height: 28, borderRadius: 999, objectFit: "cover", background: "#1a1a1a", flexShrink: 0 },
   pair: { display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden", gap: 2 },
   pairTop: { display: "flex", alignItems: "center", gap: 2, minWidth: 0 },
   pairName: { fontSize: 14, fontWeight: 600, color: "#f5f5f5" },
@@ -4038,3 +4141,11 @@ if (typeof document !== "undefined") {
 }
 
 export { styles };
+
+export default function HomeWithBoundary(props: React.ComponentProps<typeof Home>) {
+  return (
+    <HomeErrorBoundary>
+      <Home {...props} />
+    </HomeErrorBoundary>
+  );
+}
