@@ -852,9 +852,49 @@ function Home({
       // that from, so this is the only honest definition of "new" available to us.
       list.sort((a, b) => new Date(b.listed_at ?? 0).getTime() - new Date(a.listed_at ?? 0).getTime());
     } else {
-      // Hot: highest last price first (BTC, high-priced majors, then lower).
-      // Collapsed view shows top 6; "View more" expands the full ranked list.
-      list.sort((a, b) => Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity));
+      // Hot: distinct base assets (not every BTC/TRY, BTC/BRL…). Prefer USDT
+      // quote, then rank by last price so majors surface first. Collapsed = 6.
+      const quoteRank = (q: string) => {
+        const u = (q || "").toUpperCase();
+        if (u === "USDT") return 0;
+        if (u === "USDC") return 1;
+        if (u === "USD") return 2;
+        return 9;
+      };
+      // Prefer USDT (etc.) per base, then highest price within that preference.
+      list.sort((a, b) => {
+        const baseA = (a.base_asset || "").toUpperCase();
+        const baseB = (b.base_asset || "").toUpperCase();
+        if (baseA !== baseB) {
+          // When comparing different bases, rank by price (high first).
+          return Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity);
+        }
+        const qr = quoteRank(a.quote_asset) - quoteRank(b.quote_asset);
+        if (qr !== 0) return qr;
+        return Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity);
+      });
+      // One row per base asset (first wins = best quote + price from sort above
+      // is not enough alone — pick best quote per base first).
+      const bestByBase = new Map<string, Market>();
+      for (const m of list) {
+        const base = (m.base_asset || m.symbol.split(/[\/\-]/)[0] || "").toUpperCase();
+        if (!base) continue;
+        const existing = bestByBase.get(base);
+        if (!existing) {
+          bestByBase.set(base, m);
+          continue;
+        }
+        const qNew = quoteRank(m.quote_asset);
+        const qOld = quoteRank(existing.quote_asset);
+        if (qNew < qOld) {
+          bestByBase.set(base, m);
+        } else if (qNew === qOld && Number(m.last_price ?? 0) > Number(existing.last_price ?? 0)) {
+          bestByBase.set(base, m);
+        }
+      }
+      list = Array.from(bestByBase.values()).sort(
+        (a, b) => Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity),
+      );
       if (!showAllMarkets) {
         list = list.slice(0, 6);
       }
