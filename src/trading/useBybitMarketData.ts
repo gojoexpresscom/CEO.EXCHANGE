@@ -413,6 +413,13 @@ export function useBybitMarketData(
   const websocketRef = useRef<BybitWebSocket | null>(null);
 
   useEffect(() => {
+    // The pair/timeframe this hook is fed can arrive later than the
+    // component mount (e.g. the pair is still being fetched from
+    // Supabase). That is NOT the same thing as a confirmed-unsupported
+    // pair — it just means we don't know yet. Only mark "unsupported"
+    // once we actually have both a base and quote asset and the
+    // resulting symbol/interval combination is genuinely invalid.
+    const hasPairInfo = !!baseAsset && !!quoteAsset;
     const symbol = makeBybitSymbol(baseAsset, quoteAsset);
     const interval = getInterval(timeframe);
 
@@ -422,10 +429,24 @@ export function useBybitMarketData(
     setBook([]);
     setTrades([]);
 
+    if (!hasPairInfo) {
+      // Pair hasn't loaded yet — neutral loading state, never "unsupported".
+      setStatus("connecting");
+      return;
+    }
+
     if (!symbol || !interval) {
+      // We have real pair info and it genuinely can't be mapped to a
+      // Bybit symbol/interval — this is a confirmed, not a guessed,
+      // unsupported state.
       setStatus("unsupported");
       return;
     }
+
+    // We have a valid symbol: re-arm to "connecting" so any stale status
+    // from a previous pair/loading state doesn't linger on screen while
+    // the new snapshot loads.
+    setStatus("connecting");
 
     let cancelled = false;
 
@@ -699,4 +720,5 @@ export function useBybitMarketData(
     trades,
     status,
   };
-}
+    }
+          
