@@ -701,10 +701,7 @@ export default function Home({
     return Array.from(set);
   }, [marketPairs]);
 
-  const {
-    tickers: bybitTickers,
-    status: bybitMarketStatus,
-  } = useBybitTickers(bybitSymbols);
+  const { tickers: bybitTickers } = useBybitTickers(bybitSymbols);
 
   // Real backend pair list + real live Bybit prices merged together. This
   // is the ONLY place price fields get set for Home's market section — no
@@ -762,13 +759,17 @@ export default function Home({
       // that from, so this is the only honest definition of "new" available to us.
       list.sort((a, b) => new Date(b.listed_at ?? 0).getTime() - new Date(a.listed_at ?? 0).getTime());
     } else {
-      // Hot: the four flagship markets the product spec calls for, in a
-      // fixed order — not a volume sort. Each one only appears once it
-      // actually has a real Bybit price (guaranteed by the `list` filter
-      // above), so the row fills in live rather than showing a fake price.
-      const HOT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT"];
-      const bySymbol = new Map(list.map((m) => [m.symbol.toUpperCase(), m]));
-      list = HOT_SYMBOLS.map((s) => bySymbol.get(s)).filter((m): m is Market => Boolean(m));
+      // Hot: by default, the four flagship markets the product spec calls
+      // for, in a fixed order. Tapping "View more" expands to the full
+      // real market list ranked by 24h volume — same as every other tab —
+      // instead of staying stuck on those same four with nothing to reveal.
+      if (showAllMarkets) {
+        list.sort((a, b) => Number(b.volume_24h ?? -Infinity) - Number(a.volume_24h ?? -Infinity));
+      } else {
+        const HOT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT"];
+        const bySymbol = new Map(list.map((m) => [m.symbol.toUpperCase(), m]));
+        list = HOT_SYMBOLS.map((s) => bySymbol.get(s)).filter((m): m is Market => Boolean(m));
+      }
     }
 
     if (search.trim()) {
@@ -1258,19 +1259,6 @@ export default function Home({
               </button>
             ))}
           </div>
-          {marketCategory === "Spot" && bybitMarketStatus !== "connected" && (
-            <div style={styles.liveStatus}>
-              <span
-                style={{
-                  ...styles.liveDot,
-                  background: bybitMarketStatus === "connecting" ? "#f5b51b" : "#f04438",
-                }}
-              />
-              {bybitMarketStatus === "connecting"
-                ? "Connecting to live Bybit market data…"
-                : "Live market data disconnected — reconnecting…"}
-            </div>
-          )}
           {filteredMarkets.map((m) => (
             <MarketRow
               key={m.symbol}
@@ -3405,8 +3393,6 @@ const styles: Record<string, React.CSSProperties> = {
   commentDelete: { border: 0, background: "transparent", color: "#ff6b6b", fontSize: 11, cursor: "pointer", padding: "4px 6px" },
   fabMenuIcon: { width: 28, height: 28, borderRadius: 999, background: "#2a2a2a", display: "grid", placeItems: "center", color: "#f5b51b" },
   viewAll: { width: "100%", border: 0, background: "transparent", color: "#9a9a9a", padding: "16px 0 8px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 },
-  liveStatus: { display: "flex", alignItems: "center", gap: 8, padding: "8px 2px", color: "#9a9a9a", fontSize: 12, fontWeight: 600 },
-  liveDot: { width: 7, height: 7, borderRadius: 999, flexShrink: 0 },
   feedSection: { borderTop: "1px solid #171717", paddingTop: 22 },
   sectionTitle: { display: "flex", alignItems: "center", gap: 9, fontWeight: 800, fontSize: 18, marginBottom: 15 },
   goldBar: { width: 5, height: 30, borderRadius: 4, background: GOLD },
