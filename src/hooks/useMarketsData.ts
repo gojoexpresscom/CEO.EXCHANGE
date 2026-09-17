@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { useBybitTickers } from "../trading/useBybitTickers";
 import type { AssetMeta, TradingPairRow } from "../lib/types";
 
 const PAGE_SIZE = 1000;
@@ -13,19 +14,14 @@ export type MarketRow = {
   last_price: number | null;
   change_24h: number | null;
   volume_24h: number | null;
+  high_24h: number | null;
+  low_24h: number | null;
   provider_symbol: string | null;
   hasTicker: boolean;
   isFavorite: boolean;
 };
 
 type TickerRow = Record<string, unknown>;
-type InstrumentRow = {
-  symbol?: string | null;
-  trading_pair_symbol?: string | null;
-  pair_symbol?: string | null;
-  provider_symbol?: string | null;
-  bybit_symbol?: string | null;
-};
 
 function num(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -39,7 +35,7 @@ function str(v: unknown): string | null {
   return s || null;
 }
 
-/** Compact Bybit-style symbol: BTC + USDT → BTCUSDT */
+/** Same rule as Home / useBybitMarketData: BTC + USDT → BTCUSDT */
 export function toProviderSymbol(base: string, quote: string): string | null {
   const b = (base || "").trim().toUpperCase();
   const q = (quote || "").trim().toUpperCase();
@@ -48,55 +44,42 @@ export function toProviderSymbol(base: string, quote: string): string | null {
   return /^[A-Z0-9]+$/.test(s) ? s : null;
 }
 
-/** Normalize any pair symbol form to compact uppercase without separators */
 function compactSymbol(symbol: string | null | undefined): string {
   return (symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-function pickTickerPrice(t: TickerRow): number | null {
-  return (
-    num(t.last_price) ??
-    num(t.lastPrice) ??
-    num(t.price) ??
-    num(t.last) ??
-    null
-  );
+function pickPrice(t: TickerRow): number | null {
+  return num(t.last_price) ?? num(t.lastPrice) ?? num(t.price) ?? null;
 }
-
-function pickTickerChange(t: TickerRow): number | null {
+function pickChange(t: TickerRow): number | null {
   return (
     num(t.change_24h) ??
     num(t.price_change_percent_24h) ??
     num(t.priceChangePercent24h) ??
-    num(t.change_pct_24h) ??
-    num(t.pct_change_24h) ??
     null
   );
 }
-
-function pickTickerVolume(t: TickerRow): number | null {
+function pickVolume(t: TickerRow): number | null {
   return (
     num(t.volume_24h) ??
     num(t.quote_volume_24h) ??
     num(t.turnover_24h) ??
     num(t.volume24h) ??
-    num(t.turnover24h) ??
     null
   );
 }
-
-function tickerKey(t: TickerRow): string {
-  return compactSymbol(
-    str(t.symbol) ||
-      str(t.provider_symbol) ||
-      str(t.bybit_symbol) ||
-      str(t.pair_symbol) ||
-      ""
-  );
+function pickHigh(t: TickerRow): number | null {
+  return num(t.high_24h) ?? num(t.highPrice24h) ?? num(t.high) ?? null;
+}
+function pickLow(t: TickerRow): number | null {
+  return num(t.low_24h) ?? num(t.lowPrice24h) ?? num(t.low) ?? null;
 }
 
 async function fetchAllPages<T>(
-  loadPage: (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>
+  loadPage: (
+    from: number,
+    to: number
+  ) => Promise<{ data: T[] | null; error: { message: string } | null }>
 ): Promise<{ rows: T[]; error: string | null }> {
   const rows: T[] = [];
   let from = 0;
@@ -112,77 +95,59 @@ async function fetchAllPages<T>(
 }
 
 /**
- * Markets data: trading_pairs (canonical) + market_tickers (live prices).
- * Maps via bybit_spot_instruments.provider_symbol when available,
- * otherwise base_asset + quote_asset → BTCUSDT form.
+ * Canonical pairs from trading_pairs.
+ * Prices: market_tickers (backend sync) preferred, else public Bybit tickers
+ * keyed by base+quote (never by "ADA/USDT" form).
  */
 export function useMarketsData(userId: string | null) {
   const [pairs, setPairs] = useState<TradingPairRow[]>([]);
   const [assets, setAssets] = useState<AssetMeta[]>([]);
-  const [tickersByKey, setTickersByKey] = useState<Map<string, TickerRow>>(
-    () => new Map()
-  );
-  const [providerByPair, setProviderByPair] = useState<Map<string, string>>(
+  const [dbTickers, setDbTickers] = useState<Map<string, TickerRow>>(
     () => new Map()
   );
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadTickers = useCallback(async () => {
-    // Prefer * so we adapt to actual columns without guessing wrong names
+  const bybitSymbols = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]) {
+      set.add(s);
+    }
+    for (const p of pairs) {
+      const ps = toProviderSymbol(p.base_asset, p.quote_asset);
+      if (ps) set.add(ps);
+    }
+    return Array.from(set);
+  }, [pairs]);
+
+  const { tickers: bybitTickers, status: bybitStatus } =
+    useBybitTickers(bybitSymbols);
+
+  const loadDbTickers = useCallback(async () => {
     const { rows, error: e } = await fetchAllPages<TickerRow>(
       async (from, to) => {
-        const res = await supabase.from("market_tickers").select("*").range(from, to);
+        const res = await supabase
+          .from("market_tickers")
+          .select("*")
+          .range(from, to);
         return { data: res.data as TickerRow[] | null, error: res.error };
       }
     );
-    if (e) {
-      return { map: new Map<string, TickerRow>(), error: e };
-    }
+    if (e) return { map: new Map<string, TickerRow>(), error: e };
     const map = new Map<string, TickerRow>();
     for (const t of rows) {
-      const k = tickerKey(t);
-      if (k) map.set(k, t);
-      // also index by raw symbol variants
-      const raw = str(t.symbol);
-      if (raw) map.set(raw.toUpperCase(), t);
+      const keys = [
+        str(t.symbol),
+        str(t.provider_symbol),
+        str(t.bybit_symbol),
+      ].filter(Boolean) as string[];
+      for (const k of keys) {
+        map.set(k.toUpperCase(), t);
+        map.set(compactSymbol(k), t);
+      }
     }
     return { map, error: null as string | null };
-  }, []);
-
-  const loadInstruments = useCallback(async () => {
-    const map = new Map<string, string>();
-    const { rows, error: e } = await fetchAllPages<InstrumentRow>(
-      async (from, to) => {
-        const res = await supabase
-          .from("bybit_spot_instruments")
-          .select("*")
-          .range(from, to);
-        return { data: res.data as InstrumentRow[] | null, error: res.error };
-      }
-    );
-    if (e) {
-      // Table may not be exposed to anon/authenticated — fall back to base+quote
-      return map;
-    }
-    for (const row of rows) {
-      const provider =
-        str(row.provider_symbol) ||
-        str(row.bybit_symbol) ||
-        str(row.symbol);
-      if (!provider) continue;
-      const pairKeys = [
-        str(row.trading_pair_symbol),
-        str(row.pair_symbol),
-        str(row.symbol),
-      ].filter(Boolean) as string[];
-      for (const pk of pairKeys) {
-        map.set(pk.toUpperCase(), provider.toUpperCase());
-        map.set(compactSymbol(pk), provider.toUpperCase());
-      }
-    }
-    return map;
   }, []);
 
   const loadPairs = useCallback(async () => {
@@ -221,20 +186,11 @@ export function useMarketsData(userId: string | null) {
     });
     if (!assetsResult.error) setAssets(assetsResult.rows);
 
-    const [tickerPack, instruments] = await Promise.all([
-      loadTickers(),
-      loadInstruments(),
-    ]);
-    if (tickerPack.error) {
-      // Pairs still usable; prices may be empty
-      setError(
-        `Unable to load market_tickers: ${tickerPack.error}`
-      );
-    }
-    setTickersByKey(tickerPack.map);
-    setProviderByPair(instruments);
+    const tickerPack = await loadDbTickers();
+    setDbTickers(tickerPack.map);
+    // Don't block UI if market_tickers fails — Bybit public feed still works
     setLoading(false);
-  }, [loadTickers, loadInstruments]);
+  }, [loadDbTickers]);
 
   const loadFavorites = useCallback(async () => {
     if (!userId) {
@@ -258,16 +214,15 @@ export function useMarketsData(userId: string | null) {
     void loadFavorites();
   }, [loadFavorites]);
 
-  // Realtime refresh of market_tickers when backend updates
   useEffect(() => {
     const channel = supabase
-      .channel("markets-tickers")
+      .channel("markets-tickers-v2")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "market_tickers" },
         () => {
-          void loadTickers().then((pack) => {
-            if (!pack.error) setTickersByKey(pack.map);
+          void loadDbTickers().then((pack) => {
+            if (!pack.error) setDbTickers(pack.map);
           });
         }
       )
@@ -275,7 +230,7 @@ export function useMarketsData(userId: string | null) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [loadTickers]);
+  }, [loadDbTickers]);
 
   const nameByBase = useMemo(() => {
     const m = new Map<string, string>();
@@ -290,32 +245,35 @@ export function useMarketsData(userId: string | null) {
       const base = (p.base_asset || "").trim().toUpperCase();
       const quote = (p.quote_asset || "").trim().toUpperCase();
       const pairSym = (p.symbol || "").toUpperCase();
+      const provider = toProviderSymbol(base, quote);
 
-      const fromInstrument =
-        providerByPair.get(pairSym) ||
-        providerByPair.get(compactSymbol(pairSym)) ||
-        providerByPair.get(`${base}/${quote}`) ||
-        providerByPair.get(`${base}${quote}`);
-
-      const provider =
-        fromInstrument || toProviderSymbol(base, quote);
-
-      let ticker: TickerRow | undefined;
+      // 1) Backend market_tickers
+      let db: TickerRow | undefined;
       if (provider) {
-        ticker =
-          tickersByKey.get(provider) ||
-          tickersByKey.get(compactSymbol(provider));
+        db =
+          dbTickers.get(provider) ||
+          dbTickers.get(compactSymbol(provider));
       }
-      if (!ticker) {
-        ticker =
-          tickersByKey.get(pairSym) ||
-          tickersByKey.get(compactSymbol(pairSym)) ||
-          tickersByKey.get(`${base}${quote}`);
+      if (!db) {
+        db =
+          dbTickers.get(pairSym) ||
+          dbTickers.get(compactSymbol(pairSym));
       }
 
-      const last_price = ticker ? pickTickerPrice(ticker) : null;
-      const change_24h = ticker ? pickTickerChange(ticker) : null;
-      const volume_24h = ticker ? pickTickerVolume(ticker) : null;
+      // 2) Live Bybit public ticker (same as Home)
+      const bybit = provider ? bybitTickers.get(provider) : undefined;
+
+      const last_price =
+        (db ? pickPrice(db) : null) ?? bybit?.last_price ?? null;
+      const change_24h =
+        (db ? pickChange(db) : null) ?? bybit?.change_24h ?? null;
+      const volume_24h =
+        (db ? pickVolume(db) : null) ?? bybit?.volume_24h ?? null;
+      const high_24h = db ? pickHigh(db) : null;
+      const low_24h = db ? pickLow(db) : null;
+
+      // Treat literal 0 as missing only when both sources empty — keep real 0 if rare
+      const hasTicker = last_price != null && Number.isFinite(last_price);
 
       return {
         symbol: p.symbol,
@@ -323,15 +281,17 @@ export function useMarketsData(userId: string | null) {
         quote_asset: quote || p.quote_asset,
         base_name: nameByBase.get(base) || undefined,
         listed_at: p.listed_at ?? null,
-        last_price,
-        change_24h,
-        volume_24h,
+        last_price: hasTicker ? last_price : null,
+        change_24h: hasTicker ? change_24h : null,
+        volume_24h: hasTicker ? volume_24h : null,
+        high_24h,
+        low_24h,
         provider_symbol: provider,
-        hasTicker: last_price != null,
+        hasTicker,
         isFavorite: favorites.has(p.symbol) || favorites.has(pairSym),
       };
     });
-  }, [pairs, tickersByKey, providerByPair, nameByBase, favorites]);
+  }, [pairs, dbTickers, bybitTickers, nameByBase, favorites]);
 
   const toggleFavorite = useCallback(
     async (symbol: string) => {
@@ -360,44 +320,19 @@ export function useMarketsData(userId: string | null) {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const [tickerPack, instruments] = await Promise.all([
-      loadTickers(),
-      loadInstruments(),
-    ]);
-    // also refresh pair list in case of new listings
-    const pairsResult = await fetchAllPages<TradingPairRow>(
-      async (from, to) => {
-        const res = await supabase
-          .from("trading_pairs")
-          .select("id,symbol,base_asset,quote_asset,is_active,listed_at")
-          .eq("is_active", true)
-          .order("symbol", { ascending: true })
-          .range(from, to);
-        return {
-          data: res.data as TradingPairRow[] | null,
-          error: res.error,
-        };
-      }
-    );
-    if (!pairsResult.error) setPairs(pairsResult.rows);
-    if (tickerPack.error) {
-      setError(`Unable to load market_tickers: ${tickerPack.error}`);
-    } else {
-      setError(null);
-      setTickersByKey(tickerPack.map);
-    }
-    setProviderByPair(instruments);
+    await loadPairs();
     void loadFavorites();
     setLoading(false);
-  }, [loadTickers, loadInstruments, loadFavorites]);
+  }, [loadPairs, loadFavorites]);
 
   return {
     markets,
     loading,
     error,
+    bybitStatus,
     favorites,
     toggleFavorite,
     refresh,
   };
-                }
-    
+        }
+                             
