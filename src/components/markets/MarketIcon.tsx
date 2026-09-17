@@ -63,4 +63,3 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "-0.02em",
   },
 };
-
