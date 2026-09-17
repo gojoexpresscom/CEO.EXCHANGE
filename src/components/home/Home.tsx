@@ -8,6 +8,7 @@ import PostComposer from "./PostComposer";
 import SocialMessages from "./SocialMessages";
 import SocialProfile from "./SocialProfile";
 import SupportChat from "./SupportChat";
+import { PROMO_CARDS, type PromoCardItem } from "../promotion/content";
 
 type Profile = {
   id: string;
@@ -1152,16 +1153,22 @@ export default function Home({
     <div style={styles.page}>
       <style>{HOME_MOTION}</style>
       <header style={styles.header}>
-        <button type="button" style={styles.profileBtn} onClick={() => { setSettingsTab("My Info"); setSettingsOpen(true); }} aria-label="Profile">
+        <button type="button" style={styles.profileBtn} onClick={() => { setViewProfileUserId(userId); setModal("profile"); }} aria-label="Profile">
           <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
         </button>
         <div style={styles.topSearch}>
-          <Icon name="search" size={18} />
-          <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="" aria-label="Search markets" />
-          {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={16} /></button>}
+          <Icon name="search" size={15} />
+          <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search markets" />
+          {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={14} /></button>}
         </div>
         <div style={styles.headerActions}>
-          {/* User Center via avatar; More opens Services */}
+          <button type="button" style={styles.iconButton} onClick={() => setModal("support")} aria-label="Support">
+            <Icon name="headset" size={18} />
+          </button>
+          <button type="button" style={{ ...styles.iconButton, position: "relative" as const }} onClick={() => setModal("notifications")} aria-label="Notifications">
+            <Icon name="bell" size={18} />
+            {unreadTotal > 0 && <span style={styles.badgeDot}>{unreadTotal > 9 ? "9+" : unreadTotal}</span>}
+          </button>
         </div>
       </header>
 
@@ -1233,6 +1240,13 @@ export default function Home({
           <QuickAction icon="wallet" label="Deposit" onClick={() => setModal("deposit")} />
           <QuickAction icon="menu" label="More" onClick={() => setModal("services")} />
         </section>
+
+        <PromoCarousel
+          onOpenP2P={() => onP2P?.()}
+          onOpenInvite={() => setModal("invite")}
+          onOpenExperience={() => onExperience?.()}
+          onOpenTrade={(sym) => onTrade(sym)}
+        />
 
         <section style={styles.marketSection}>
           <div style={styles.tabsRow}>
@@ -1337,10 +1351,10 @@ export default function Home({
 
       <nav style={styles.bottomNav}>
         <NavItem icon="home" label="Home" active onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
-        <NavItem icon="chart" label="Markets" onClick={() => notify("Markets navigation is coming next.")} />
-        <NavItem icon="trade" label="Trade" onClick={() => notify("Trade navigation is coming next.")} />
-        <NavItem icon="percent" label="Earn" onClick={() => notify("Earn navigation is coming next.")} />
-        <NavItem icon="wallet" label="Assets" onClick={() => notify("Assets navigation is coming next.")} />
+        <NavItem icon="chart" label="Markets" onClick={() => { const s = filteredMarkets[0]?.symbol || markets[0]?.symbol; if (s) onTrade(s); else notify("No markets available yet."); }} />
+        <NavItem icon="trade" label="Trade" onClick={() => { const s = filteredMarkets[0]?.symbol || markets[0]?.symbol; if (s) onTrade(s); else notify("No markets available yet."); }} />
+        <NavItem icon="percent" label="Earn" onClick={() => notify("CEO Earn is coming soon.")} />
+        <NavItem icon="wallet" label="Assets" onClick={() => setModal("menu")} />
       </nav>
 
       {toast && <div style={styles.toast}>{toast}</div>}
@@ -1388,7 +1402,9 @@ export default function Home({
             else if (key === "p2p") { closeModal(); onP2P?.(); }
             else if (key === "support") setModal("support");
             else if (key === "menu") setModal("menu");
-            else notify("Coming soon.");
+            else if (key === "buy" || key === "fiat") setModal("deposit");
+            else if (key === "convert") notify("Convert is coming soon.");
+            else notify("This service is not available yet.");
           }}
         />
       )}
@@ -1456,13 +1472,182 @@ export default function Home({
 function QuickAction({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
   return (
     <button type="button" style={styles.quickAction} onClick={onClick}>
-      <span style={styles.quickIcon}><Icon name={icon} size={24} /></span>
+      <span style={styles.quickIcon}><Icon name={icon} size={20} /></span>
       <span style={styles.quickLabel}>{label}</span>
     </button>
   );
 }
 
-/** Bybit-style Services hub opened from More */
+
+/** Services hub — in-page favorites edit (does not open Settings) */
+
+const svc: Record<string, React.CSSProperties> = {
+  shell: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 80,
+    background: "#0a0a0a",
+    display: "flex",
+    flexDirection: "column",
+    color: "#fff",
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 14px",
+    paddingTop: "calc(10px + env(safe-area-inset-top))",
+    borderBottom: "1px solid #1a1a1a",
+  },
+  back: {
+    border: 0,
+    background: "transparent",
+    color: "#eee",
+    fontSize: 20,
+    width: 36,
+    height: 36,
+    cursor: "pointer",
+  },
+  title: { margin: 0, fontSize: 16, fontWeight: 700 },
+  doneBtn: {
+    border: 0,
+    background: "transparent",
+    color: "#f5b51b",
+    fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+    padding: "6px 4px",
+    minWidth: 48,
+  },
+  searchWrap: {
+    margin: "10px 14px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    height: 36,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: "1px solid #2a2a2a",
+    background: "#121212",
+  },
+  search: {
+    flex: 1,
+    border: 0,
+    outline: 0,
+    background: "transparent",
+    color: "#fff",
+    fontSize: 14,
+  },
+  body: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "8px 14px 28px",
+  },
+  favLabel: { fontSize: 13, fontWeight: 700, color: "#eee", marginBottom: 8 },
+  favRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid #222",
+    background: "#111",
+    marginBottom: 4,
+  },
+  favIconBtn: {
+    position: "relative",
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    border: "1px solid #2a2a2a",
+    background: "#141414",
+    color: "#eee",
+    display: "grid",
+    placeItems: "center",
+    cursor: "pointer",
+  },
+  editBtn: {
+    marginLeft: "auto",
+    border: 0,
+    borderRadius: 999,
+    padding: "6px 14px",
+    minHeight: 30,
+    background: "#f5b51b",
+    color: "#111",
+    fontWeight: 700,
+    fontSize: 12,
+    cursor: "pointer",
+  },
+  secTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#aaa",
+    marginBottom: 10,
+  },
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, 1fr)",
+    gap: "14px 8px",
+  },
+  item: {
+    border: 0,
+    background: "transparent",
+    color: "#ddd",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 6,
+    cursor: "pointer",
+    padding: 0,
+  },
+  itemIcon: {
+    position: "relative",
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    background: "#141414",
+    border: "1px solid #252525",
+    display: "grid",
+    placeItems: "center",
+  },
+  itemLabel: {
+    fontSize: 11,
+    fontWeight: 500,
+    color: "#c8c8c8",
+    textAlign: "center",
+    lineHeight: 1.2,
+  },
+  minus: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 16,
+    height: 16,
+    borderRadius: 99,
+    background: "#f04438",
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: 800,
+    display: "grid",
+    placeItems: "center",
+  },
+  plus: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 16,
+    height: 16,
+    borderRadius: 99,
+    background: "#f5b51b",
+    color: "#111",
+    fontSize: 11,
+    fontWeight: 800,
+    display: "grid",
+    placeItems: "center",
+  },
+};
+
 function ServicesModal({
   onClose,
   onOpen,
@@ -1470,55 +1655,110 @@ function ServicesModal({
   onClose: () => void;
   onOpen: (key: string) => void;
 }) {
-  const [q, setQ] = useState("");
-  const items: { key: string; label: string; section: string }[] = [
-    { key: "rewards", label: "Rewards Hub", section: "Recommended" },
-    { key: "invite", label: "Invite Friends", section: "Recommended" },
-    { key: "deposit", label: "Deposit", section: "Buy Crypto" },
-    { key: "buy", label: "Buy Crypto", section: "Buy Crypto" },
-    { key: "p2p", label: "P2P Trading", section: "Buy Crypto" },
-    { key: "fiat", label: "Fiat Deposit", section: "Buy Crypto" },
-    { key: "convert", label: "Convert", section: "Trade" },
-    { key: "giveaway", label: "Giveaway", section: "Events" },
-    { key: "support", label: "Support", section: "Services" },
-    { key: "menu", label: "User Center", section: "Services" },
+  const ALL: { key: string; label: string; section: string; icon: string }[] = [
+    { key: "rewards", label: "Rewards Hub", section: "Recommended", icon: "gift" },
+    { key: "invite", label: "Invite Friends", section: "Recommended", icon: "userPlus" },
+    { key: "deposit", label: "Deposit", section: "Buy Crypto", icon: "wallet" },
+    { key: "buy", label: "Buy Crypto", section: "Buy Crypto", icon: "wallet" },
+    { key: "p2p", label: "P2P Trading", section: "Buy Crypto", icon: "menu" },
+    { key: "fiat", label: "Fiat Deposit", section: "Buy Crypto", icon: "wallet" },
+    { key: "convert", label: "Convert", section: "Trade", icon: "trade" },
+    { key: "giveaway", label: "Giveaway", section: "Events", icon: "gift" },
+    { key: "support", label: "Support", section: "Services", icon: "headset" },
+    { key: "menu", label: "User Center", section: "Services", icon: "userPlus" },
   ];
+  const [q, setQ] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [favKeys, setFavKeys] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("ceo_service_favorites");
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        if (Array.isArray(parsed) && parsed.length) return parsed.slice(0, 7);
+      }
+    } catch { /* ignore */ }
+    return ["rewards", "invite", "deposit", "buy"];
+  });
+
+  const persistFavs = (next: string[]) => {
+    const clipped = next.slice(0, 7);
+    setFavKeys(clipped);
+    try { localStorage.setItem("ceo_service_favorites", JSON.stringify(clipped)); } catch { /* ignore */ }
+  };
+
+  const toggleFav = (key: string) => {
+    if (favKeys.includes(key)) persistFavs(favKeys.filter((k) => k !== key));
+    else if (favKeys.length < 7) persistFavs([...favKeys, key]);
+  };
+
   const filtered = q.trim()
-    ? items.filter((i) => i.label.toLowerCase().includes(q.trim().toLowerCase()))
-    : items;
+    ? ALL.filter((i) => i.label.toLowerCase().includes(q.trim().toLowerCase()))
+    : ALL;
   const sections = Array.from(new Set(filtered.map((i) => i.section)));
+  const favItems = favKeys.map((k) => ALL.find((i) => i.key === k)).filter(Boolean) as typeof ALL;
+
   return (
     <div style={svc.shell}>
       <header style={svc.header}>
         <button type="button" style={svc.back} onClick={onClose} aria-label="Back">←</button>
         <h2 style={svc.title}>Services</h2>
-        <span style={{ width: 40 }} />
+        {editing ? (
+          <button type="button" style={svc.doneBtn} onClick={() => setEditing(false)}>Done</button>
+        ) : (
+          <span style={{ width: 48 }} />
+        )}
       </header>
       <div style={svc.searchWrap}>
         <Icon name="search" size={16} />
-        <input
-          style={svc.search}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search"
-        />
+        <input style={svc.search} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" />
       </div>
       <div style={svc.body}>
         <div style={svc.favLabel}>My Favorites</div>
+        {editing && (
+          <div style={{ color: "#888", fontSize: 12, marginBottom: 8 }}>
+            Add up to 7 favorites. Tap icons to add or remove.
+          </div>
+        )}
         <div style={svc.favRow}>
-          {["percent", "userPlus", "gift", "wallet"].map((ic) => (
-            <span key={ic} style={svc.favIcon}><Icon name={ic} size={18} /></span>
+          {favItems.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              style={svc.favIconBtn}
+              onClick={() => (editing ? toggleFav(it.key) : onOpen(it.key))}
+              aria-label={it.label}
+            >
+              <Icon name={it.icon} size={18} />
+              {editing && <span style={svc.minus}>−</span>}
+            </button>
           ))}
-          <button type="button" style={svc.editBtn} onClick={() => onOpen("menu")}>Edit</button>
+          {!editing && (
+            <button type="button" style={svc.editBtn} onClick={() => setEditing(true)}>Edit</button>
+          )}
+          {editing && (
+            <button type="button" style={svc.editBtn} onClick={() => persistFavs(["rewards", "invite", "deposit", "buy"])}>Reset</button>
+          )}
         </div>
         {sections.map((sec) => (
           <div key={sec} style={{ marginTop: 18 }}>
             <div style={svc.secTitle}>{sec}</div>
             <div style={svc.grid}>
-              {filtered.filter((i) => i.section === sec).map((i) => (
-                <button key={i.key} type="button" style={svc.item} onClick={() => onOpen(i.key)}>
-                  <span style={svc.itemIcon}><Icon name={i.key === "p2p" || i.key === "convert" ? "trade" : i.key === "invite" ? "userPlus" : i.key === "deposit" || i.key === "buy" || i.key === "fiat" ? "wallet" : i.key === "support" ? "headset" : "gift"} size={22} /></span>
-                  <span style={svc.itemLabel}>{i.label}</span>
+              {filtered.filter((i) => i.section === sec).map((it) => (
+                <button
+                  key={it.key}
+                  type="button"
+                  style={svc.item}
+                  onClick={() => (editing ? toggleFav(it.key) : onOpen(it.key))}
+                >
+                  <span style={svc.itemIcon}>
+                    <Icon name={it.icon} size={20} />
+                    {editing && (
+                      <span style={favKeys.includes(it.key) ? svc.minus : svc.plus}>
+                        {favKeys.includes(it.key) ? "−" : "+"}
+                      </span>
+                    )}
+                  </span>
+                  <span style={svc.itemLabel}>{it.label}</span>
                 </button>
               ))}
             </div>
@@ -1529,94 +1769,85 @@ function ServicesModal({
   );
 }
 
-const svc: Record<string, React.CSSProperties> = {
-  shell: { position: "fixed", inset: 0, zIndex: 96, background: "#050505", display: "flex", flexDirection: "column", fontFamily: "Inter, system-ui, sans-serif" },
-  header: { position: "sticky", top: 0, zIndex: 30, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", background: "rgba(5,5,5,0.92)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", paddingTop: "calc(12px + env(safe-area-inset-top))", borderBottom: "1px solid #1a1a1a" },
-  back: { width: 40, height: 40, border: 0, background: "transparent", color: "#eee", fontSize: 20, cursor: "pointer" },
-  title: { margin: 0, fontSize: 17, fontWeight: 800, color: "#f5f5f5" },
-  searchWrap: { display: "flex", alignItems: "center", gap: 8, margin: "12px 14px", padding: "10px 14px", borderRadius: 999, background: "#121212", border: "1px solid #222", color: "#888" },
-  search: { flex: 1, border: 0, background: "transparent", color: "#eee", fontSize: 14, outline: "none" },
-  body: { flex: 1, overflowY: "auto", padding: "4px 14px calc(28px + env(safe-area-inset-bottom))" },
-  favLabel: { fontSize: 13, fontWeight: 700, color: "#aaa", marginBottom: 10 },
-  favRow: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: "#101010", border: "1px solid #1e1e1e" },
-  favIcon: { width: 36, height: 36, borderRadius: 999, background: "#161616", display: "grid", placeItems: "center", color: "#ddd" },
-  editBtn: { marginLeft: "auto", border: 0, borderRadius: 999, padding: "8px 16px", background: "#f5b51b", color: "#0a0a0a", fontWeight: 800, fontSize: 13, cursor: "pointer" },
-  secTitle: { fontSize: 13, fontWeight: 700, color: "#888", marginBottom: 10 },
-  grid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px 8px" },
-  item: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" },
-  itemIcon: { width: 48, height: 48, borderRadius: 999, background: "#161616", border: "1px solid #222", display: "grid", placeItems: "center", color: "#f0f0f0" },
-  itemLabel: { fontSize: 11, fontWeight: 500, color: "#cfcfcf", textAlign: "center", lineHeight: 1.2 },
-};
 
-
-
-/** Official-style coin icons (CDN). Falls back to letter avatar on error. */
-const COIN_ICON_ALIASES: Record<string, string> = {
-  BTC: "btc", XBT: "btc",
-  ETH: "eth",
-  SOL: "sol",
-  BNB: "bnb",
-  XRP: "xrp",
-  ADA: "ada",
-  DOGE: "doge",
-  DOT: "dot",
-  AVAX: "avax",
-  MATIC: "matic", POL: "matic",
-  LINK: "link",
-  LTC: "ltc",
-  ATOM: "atom",
-  UNI: "uni",
-  APT: "apt",
-  ARB: "arb",
-  OP: "op",
-  SUI: "sui",
-  TON: "ton",
-  TRX: "trx",
-  SHIB: "shib",
-  PEPE: "pepe",
-  NEAR: "near",
-  FIL: "fil",
-  ICP: "icp",
-  AAVE: "aave",
-  MKR: "mkr",
-  CRV: "crv",
-  SAND: "sand",
-  MANA: "mana",
-  AXS: "axs",
-  GRT: "grt",
-  INJ: "inj",
-  SEI: "sei",
-  TIA: "tia",
-  WLD: "wld",
-  FET: "fet",
-  RENDER: "rndr", RNDR: "rndr",
-  IMX: "imx",
-  STX: "stx",
-  RUNE: "rune",
-  EGLD: "egld",
-  ALGO: "algo",
-  XLM: "xlm",
-  VET: "vet",
-  HBAR: "hbar",
-  FTM: "ftm",
-  SUI: "sui",
-  ONDO: "ondo",
-  MNT: "mnt",
-  APEX: "apex",
-  USDT: "usdt",
-  USDC: "usdc",
-};
-
-function coinIconUrl(base: string): string {
-  const key = (base || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const slug = COIN_ICON_ALIASES[key] || key.toLowerCase();
-  // spothq cryptocurrency-icons — reliable public CDN
-  return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/${slug}.png`;
+function PromoCarousel({
+  onOpenP2P,
+  onOpenInvite,
+  onOpenExperience,
+  onOpenTrade,
+}: {
+  onOpenP2P: () => void;
+  onOpenInvite: () => void;
+  onOpenExperience: () => void;
+  onOpenTrade: (symbol: string) => void;
+}) {
+  const slides = useMemo(() => {
+    const fromCatalog = (PROMO_CARDS || [])
+      .filter((p: PromoCardItem) => p.published)
+      .sort((a: PromoCardItem, b: PromoCardItem) => (a.order ?? 99) - (b.order ?? 99))
+      .slice(0, 6)
+      .map((p: PromoCardItem) => ({
+        id: p.id,
+        tag: p.category,
+        title: p.title,
+        cta: p.ctaHref || "experience",
+      }));
+    if (fromCatalog.length) return fromCatalog;
+    return [
+      { id: "p2p", tag: "P2P", title: "Trade peer-to-peer with real escrow protection", cta: "p2p" },
+      { id: "invite", tag: "Referral", title: "Invite friends and grow together on CEO Exchange", cta: "invite" },
+      { id: "exp", tag: "Experience", title: "Explore promotions and new product features", cta: "experience" },
+    ];
+  }, []);
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    if (slides.length <= 1) return;
+    const t = window.setInterval(() => setIdx((i) => (i + 1) % slides.length), 4500);
+    return () => window.clearInterval(t);
+  }, [slides.length]);
+  const slide = slides[idx] || slides[0];
+  if (!slide) return null;
+  const go = () => {
+    if (slide.cta === "p2p") onOpenP2P();
+    else if (slide.cta === "invite") onOpenInvite();
+    else if (slide.cta === "markets" || slide.cta?.startsWith("BTC")) onOpenTrade("BTC/USDT");
+    else onOpenExperience();
+  };
+  return (
+    <section style={promoStyles.wrap} onClick={go} role="button">
+      <div style={promoStyles.card}>
+        <div style={promoStyles.tag}>{slide.tag}</div>
+        <div style={promoStyles.title}>{slide.title}</div>
+        <div style={promoStyles.dots}>
+          {slides.map((s, i) => (
+            <span key={s.id} style={{ ...promoStyles.dot, ...(i === idx ? promoStyles.dotActive : {}) }} />
+          ))}
+        </div>
+        <span style={promoStyles.counter}>{idx + 1}/{slides.length}</span>
+      </div>
+    </section>
+  );
 }
 
-// Memoized: only the row(s) whose `market` object actually changed
-// re-render when the live Bybit feed flushes an update, instead of every
-// visible row re-rendering on every tick.
+const promoStyles: Record<string, React.CSSProperties> = {
+  wrap: { margin: "4px 0 14px", cursor: "pointer" },
+  card: {
+    position: "relative",
+    borderRadius: 14,
+    border: "1px solid #2a2418",
+    background: "linear-gradient(135deg,#1a160e 0%,#121212 55%,#0e0e0e 100%)",
+    padding: "14px 16px",
+    minHeight: 72,
+    overflow: "hidden",
+  },
+  tag: { fontSize: 11, fontWeight: 700, color: "#f5b51b", textTransform: "capitalize", marginBottom: 4 },
+  title: { fontSize: 14, fontWeight: 600, color: "#f2f2f2", lineHeight: 1.35, maxWidth: "88%" },
+  dots: { display: "flex", gap: 4, marginTop: 10 },
+  dot: { width: 5, height: 5, borderRadius: 99, background: "#3a3a3a" },
+  dotActive: { background: "#f5b51b", width: 14 },
+  counter: { position: "absolute", right: 12, top: 12, fontSize: 11, color: "#777" },
+};
+
 const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
   const change = market.change_24h == null ? null : Number(market.change_24h);
   const up = change != null && change >= 0;
@@ -1776,7 +2007,7 @@ function Avatar({ url, text }: { url?: string | null; text: string }) {
 }
 
 function NavItem({ icon, label, active, onClick }: { icon: string; label: string; active?: boolean; onClick: () => void }) {
-  return <button onClick={onClick} style={{ ...styles.navItem, color: active ? GOLD_LIGHT : "#777" }}><Icon name={icon} size={25} /><span>{label}</span></button>;
+  return <button onClick={onClick} style={{ ...styles.navItem, color: active ? GOLD_LIGHT : "#777" }}><Icon name={icon} size={22} /><span>{label}</span></button>;
 }
 
 function Empty({ text }: { text: string }) { return <div style={styles.empty}>{text}</div>; }
@@ -3325,7 +3556,7 @@ const styles: Record<string, React.CSSProperties> = {
   brand: { display: "flex", alignItems: "center", gap: 9, minWidth: 0 },
   logo: { width: 34, height: 34, objectFit: "contain", borderRadius: 10 },
   brandName: { display: "none" },
-  topSearch: { height: 36, minWidth: 0, display: "flex", alignItems: "center", gap: 8, padding: "0 14px", border: "1px solid #1c1c1c", borderRadius: 999, background: "#121212", color: "#6b6b6b" },
+  topSearch: { height: 34, flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, padding: "0 12px", border: "1px solid #2a2a2a", borderRadius: 999, background: "#121212" },
   topSearchInput: { flex: 1, minWidth: 0, width: "100%", border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 14, padding: 0 },
   headerActions: { display: "flex", gap: 4, alignItems: "center" },
   iconSquare: { position: "relative", width: 36, height: 36, border: 0, borderRadius: 999, background: "transparent", color: "#e8e8e8", display: "grid", placeItems: "center", cursor: "pointer" },
@@ -3338,9 +3569,9 @@ const styles: Record<string, React.CSSProperties> = {
   balanceCard: { padding: "18px 4px 8px", background: "transparent", border: 0, borderRadius: 0, minHeight: 0 },
   balanceTop: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   totalAssetsLabel: { display: "inline-flex", alignItems: "center", gap: 6, color: "#9a9a9a", fontSize: 13, fontWeight: 500, marginBottom: 6 },
-  balanceAmount: { fontSize: 32, fontWeight: 700, letterSpacing: -0.8, color: "#fff", lineHeight: 1.1 },
+  balanceAmount: { fontSize: 28, fontWeight: 700, letterSpacing: -0.6, color: "#fff", lineHeight: 1.1 },
   balanceUnit: { fontSize: 14, fontWeight: 600, color: "#aaa", marginLeft: 4 },
-  depositPill: { border: 0, borderRadius: 999, padding: "10px 22px", background: "linear-gradient(180deg,#f5c542 0%,#e8a800 100%)", color: "#111", fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 4px 14px rgba(232,168,0,.25)", flexShrink: 0 },
+  depositPill: { border: 0, borderRadius: 999, padding: "7px 16px", minHeight: 34, background: "linear-gradient(180deg,#f5c542 0%,#e0a010 100%)", color: "#111", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 10px rgba(245,181,27,0.25)" },
   balanceInfo: { position: "relative", zIndex: 2, maxWidth: 390 },
   muted: { color: "#a5a5a5", fontSize: 15, marginBottom: 4 },
   balanceLine: { display: "flex", alignItems: "center", gap: 9 },
@@ -3353,16 +3584,16 @@ const styles: Record<string, React.CSSProperties> = {
   walletVisual: { display: "none" },
   walletShape: { display: "none" },
   walletLogo: { display: "none" },
-  quickGrid: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "12px 6px", margin: "16px 0 20px" },
-  quickAction: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" },
-  quickIcon: { width: 52, height: 52, borderRadius: 999, background: "#141414", border: "1px solid #252525", color: "#f0f0f0", display: "grid", placeItems: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.25)" },
-  quickLabel: { fontSize: 12, fontWeight: 500, color: "#c8c8c8", textAlign: "center", lineHeight: 1.25 },
+  quickGrid: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "12px 6px", margin: "8px 0 12px" },
+  quickAction: { border: 0, background: "transparent", color: "#eaeaea", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", padding: "2px 0", minHeight: 64 },
+  quickIcon: { width: 40, height: 40, borderRadius: 999, background: "#141414", border: "1px solid #252525", color: "#f0f0f0", display: "grid", placeItems: "center" },
+  quickLabel: { fontSize: 11, fontWeight: 500, color: "#c8c8c8", textAlign: "center", lineHeight: 1.2 },
   marketSection: { marginTop: 4 },
   tabsRow: { display: "flex", overflowX: "auto", gap: 2, borderBottom: "1px solid #1a1a1a", scrollbarWidth: "none", marginBottom: 4 },
   tab: { whiteSpace: "nowrap", border: 0, background: "transparent", color: "#7a7a7a", padding: "12px 12px", display: "inline-flex", alignItems: "center", cursor: "pointer", fontWeight: 600, fontSize: 14 },
   tabActive: { color: "#fff", borderBottom: "2px solid #f0b90b" },
   marketHeader: { display: "none" },
-  marketRow: { width: "100%", minHeight: 60, display: "grid", gridTemplateColumns: "22px 36px 1.2fr auto auto", alignItems: "center", gap: 10, padding: "10px 2px", borderRadius: 0, background: "transparent", border: 0, borderBottom: "none", marginBottom: 0, cursor: "pointer", textAlign: "left", color: "inherit" },
+  marketRow: { width: "100%", minHeight: 56, display: "grid", gridTemplateColumns: "20px 32px 1.15fr auto auto", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 12, background: "#121214", border: "1px solid #1e1e22", marginBottom: 6, cursor: "pointer", textAlign: "left", color: "inherit" },
   starButton: { border: 0, background: "transparent", color: "#555", padding: 0, cursor: "pointer", borderRadius: 7, width: 22, height: 22, display: "grid", placeItems: "center" },
   starHit: { border: 0, background: "transparent", color: "#4a4a4a", padding: 0, cursor: "pointer", width: 22, height: 22, display: "grid", placeItems: "center" },
   starButtonActive: { color: "#f0b90b" },
@@ -3402,8 +3633,8 @@ const styles: Record<string, React.CSSProperties> = {
   createPostButton: { margin: "14px 0", border: `1px solid #7c5a16`, borderRadius: 12, background: "#0e0e0e", color: GOLD_LIGHT, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" },
   postCard: { background: "#101010", borderRadius: 17, marginTop: 12, padding: "14px 14px 11px", border: "1px solid #171717" },
   postHead: { display: "flex", alignItems: "center", gap: 10 },
-  avatar: { width: 42, height: 42, borderRadius: "50%", objectFit: "cover", border: `1px solid #60470f` },
-  avatarFallback: { width: 42, height: 42, borderRadius: "50%", display: "grid", placeItems: "center", background: "#1a1408", color: GOLD_LIGHT, border: `1px solid #60470f`, fontWeight: 800, fontSize: 12 },
+  avatar: { width: 32, height: 32, borderRadius: "50%", objectFit: "cover", border: "1px solid #2a2a2a" },
+  avatarFallback: { width: 32, height: 32, borderRadius: "50%", background: "#1a1a1a", border: "1px solid #2a2a2a", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#ddd" },
   postTime: { color: "#777", fontSize: 11, marginTop: 3 },
   moreButton: { marginLeft: "auto", border: 0, background: "transparent", color: "#777", fontSize: 17, cursor: "pointer" },
   postText: { padding: "13px 2px 12px", lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
@@ -3415,7 +3646,7 @@ const styles: Record<string, React.CSSProperties> = {
   pill: { display: "inline-flex", alignItems: "center", border: "1px solid #5f4610", color: GOLD_LIGHT, borderRadius: 99, padding: "4px 8px", fontSize: 10 },
   announcementTitle: { margin: "10px 0 6px", fontSize: 17 },
   announcementBody: { margin: 0, color: "#bbb", lineHeight: 1.5, whiteSpace: "pre-wrap" },
-  bottomNav: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: 78, display: "grid", gridTemplateColumns: "repeat(5,1fr)", background: "rgba(9,9,9,.98)", borderTop: "1px solid #202020", paddingBottom: "env(safe-area-inset-bottom)" },
+  bottomNav: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: 64, display: "grid", gridTemplateColumns: "repeat(5,1fr)", alignItems: "center", background: "rgba(10,10,10,0.96)", borderTop: "1px solid #1f1f1f", paddingBottom: "env(safe-area-inset-bottom, 0px)", backdropFilter: "blur(12px)" },
   navItem: { border: 0, background: "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 10, cursor: "pointer" },
   overlay: { position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.72)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0, backdropFilter: "blur(6px)" },
   modal: { width: "min(620px,100%)", maxHeight: "92vh", overflowY: "auto", background: "#0b0b0b", border: "1px solid #2a2110", borderRadius: "22px 22px 0 0", padding: "8px 14px calc(20px + env(safe-area-inset-bottom))", boxShadow: "0 -24px 80px rgba(0,0,0,.65)", willChange: "transform" },
@@ -3676,7 +3907,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: 16,
   },
-  pullRefresh: { position: "relative",
+  pullRefresh: {
     position: "sticky",
     top: 0,
     zIndex: 30,
