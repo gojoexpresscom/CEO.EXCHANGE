@@ -852,17 +852,17 @@ function Home({
       // that from, so this is the only honest definition of "new" available to us.
       list.sort((a, b) => new Date(b.listed_at ?? 0).getTime() - new Date(a.listed_at ?? 0).getTime());
     } else {
-      // Hot: by default, the four flagship markets the product spec calls
-      // for, in a fixed order. Tapping "View more" expands to the full
-      // real market list ranked by 24h volume — same as every other tab —
-      // instead of staying stuck on those same four with nothing to reveal.
-      if (showAllMarkets) {
-        list.sort((a, b) => Number(b.volume_24h ?? -Infinity) - Number(a.volume_24h ?? -Infinity));
-      } else {
-        const HOT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT"];
-        const bySymbol = new Map(list.map((m) => [m.symbol.toUpperCase(), m]));
-        list = HOT_SYMBOLS.map((s) => bySymbol.get(s)).filter((m): m is Market => Boolean(m));
+      // Hot: highest last price first (BTC, high-priced majors, then lower).
+      // Collapsed view shows top 6; "View more" expands the full ranked list.
+      list.sort((a, b) => Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity));
+      if (!showAllMarkets) {
+        list = list.slice(0, 6);
       }
+    }
+
+    // Collapsed list: max 6 rows; expand via View more
+    if (!showAllMarkets && marketTab !== "Hot") {
+      list = list.slice(0, 6);
     }
 
     if (search.trim()) {
@@ -1246,20 +1246,20 @@ function Home({
     <div style={styles.page}>
       <style>{HOME_MOTION}</style>
       <header style={styles.header}>
-        <button type="button" style={styles.profileBtn} onClick={() => { setViewProfileUserId(userId); setModal("profile"); }} aria-label="Profile">
+        <button type="button" style={styles.profileBtn} onClick={() => setModal("menu")} aria-label="Profile">
           <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
         </button>
         <div style={styles.topSearch}>
-          <Icon name="search" size={15} />
+          <Icon name="search" size={16} />
           <input style={styles.topSearchInput} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search markets" />
           {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={14} /></button>}
         </div>
         <div style={styles.headerActions}>
-          <button type="button" style={styles.iconButton} onClick={() => setModal("support")} aria-label="Support">
-            <Icon name="headset" size={18} />
+          <button type="button" style={styles.headerIconBtn} onClick={() => setModal("support")} aria-label="Support">
+            <Icon name="headset" size={22} />
           </button>
-          <button type="button" style={{ ...styles.iconButton, position: "relative" as const }} onClick={() => setModal("notifications")} aria-label="Notifications">
-            <Icon name="bell" size={18} />
+          <button type="button" style={{ ...styles.headerIconBtn, position: "relative" as const }} onClick={() => setModal("notifications")} aria-label="Notifications">
+            <Icon name="bell" size={22} />
             {unreadTotal > 0 && <span style={styles.badgeDot}>{unreadTotal > 9 ? "9+" : unreadTotal}</span>}
           </button>
         </div>
@@ -1392,7 +1392,7 @@ function Home({
               }
             />
           )}
-          {marketCategory === "Spot" && markets.filter((m) => m.last_price != null && Number(m.last_price) > 0).length > 8 && (
+          {marketCategory === "Spot" && markets.filter((m) => m.last_price != null && Number(m.last_price) > 0).length > 6 && (
             <button type="button" style={styles.viewAll} onClick={() => setShowAllMarkets((value) => !value)}>
               {showAllMarkets ? "Show less" : "View more"} <Icon name="arrow" size={18} />
             </button>
@@ -3663,18 +3663,20 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) { ret
 
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", background: BG, color: "#fff", paddingBottom: 82, fontFamily: "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", overflowX: "hidden" },
-  header: { position: "sticky", top: 0, zIndex: 20, minHeight: 56, padding: "8px 12px", display: "grid", gridTemplateColumns: "auto minmax(80px,1fr) auto", gap: 10, alignItems: "center", background: "rgba(5,5,5,.96)", backdropFilter: "blur(16px)", borderBottom: "1px solid #121212" },
+  header: { position: "sticky", top: 0, zIndex: 20, minHeight: 56, padding: "10px 14px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: 10, alignItems: "center", background: "rgba(5,5,5,.96)", backdropFilter: "blur(16px)", borderBottom: "1px solid #121212" },
   profileBtn: { border: 0, background: "transparent", padding: 0, cursor: "pointer", display: "grid", placeItems: "center" },
   brand: { display: "flex", alignItems: "center", gap: 9, minWidth: 0 },
   logo: { width: 34, height: 34, objectFit: "contain", borderRadius: 10 },
   brandName: { display: "none" },
-  topSearch: { height: 34, flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, padding: "0 12px", border: "1px solid #2a2a2a", borderRadius: 999, background: "#121212" },
-  topSearchInput: { flex: 1, minWidth: 0, width: "100%", border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 14, padding: 0 },
-  headerActions: { display: "flex", gap: 4, alignItems: "center" },
+  topSearch: { height: 38, flex: 1, minWidth: 0, width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "0 14px", border: "1px solid #2a2a2a", borderRadius: 999, background: "#161616" },
+  topSearchInput: { flex: 1, minWidth: 0, width: "100%", border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 14, padding: 0, fontWeight: 500 },
+  headerActions: { display: "flex", gap: 2, alignItems: "center", flexShrink: 0 },
   iconSquare: { position: "relative", width: 36, height: 36, border: 0, borderRadius: 999, background: "transparent", color: "#e8e8e8", display: "grid", placeItems: "center", cursor: "pointer" },
   iconRound: { position: "relative", width: 36, height: 36, border: 0, borderRadius: 999, background: "transparent", color: "#e8e8e8", display: "grid", placeItems: "center", cursor: "pointer" },
   badge: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 99, background: "#f0b90b", color: "#111", fontSize: 9, fontWeight: 800, display: "grid", placeItems: "center", padding: "0 3px" },
   iconButton: { border: 0, background: "transparent", color: "#aaa", display: "grid", placeItems: "center", cursor: "pointer" },
+  headerIconBtn: { border: 0, background: "transparent", color: "#e8e8e8", width: 36, height: 36, borderRadius: 999, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 },
+  badgeDot: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 99, background: "#f04438", color: "#fff", fontSize: 9, fontWeight: 800, display: "grid", placeItems: "center", padding: "0 3px", lineHeight: 1 },
   errorBar: { margin: "12px 16px 0", padding: 12, border: "1px solid #4c2025", borderRadius: 12, background: "#1d0c0e", color: "#ff9aa3", fontSize: 13 },
   retry: { float: "right", border: 0, background: "transparent", color: GOLD_LIGHT, cursor: "pointer" },
   content: { width: "min(760px,100%)", margin: "0 auto", padding: "8px 14px 20px" },
@@ -3745,8 +3747,8 @@ const styles: Record<string, React.CSSProperties> = {
   createPostButton: { margin: "14px 0", border: `1px solid #7c5a16`, borderRadius: 12, background: "#0e0e0e", color: GOLD_LIGHT, padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" },
   postCard: { background: "#101010", borderRadius: 17, marginTop: 12, padding: "14px 14px 11px", border: "1px solid #171717" },
   postHead: { display: "flex", alignItems: "center", gap: 10 },
-  avatar: { width: 32, height: 32, borderRadius: "50%", objectFit: "cover", border: "1px solid #2a2a2a" },
-  avatarFallback: { width: 32, height: 32, borderRadius: "50%", background: "#1a1a1a", border: "1px solid #2a2a2a", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#ddd" },
+  avatar: { width: 36, height: 36, borderRadius: "50%", objectFit: "cover", border: "1px solid #2a2a2a" },
+  avatarFallback: { width: 36, height: 36, borderRadius: "50%", background: "#1a1a1a", border: "1px solid #2a2a2a", display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700, color: "#ddd" },
   postTime: { color: "#777", fontSize: 11, marginTop: 3 },
   moreButton: { marginLeft: "auto", border: 0, background: "transparent", color: "#777", fontSize: 17, cursor: "pointer" },
   postText: { padding: "13px 2px 12px", lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
