@@ -59,13 +59,16 @@ export type StakingPosition = {
   created_at?: string | null;
 };
 
+/** Matches public.web3_wallets */
 export type Web3Wallet = {
   id: string;
   user_id: string;
-  address: string;
-  chain_id?: string | null;
-  provider?: string | null;
-  created_at?: string | null;
+  wallet_address: string;
+  chain: string;
+  connector_name?: string | null;
+  connected_at?: string | null;
+  last_used_at?: string | null;
 };
 
 export type NavPage = "home" | "markets" | "trade" | "earn" | "assets";
+
