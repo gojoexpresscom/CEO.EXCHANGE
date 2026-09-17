@@ -3,6 +3,8 @@ import { supabase } from "../../lib/supabase";
 import { useAccountBalances } from "../../hooks/useAccountBalances";
 import BottomNav from "../nav/BottomNav";
 import TransferSheet from "./TransferSheet";
+import DepositSheet from "./DepositSheet";
+import WithdrawSheet from "./WithdrawSheet";
 import {
   formatAmount,
   iconUrl,
@@ -39,6 +41,8 @@ export default function AssetsPage({
   const [userId, setUserId] = useState<string | null>(null);
   const [tab, setTab] = useState<AssetTab>("Overview");
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showDeposit, setShowDeposit] = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(false);
   const [hideBal, setHideBal] = useState(false);
   const [web3, setWeb3] = useState<Web3Wallet[]>([]);
   const [web3Msg, setWeb3Msg] = useState<string | null>(null);
@@ -71,19 +75,24 @@ export default function AssetsPage({
   useEffect(() => {
     if (!userId || tab !== "Wallet") return;
     void (async () => {
+      setWeb3Loading(true);
       const { data, error: e } = await supabase
         .from("web3_wallets")
-        .select("id,user_id,address,chain_id,provider,created_at")
+        .select("id,user_id,wallet_address,chain,connector_name,connected_at,last_used_at")
         .eq("user_id", userId);
       if (e) {
+        // Table missing / RLS / not exposed — honest, not a fake empty connected state
         setWeb3Msg(
-          "Web3 wallet records are not available yet, or the table is not exposed."
+          "Could not read web3_wallets (" +
+            e.message +
+            "). No connected wallet is assumed."
         );
         setWeb3([]);
       } else {
         setWeb3((data as Web3Wallet[]) ?? []);
         setWeb3Msg(null);
       }
+      setWeb3Loading(false);
     })();
   }, [userId, tab]);
 
@@ -136,10 +145,10 @@ export default function AssetsPage({
       </div>
 
       <div style={styles.actions}>
-        {action("Deposit", () => onOpenDeposit?.() ?? onNavigate("home"), true)}
-        {action("Withdraw", () => onOpenWithdraw?.() ?? onNavigate("home"))}
+        {action("Deposit", () => setShowDeposit(true), true)}
+        {action("Withdraw", () => setShowWithdraw(true))}
         {action("Transfer", () => setShowTransfer(true))}
-        {action("Convert", () => onOpenConvert?.() ?? onNavigate("home"))}
+        {action("Convert", () => onOpenConvert?.() ?? onNavigate("trade"))}
         {action("Earn", () => onOpenEarn?.() ?? onNavigate("earn"))}
       </div>
 
@@ -247,36 +256,51 @@ export default function AssetsPage({
       {tab === "Wallet" && (
         <div style={styles.section}>
           <p style={styles.note}>
-            External Web3 wallets are separate from Spot / Funding / Futures /
-            Earn balances. Connecting does not move funds automatically.
+            Web3 wallet (external). This is not Profile or exchange Spot/Funding/Futures/Earn.
+            Connecting an external wallet must never move funds automatically.
           </p>
+
+          {/* Honest status: this frontend package.json has no @reown/appkit, wagmi, or
+              walletconnect client. Privy in Home is for custodial deposit addresses only. */}
+          <div style={styles.infoBox}>
+            Reown / AppKit is not present in the current frontend dependencies or source.
+            No second wallet-connect stack was added. Linked addresses below come only from
+            the <code>web3_wallets</code> table when the backend returns real rows.
+          </div>
+
           {web3Msg && <div style={styles.infoBox}>{web3Msg}</div>}
-          {!web3.length && !web3Msg && (
+
+          {web3Loading && (
+            <div style={styles.empty}>Checking linked wallets…</div>
+          )}
+
+          {!web3Loading && !web3.length && !web3Msg && (
             <div style={styles.empty}>
-              No connected Web3 wallets on record. Use your existing Reown /
-              wallet-connect flow when available to link an address.
+              No connected Web3 wallet
             </div>
           )}
+
           {web3.map((w) => (
             <div key={w.id} style={styles.assetRow}>
               <div style={styles.walletDot} />
               <div style={styles.assetInfo}>
-                <b>{shortAddress(w.address)}</b>
+                <b>{shortAddress(w.wallet_address)}</b>
                 <small>
-                  {[w.provider, w.chain_id].filter(Boolean).join(" · ") ||
-                    "Connected"}
+                  {[w.connector_name, w.chain].filter(Boolean).join(" · ") ||
+                    "Linked"}
                 </small>
               </div>
             </div>
           ))}
+
           <button
             type="button"
             style={styles.connectBtn}
-            onClick={() =>
+            onClick={() => {
               setWeb3Msg(
-                "Reown / Web3 connect is handled by the existing wallet infrastructure. No second wallet architecture is added here."
-              )
-            }
+                "Connect Wallet requires the existing Reown client configuration. It is not implemented in this frontend repository (no Reown/AppKit dependency). Cloud must ship or expose the Reown connect flow; this screen will not invent a connected address."
+              );
+            }}
           >
             Connect Web3 Wallet
           </button>
@@ -293,6 +317,15 @@ export default function AssetsPage({
           onDone={() => {
             void refresh();
           }}
+        />
+      )}
+      {showDeposit && (
+        <DepositSheet onClose={() => setShowDeposit(false)} />
+      )}
+      {showWithdraw && (
+        <WithdrawSheet
+          onClose={() => setShowWithdraw(false)}
+          onDone={() => void refresh()}
         />
       )}
     </div>
