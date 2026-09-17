@@ -20,9 +20,10 @@ type Props = {
 };
 
 /**
- * Assets withdraw flow — same backend contracts as Home:
- * send-otp, verify-otp, get-withdrawal-fee-quote / calculate_withdrawal_fee,
- * process_crypto_withdrawal.
+ * Withdrawal contract:
+ * - get-withdrawal-fee-quote → must return quote id
+ * - process_crypto_withdrawal verifies OTP itself (p_otp_code + p_quote_id)
+ * Do NOT call verify-otp first (would consume OTP).
  */
 export default function WithdrawSheet({ onClose, onDone }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
@@ -35,6 +36,7 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [fee, setFee] = useState<number | null>(null);
+  const [quoteId, setQuoteId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -114,6 +116,8 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
 
   const quoteFee = async () => {
     setErr(null);
+    setQuoteId(null);
+    setFee(null);
     if (!selected?.withdrawal_network_code) {
       setErr("Select a supported network.");
       return;
@@ -124,35 +128,40 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
       return;
     }
     setBusy(true);
-    // Prefer Edge Function used by Home; fall back to RPC
-    const ef = await supabase.functions.invoke("get-withdrawal-fee-quote", {
-      body: {
-        asset,
-        network: selected.withdrawal_network_code,
-        amount: n,
-      },
-    });
-    if (!ef.error && ef.data && !ef.data.error) {
-      const f =
-        ef.data.fee ?? ef.data.total_fee ?? ef.data.withdrawal_fee ?? null;
-      setFee(f != null ? Number(f) : null);
-      setBusy(false);
-      return;
-    }
-    const rpc = await supabase.rpc("calculate_withdrawal_fee", {
-      p_amount: n,
-      p_currency: asset,
-      p_network: selected.withdrawal_network_code,
-    });
+    const { data, error } = await supabase.functions.invoke(
+      "get-withdrawal-fee-quote",
+      {
+        body: {
+          asset,
+          network: selected.withdrawal_network_code,
+          amount: n,
+        },
+      }
+    );
     setBusy(false);
-    if (rpc.error) {
-      setErr(rpc.error.message || ef.error?.message || "Fee quote failed");
+    if (error) {
+      setErr(error.message);
       return;
     }
+    if (data?.error) {
+      setErr(String(data.error));
+      return;
+    }
+
+    const id =
+      data?.quote_id ??
+      data?.quoteId ??
+      data?.id ??
+      data?.fee_quote_id ??
+      null;
+    if (!id) {
+      setErr("Withdrawal quote ID was not returned by the backend.");
+      return;
+    }
+    setQuoteId(String(id));
+
     const f =
-      typeof rpc.data === "number"
-        ? rpc.data
-        : (rpc.data as { fee?: number })?.fee ?? null;
+      data?.fee ?? data?.total_fee ?? data?.withdrawal_fee ?? null;
     setFee(f != null ? Number(f) : null);
   };
 
@@ -176,26 +185,25 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
       setErr("Enter OTP.");
       return;
     }
-    setBusy(true);
-    const verify = await supabase.functions.invoke("verify-otp", {
-      body: { code: otp, purpose: "withdrawal" },
-    });
-    if (verify.error || verify.data?.error) {
-      setBusy(false);
+    if (!quoteId) {
       setErr(
-        verify.error?.message ||
-          String(verify.data?.error) ||
-          "OTP verification failed"
+        "Withdrawal quote ID was not returned by the backend. Request a fee quote first."
       );
       return;
     }
+
+    setBusy(true);
+    // process_crypto_withdrawal verifies/consumes OTP — do not call verify-otp first
     const { data, error } = await supabase.rpc("process_crypto_withdrawal", {
       p_asset: asset,
       p_network: selected.withdrawal_network_code,
-      p_amount: n,
       p_destination_address: address.trim(),
+      p_amount: n,
+      p_otp_code: otp.trim(),
+      p_quote_id: quoteId,
     });
     setBusy(false);
+
     if (error) {
       setErr(error.message);
       return;
@@ -205,6 +213,8 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
       return;
     }
     setMsg("Withdrawal submitted.");
+    setQuoteId(null);
+    setOtp("");
     void refresh();
     onDone?.();
   };
@@ -232,6 +242,7 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
                   setAsset(e.target.value);
                   setNetworkId("");
                   setFee(null);
+                  setQuoteId(null);
                 }}
               >
                 {(assetOptions.length ? assetOptions : ["USDT"]).map((a) => (
@@ -253,6 +264,7 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
                 onChange={(e) => {
                   setNetworkId(e.target.value);
                   setFee(null);
+                  setQuoteId(null);
                 }}
               >
                 {routes.map((n) => (
@@ -274,7 +286,11 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
                 style={styles.input}
                 inputMode="decimal"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  setQuoteId(null);
+                  setFee(null);
+                }}
                 placeholder="0.00"
               />
             </label>
@@ -297,8 +313,11 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
             >
               Get fee quote
             </button>
-            {fee != null && (
-              <div style={styles.muted}>Fee: {formatAmount(fee)} {asset}</div>
+            {quoteId && (
+              <div style={styles.muted}>
+                Quote ID: {quoteId}
+                {fee != null ? ` · Fee ${formatAmount(fee)} ${asset}` : ""}
+              </div>
             )}
 
             <button
@@ -326,7 +345,7 @@ export default function WithdrawSheet({ onClose, onDone }: Props) {
             <button
               type="button"
               style={styles.primary}
-              disabled={busy}
+              disabled={busy || !quoteId}
               onClick={() => void submit()}
             >
               {busy ? "…" : "Confirm withdrawal"}
