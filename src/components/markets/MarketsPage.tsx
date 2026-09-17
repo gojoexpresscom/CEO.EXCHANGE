@@ -568,4 +568,4 @@ const styles: Record<string, CSSProperties> = {
     backgroundSize: "200% 100%",
   },
 };
-        
+      
