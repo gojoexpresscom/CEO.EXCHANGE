@@ -1,21 +1,21 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "../../lib/supabase";
-import type { AccountType } from "../../lib/types";
 import { formatAmount } from "../../lib/format";
-import type { AccountBalanceMap } from "../../hooks/useAccountBalances";
+import type { AccountType } from "../../lib/types";
+import type { AccountBalances } from "../../hooks/useAccountBalances";
 
-/** Supported direct transfer routes per backend reality */
+type Props = {
+  byAccount: AccountBalances["byAccount"];
+  onClose: () => void;
+  onDone: () => void;
+};
+
+/** Backend-supported routes only */
 const SUPPORTED: Record<AccountType, AccountType[]> = {
   spot: ["funding", "futures", "earn"],
   funding: ["spot"],
   futures: ["spot"],
   earn: ["spot"],
-};
-
-type Props = {
-  byAccount: AccountBalanceMap;
-  onClose: () => void;
-  onDone: () => void;
 };
 
 export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
@@ -24,28 +24,26 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
   const [asset, setAsset] = useState("USDT");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
   const toOptions = SUPPORTED[from] || [];
 
-  const assetsInFrom = useMemo(() => {
-    return byAccount[from]
-      .filter((r) => r.available > 0)
-      .map((r) => r.asset);
+  const fromAssets = useMemo(() => {
+    return byAccount[from].map((r) => r.asset);
   }, [byAccount, from]);
 
-  const available = useMemo(() => {
-    const row = byAccount[from].find(
-      (r) => r.asset.toUpperCase() === asset.toUpperCase()
-    );
-    return row?.available ?? 0;
-  }, [byAccount, from, asset]);
+  const available =
+    byAccount[from].find((r) => r.asset === asset)?.available ?? 0;
 
-  // Keep "to" valid when "from" changes
-  const ensureTo = (nextFrom: AccountType) => {
+  const onFromChange = (nextFrom: AccountType) => {
+    setFrom(nextFrom);
     const opts = SUPPORTED[nextFrom] || [];
-    if (!opts.includes(to)) setTo(opts[0] || "spot");
+    setTo(opts.includes(to) ? to : opts[0] || "spot");
+    const assets = byAccount[nextFrom].map((r) => r.asset);
+    if (assets.length && !assets.includes(asset)) {
+      setAsset(assets[0]);
+    }
   };
 
   const submit = async () => {
@@ -56,22 +54,30 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
       setErr("Enter a valid amount.");
       return;
     }
-    if (n > available) {
-      setErr("Amount exceeds available balance.");
-      return;
-    }
     if (!toOptions.includes(to)) {
-      setErr("This transfer direction is not supported.");
+      setErr(`Transfer ${from} → ${to} is not supported.`);
       return;
     }
+    if (n > available) {
+      setErr("Insufficient available balance.");
+      return;
+    }
+
     setBusy(true);
+    const idempotencyKey =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `xfer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     const { data, error } = await supabase.rpc("transfer_between_accounts", {
+      p_asset: asset,
       p_from_account: from,
       p_to_account: to,
-      p_asset: asset.toUpperCase(),
       p_amount: n,
+      p_idempotency_key: idempotencyKey,
     });
     setBusy(false);
+
     if (error) {
       setErr(error.message);
       return;
@@ -88,33 +94,24 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
   return (
     <div style={styles.overlay} role="dialog" aria-modal="true">
       <div style={styles.sheet}>
-        <div style={styles.sheetHead}>
-          <h2 style={styles.sheetTitle}>Transfer</h2>
+        <div style={styles.head}>
+          <h2 style={styles.title}>Transfer</h2>
           <button type="button" style={styles.close} onClick={onClose}>
             ×
           </button>
         </div>
-
-        <p style={styles.hint}>
-          Internal transfer between exchange accounts. Only supported direct
-          routes are available.
-        </p>
 
         <label style={styles.field}>
           <span>From</span>
           <select
             style={styles.select}
             value={from}
-            onChange={(e) => {
-              const v = e.target.value as AccountType;
-              setFrom(v);
-              ensureTo(v);
-            }}
+            onChange={(e) => onFromChange(e.target.value as AccountType)}
           >
             {(["spot", "funding", "futures", "earn"] as AccountType[]).map(
               (a) => (
                 <option key={a} value={a}>
-                  {a.charAt(0).toUpperCase() + a.slice(1)}
+                  {a}
                 </option>
               )
             )}
@@ -130,7 +127,7 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
           >
             {toOptions.map((a) => (
               <option key={a} value={a}>
-                {a.charAt(0).toUpperCase() + a.slice(1)}
+                {a}
               </option>
             ))}
           </select>
@@ -143,25 +140,19 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
             value={asset}
             onChange={(e) => setAsset(e.target.value)}
           >
-            {(assetsInFrom.length ? assetsInFrom : ["USDT"]).map((a) => (
+            {(fromAssets.length ? fromAssets : ["USDT"]).map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
             ))}
           </select>
+          <small style={styles.avail}>
+            Available {formatAmount(available)} {asset}
+          </small>
         </label>
 
         <label style={styles.field}>
-          <span>
-            Amount{" "}
-            <button
-              type="button"
-              style={styles.maxBtn}
-              onClick={() => setAmount(String(available))}
-            >
-              Max
-            </button>
-          </span>
+          <span>Amount</span>
           <input
             style={styles.input}
             inputMode="decimal"
@@ -169,9 +160,6 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
           />
-          <small style={styles.avail}>
-            Available: {formatAmount(available)} {asset}
-          </small>
         </label>
 
         {err && <div style={styles.err}>{err}</div>}
@@ -179,11 +167,11 @@ export default function TransferSheet({ byAccount, onClose, onDone }: Props) {
 
         <button
           type="button"
-          style={styles.submit}
+          style={styles.primary}
           disabled={busy}
           onClick={() => void submit()}
         >
-          {busy ? "Transferring…" : "Confirm transfer"}
+          {busy ? "…" : "Confirm transfer"}
         </button>
       </div>
     </div>
@@ -194,8 +182,8 @@ const styles: Record<string, CSSProperties> = {
   overlay: {
     position: "fixed",
     inset: 0,
-    zIndex: 80,
-    background: "rgba(0,0,0,0.65)",
+    zIndex: 90,
+    background: "rgba(0,0,0,0.7)",
     display: "flex",
     alignItems: "flex-end",
     justifyContent: "center",
@@ -209,31 +197,19 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #1f1f1f",
     padding: "16px 18px calc(20px + env(safe-area-inset-bottom, 0px))",
   },
-  sheetHead: {
+  head: {
     display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 12,
   },
-  sheetTitle: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 800,
-    color: "#fff",
-  },
+  title: { margin: 0, fontSize: 18, fontWeight: 800, color: "#fff" },
   close: {
     background: "transparent",
     border: "none",
     color: "#888",
     fontSize: 24,
     cursor: "pointer",
-    lineHeight: 1,
-  },
-  hint: {
-    margin: "0 0 14px",
-    fontSize: 12,
-    color: "#777",
-    lineHeight: 1.45,
   },
   field: {
     display: "flex",
@@ -249,51 +225,38 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #222",
     borderRadius: 10,
     color: "#fff",
-    padding: "12px 12px",
+    padding: "12px",
     fontSize: 14,
-    outline: "none",
   },
   input: {
     background: "#141414",
     border: "1px solid #222",
     borderRadius: 10,
     color: "#fff",
-    padding: "12px 12px",
-    fontSize: 16,
+    padding: "12px",
+    fontSize: 14,
     outline: "none",
   },
-  maxBtn: {
-    marginLeft: 8,
-    background: "transparent",
-    border: "none",
-    color: "#f5b51b",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  avail: {
-    color: "#666",
-    fontWeight: 500,
-  },
+  avail: { color: "#666", fontWeight: 500 },
   err: {
     background: "rgba(239,68,68,0.1)",
     border: "1px solid rgba(239,68,68,0.3)",
     color: "#fca5a5",
     borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 13,
-    marginBottom: 10,
+    padding: 8,
+    fontSize: 12,
+    marginBottom: 8,
   },
   ok: {
     background: "rgba(34,197,94,0.1)",
     border: "1px solid rgba(34,197,94,0.3)",
     color: "#86efac",
     borderRadius: 8,
-    padding: "8px 10px",
-    fontSize: 13,
-    marginBottom: 10,
+    padding: 8,
+    fontSize: 12,
+    marginBottom: 8,
   },
-  submit: {
+  primary: {
     width: "100%",
     minHeight: 48,
     borderRadius: 12,
@@ -303,6 +266,6 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     fontSize: 15,
     cursor: "pointer",
-    marginTop: 4,
   },
 };
+
