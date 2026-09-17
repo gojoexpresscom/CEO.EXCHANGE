@@ -6,8 +6,8 @@ import type { AssetMeta, TradingPairRow } from "../lib/types";
 const PAGE_SIZE = 100;
 
 /**
- * Full active market universe — no silent .limit(200) cutoff.
- * Paginates trading_pairs until all active rows are loaded.
+ * Full active market universe — no silent .limit(N) cutoff.
+ * Paginate until a short page is returned.
  */
 export function useMarketsData(userId: string | null) {
   const [pairs, setPairs] = useState<TradingPairRow[]>([]);
@@ -19,47 +19,42 @@ export function useMarketsData(userId: string | null) {
   const loadPairs = useCallback(async () => {
     setLoading(true);
     setError(null);
+
     const all: TradingPairRow[] = [];
     let from = 0;
-    // Paginate until a page returns fewer than PAGE_SIZE rows
-    // so every active pair is included.
     for (;;) {
       const { data, error: e } = await supabase
         .from("trading_pairs")
         .select("id,symbol,base_asset,quote_asset,is_active,listed_at")
         .eq("is_active", true)
-        .order("symbol")
+        .order("symbol", { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
 
       if (e) {
         setError(e.message);
-        break;
+        setLoading(false);
+        return;
       }
       const batch = (data as TradingPairRow[]) ?? [];
       all.push(...batch);
       if (batch.length < PAGE_SIZE) break;
       from += PAGE_SIZE;
-      // Safety ceiling for runaway loops
-      if (from > 5000) break;
     }
     setPairs(all);
 
-    // Assets metadata (also paginated lightly)
     const assetAll: AssetMeta[] = [];
     let aFrom = 0;
     for (;;) {
-      const { data: aData, error: aErr } = await supabase
+      const { data, error: e } = await supabase
         .from("assets")
         .select("symbol,name,is_active")
-        .eq("is_active", true)
-        .order("symbol")
+        .order("symbol", { ascending: true })
         .range(aFrom, aFrom + PAGE_SIZE - 1);
-      if (aErr) break;
-      const batch = (aData as AssetMeta[]) ?? [];
+      if (e) break;
+      const batch = (data as AssetMeta[]) ?? [];
       assetAll.push(...batch);
       if (batch.length < PAGE_SIZE) break;
       aFrom += PAGE_SIZE;
-      if (aFrom > 5000) break;
     }
     setAssets(assetAll);
     setLoading(false);
@@ -107,7 +102,8 @@ export function useMarketsData(userId: string | null) {
         symbol: p.symbol,
         base_asset: p.base_asset,
         quote_asset: p.quote_asset,
-        base_name: nameByBase.get((p.base_asset || "").toUpperCase()) || undefined,
+        base_name:
+          nameByBase.get((p.base_asset || "").toUpperCase()) || undefined,
         listed_at: p.listed_at ?? null,
         last_price: t?.last_price ?? null,
         change_24h: t?.change_24h ?? null,
@@ -155,3 +151,4 @@ export function useMarketsData(userId: string | null) {
     },
   };
 }
+
