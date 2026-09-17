@@ -137,10 +137,11 @@ const css = `
 
 /* Chart / Book / Trades card — flat surface, thin borders, no glow */
 .market-card{border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
-.stats-row{display:flex;align-items:baseline;gap:12px;padding:8px 10px;flex-wrap:wrap;border-bottom:1px solid var(--ceo-border)}
-.stat-price{font-size:19px;font-weight:700;letter-spacing:-.2px;font-variant-numeric:tabular-nums}
-.stat-mini{font-size:10.5px;color:var(--ceo-text-dim);line-height:1.3}
-.stat-mini b{color:#d4d4d4;font-weight:600;font-variant-numeric:tabular-nums;display:block}
+.stats-row{display:flex;align-items:flex-start;gap:14px;padding:10px 12px;flex-wrap:wrap;border-bottom:1px solid var(--ceo-border)}
+.stat-price{font-size:24px;font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat-mini{font-size:10px;color:var(--ceo-text-dim);line-height:1.35;min-width:72px}
+.stat-mini b{color:#d4d4d4;font-weight:600;font-variant-numeric:tabular-nums;display:block;font-size:11px}
+.stat-usd{font-size:11px;color:var(--ceo-text-dim);margin-top:2px}
 .data-status{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid transparent;margin-left:auto}
 .data-status.ok{color:var(--ceo-text-faint)}
 .data-status.warn{color:var(--ceo-gold-bright);border-color:var(--ceo-gold-dim);background:rgba(212,175,90,0.08)}
@@ -157,25 +158,28 @@ const css = `
 .chart-svg{width:100%;height:100%;display:block}
 .empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--ceo-text-faint);padding:20px;box-sizing:border-box;font-size:11.5px;line-height:1.5}
 
-/* Order book — dense rows, tabular numbers, tight like a real book */
-.book-wrap{padding:0}
-.book-ratio{display:flex;height:3px;margin:8px 10px 5px;border-radius:2px;overflow:hidden}
+/* Order book — dual-column terminal: Qty(bid) | Price | Qty(ask) */
+.book-wrap{padding:0;max-height:min(52vh,420px);overflow:auto;-webkit-overflow-scrolling:touch}
+.book-ratio{display:flex;height:3px;margin:6px 10px 4px;border-radius:2px;overflow:hidden}
 .book-ratio .buy{background:var(--ceo-up)}
 .book-ratio .sell{background:var(--ceo-down)}
-.book-ratio-labels{display:flex;justify-content:space-between;padding:0 10px 5px;font-size:10.5px;font-weight:700}
-.book-head{display:grid;grid-template-columns:1fr 1fr 1fr;padding:3px 10px;font-size:9.5px;color:var(--ceo-text-faint)}
+.book-ratio-labels{display:flex;justify-content:space-between;padding:0 10px 4px;font-size:10px;font-weight:700}
+.book-head{display:grid;grid-template-columns:1fr 1.25fr 1fr;padding:2px 10px;font-size:9.5px;color:var(--ceo-text-faint);position:sticky;top:0;background:var(--ceo-surface);z-index:1}
+.book-head span:first-child{text-align:left}
 .book-head span:nth-child(2){text-align:center}
 .book-head span:last-child{text-align:right}
-.book-row{display:grid;grid-template-columns:1fr 1fr 1fr;padding:0 10px;font-size:11.5px;font-variant-numeric:tabular-nums;position:relative;cursor:pointer;height:20px;align-items:center}
+.book-row{display:grid;grid-template-columns:1fr 1.25fr 1fr;padding:0 10px;font-size:11px;font-variant-numeric:tabular-nums;position:relative;cursor:pointer;height:22px;align-items:center}
 .book-row:hover{background:#111}
-.book-bar{position:absolute;top:0;bottom:0;opacity:.16;pointer-events:none}
-.book-bar.bid{right:0;background:var(--ceo-up)}
-.book-bar.ask{left:0;background:var(--ceo-down)}
-.book-row .price.bid{color:var(--ceo-up)}
-.book-row .price.ask{color:var(--ceo-down)}
-.book-row span:nth-child(2){text-align:center}
-.book-row span:last-child{text-align:right}
-.book-mid{display:flex;justify-content:center;align-items:center;gap:8px;padding:6px;border-top:1px solid var(--ceo-border);border-bottom:1px solid var(--ceo-border);color:var(--ceo-gold-bright);font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+.book-bar{position:absolute;top:0;bottom:0;opacity:.14;pointer-events:none}
+.book-bar.bid{left:0;background:var(--ceo-up)}
+.book-bar.ask{right:0;background:var(--ceo-down)}
+.book-row .bid-qty{color:var(--ceo-text);text-align:left;position:relative;z-index:1}
+.book-row .ask-qty{color:var(--ceo-text);text-align:right;position:relative;z-index:1}
+.book-row .price.bid{color:var(--ceo-up);text-align:center;font-weight:600;position:relative;z-index:1}
+.book-row .price.ask{color:var(--ceo-down);text-align:center;font-weight:600;position:relative;z-index:1}
+.book-mid{display:flex;justify-content:center;align-items:center;gap:8px;padding:5px 10px;border-top:1px solid var(--ceo-border);border-bottom:1px solid var(--ceo-border);color:#fff;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;background:rgba(255,255,255,0.02)}
+.book-mid .chg{font-size:11px;font-weight:700}
+.book-empty{text-align:center;color:var(--ceo-text-faint);font-size:11px;padding:24px 10px}
 
 /* Trades tape */
 .tape{padding:2px 0;max-height:280px;overflow:auto}
@@ -216,8 +220,10 @@ const css = `
 .check-row label{display:flex;align-items:center;gap:5px;cursor:pointer}
 .check-row input{accent-color:var(--ceo-gold)}
 
-/* Bottom panel — dense table, sticky */
-.bottom-panel{border-top:1px solid var(--ceo-border);background:var(--ceo-surface);position:sticky;bottom:0;z-index:30}
+/* Bottom panel — dense table; on mobile not sticky so trade bar can own bottom */
+.bottom-panel{border-top:1px solid var(--ceo-border);background:var(--ceo-surface);z-index:20}
+@media(min-width:901px){.bottom-panel{position:sticky;bottom:0}}
+@media(max-width:900px){.bottom-panel{margin-bottom:8px}}
 .bottom-tabs{display:flex;border-bottom:1px solid var(--ceo-border)}
 .bottom-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:8px 4px;font-size:11.5px;font-weight:700;cursor:pointer}
 .bottom-tab.active{color:var(--ceo-gold-bright);border-bottom:2px solid var(--ceo-gold-bright)}
@@ -251,12 +257,20 @@ const css = `
 .markets-tab{background:none;border:0;color:var(--ceo-text-dim);padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer}
 .markets-tab.active{color:var(--ceo-gold-bright);border-bottom:2px solid var(--ceo-gold-bright)}
 .markets-list{flex:1;overflow:auto}
-.markets-row{display:grid;grid-template-columns:1.4fr 1fr 0.8fr;padding:9px 12px;border-bottom:1px solid var(--ceo-border);cursor:pointer;align-items:center}
+.markets-row{display:grid;grid-template-columns:1.4fr 1fr 0.8fr;padding:11px 12px;border-bottom:1px solid var(--ceo-border);cursor:pointer;align-items:center;min-height:48px}
 .markets-row:hover{background:#0e0e0e}
 .markets-row .sym{font-weight:700;font-size:12.5px}
 .markets-row .vol{font-size:10.5px;color:var(--ceo-text-faint);margin-top:1px}
 .markets-row .px{text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums}
 .markets-row .ch{text-align:right;font-size:11px;font-weight:700}
+.markets-row .ch-pill{
+  display:inline-block;min-width:62px;text-align:center;
+  padding:3px 6px;border-radius:6px;font-size:11px;font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+.markets-row .ch-pill.up{background:rgba(22,199,132,0.15);color:var(--ceo-up)}
+.markets-row .ch-pill.down{background:rgba(234,57,67,0.15);color:var(--ceo-down)}
+.markets-row.selected{background:rgba(212,175,90,0.08)}
 
 /* Futures / Funding panels */
 .account-panel{padding:14px 10px}
@@ -280,7 +294,35 @@ const css = `
 .error{margin:8px 10px;border:1px solid #5b1d26;background:#150607;color:#ff9aa6;border-radius:8px;padding:9px;font-size:11.5px}
 .notice-ok{margin:8px 10px;border:1px solid #1e4a34;background:#06120c;color:#8fe0bb;border-radius:8px;padding:9px;font-size:11.5px}
 .loading{min-height:100vh;display:grid;place-items:center;color:var(--ceo-gold)}
-@media(max-width:900px){.trade-shell{padding-bottom:58px}.chart-wrap{height:272px}}
+@media(max-width:900px){.trade-shell{padding-bottom:88px}.chart-wrap{height:272px}}
+
+/* ===== Sticky bottom Buy / Quantity / Sell bar (mobile trading terminal) ===== */
+.sticky-trade-bar{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  display:flex;align-items:center;gap:8px;
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));
+  background:rgba(8,8,8,0.97);
+  border-top:1px solid var(--ceo-border-strong);
+  backdrop-filter:blur(12px);
+}
+.stb-buy,.stb-sell{
+  flex:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  border:0;border-radius:999px;padding:8px 6px;min-height:48px;cursor:pointer;
+  font-weight:800;font-size:12px;line-height:1.15;
+}
+.stb-buy{background:var(--ceo-up);color:#04140d}
+.stb-sell{background:var(--ceo-down);color:#1a0506}
+.stb-buy:active,.stb-sell:active{opacity:.88}
+.stb-price{font-size:13.5px;font-variant-numeric:tabular-nums;font-weight:800;margin-top:1px}
+.stb-qty{
+  flex:0.7;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);
+  border-radius:12px;padding:6px 4px;min-height:48px;color:var(--ceo-text-dim);font-size:10px;
+}
+.stb-qty b{color:#eee;font-size:12px;font-weight:700;margin-top:1px}
+@media(min-width:901px){
+  .sticky-trade-bar{position:sticky;max-width:1440px;margin:0 auto}
+}
 `;
 
 function fmt(v: number | null | undefined, d = 2) {
@@ -324,8 +366,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   const [showMarkets, setShowMarkets] = useState(false);
   const [hotMarkets, setHotMarkets] = useState<HotMarket[]>([]);
   const [marketsFilter, setMarketsFilter] = useState("");
-  const [tpSl, setTpSl] = useState(false);
-  const [postOnly, setPostOnly] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferAsset, setTransferAsset] = useState("");
   const [transferDirection, setTransferDirection] = useState<"from_spot" | "to_spot">("from_spot");
@@ -545,6 +586,37 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
     setAmount(String((side === "buy" ? wallet.available / np : wallet.available) * pct));
   };
 
+  // Fullscreen toggle — browser Fullscreen API; no-op when unsupported.
+  useEffect(() => {
+    const onFsChange = () => {
+      const el = document.fullscreenElement || (document as any).webkitFullscreenElement;
+      setIsFullscreen(!!el);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange as EventListener);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange as EventListener);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      const doc: any = document;
+      const root = document.documentElement as any;
+      if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+        if (doc.exitFullscreen) await doc.exitFullscreen();
+        else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
+      } else if (root.requestFullscreen) {
+        await root.requestFullscreen();
+      } else if (root.webkitRequestFullscreen) {
+        await root.webkitRequestFullscreen();
+      }
+    } catch {
+      // Fullscreen may be blocked on some mobile browsers — ignore.
+    }
+  };
+
   const pickFromBook = (row: BookRow) => {
     setSide(row.side === "sell" ? "buy" : "sell");
     setP(String(row.price));
@@ -759,28 +831,35 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
           <button className="trade-back" onClick={onBack || (() => window.history.back())} aria-label="Back">
             ←
           </button>
-          <div className="trade-pair" onClick={() => setShowMarkets(true)}>
-            <span className="pair-name">{pair.symbol} ▾</span>
-            {last != null && (
-              <span className={`pair-live-price ${change >= 0 ? "up" : "down"}`}>{fmtPrice(last)}</span>
-            )}
-            {last != null && (
-              <span className={`pair-change ${change >= 0 ? "up" : "down"}`}>
-                {change >= 0 ? "+" : ""}
-                {change.toFixed(2)}%
-              </span>
-            )}
+          <div className="trade-spacer" style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: 0.2 }}>Trade</div>
           </div>
-          <div className="trade-spacer" />
           <div className="top-icons">
-            <button className="icon-btn" title="Chart" onClick={() => setMarketTab("chart")}>
-              📈
-            </button>
-            <button className="icon-btn" title="Order book" onClick={() => setMarketTab("book")}>
-              📊
+            <button
+              className="icon-btn"
+              type="button"
+              title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              onClick={() => void toggleFullscreen()}
+            >
+              {isFullscreen ? "⛶" : "⛶"}
             </button>
           </div>
         </header>
+        {/* Pair + live price strip */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--ceo-border)", background: "var(--ceo-surface)" }}>
+          <div className="trade-pair" onClick={() => setShowMarkets(true)} style={{ flex: 1 }}>
+            <span className="pair-name">{pair.symbol} ▾</span>
+            {last != null && (
+              <span className={`pair-change ${change >= 0 ? "up" : "down"}`} style={{ marginLeft: 6 }}>
+                {change >= 0 ? "+" : ""}{change.toFixed(2)}%
+              </span>
+            )}
+          </div>
+          {bybitStatus !== "connected" && (
+            <span className={`data-status ${bybitStatusClass}`}>{bybitStatusLabel}</span>
+          )}
+        </div>
 
         {notice && <div className={noticeOk ? "notice-ok" : "error"}>{notice}</div>}
 
@@ -828,7 +907,10 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
               <div>
                 <div className="market-card">
                   <div className="stats-row">
-                    <div className={`stat-price ${last == null ? "" : change >= 0 ? "up" : "down"}`}>{fmtPrice(last)}</div>
+                    <div>
+                      <div className={`stat-price ${last == null ? "" : change >= 0 ? "up" : "down"}`}>{fmtPrice(last)}</div>
+                      {last != null && <div className="stat-usd">≈ {fmtPrice(last)} USD</div>}
+                    </div>
                     <div className="stat-mini">
                       24h High <b>{fmtPrice(ticker?.high_24h)}</b>
                     </div>
@@ -836,8 +918,8 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                       24h Low <b>{fmtPrice(ticker?.low_24h)}</b>
                     </div>
                     <div className="stat-mini">
-                      24h Vol <b>
-                        {fmt(ticker?.volume_24h, 4)} {pair.base_asset}
+                      24h Turnover <b>
+                        {fmt(ticker?.volume_24h, 2)}
                       </b>
                     </div>
                     {bybitStatus !== "connected" && <div className={`data-status ${bybitStatusClass}`}>{bybitStatusLabel}</div>}
@@ -892,39 +974,46 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                         <span className="down">S {askPct}%</span>
                       </div>
                       <div className="book-head">
+                        <span>Qty ({pair.base_asset})</span>
                         <span>Price ({pair.quote_asset})</span>
-                        <span>Amount ({pair.base_asset})</span>
-                        <span>Total</span>
+                        <span>Qty ({pair.base_asset})</span>
                       </div>
-                      {/* Asks (sell side) – reverse so lowest ask is near mid */}
+                      {/* Asks (sell) — highest first so lowest ask sits near mid; empty left qty */}
                       {[...asks].reverse().map((a) => {
                         const amt = Math.max(0, a.amount - a.filled_amount);
                         const w = Math.min(100, (amt / maxAmt) * 100);
                         return (
                           <div key={`a-${a.price}`} className="book-row" onClick={() => pickFromBook(a)}>
                             <div className="book-bar ask" style={{ width: `${w}%` }} />
+                            <span className="bid-qty" />
                             <span className="price ask">{fmtPrice(a.price)}</span>
-                            <span>{fmt(amt, 6)}</span>
-                            <span>{fmt(a.price * amt, 2)}</span>
+                            <span className="ask-qty">{fmt(amt, 6)}</span>
                           </div>
                         );
                       })}
-                      <div className="book-mid">{fmtPrice(last)}</div>
-                      {/* Bids */}
+                      <div className="book-mid">
+                        {fmtPrice(last)}
+                        {last != null && (
+                          <span className={`chg ${change >= 0 ? "up" : "down"}`}>
+                            {change >= 0 ? "+" : ""}{change.toFixed(2)}%
+                          </span>
+                        )}
+                      </div>
+                      {/* Bids — green price + left qty */}
                       {bids.map((b) => {
                         const amt = Math.max(0, b.amount - b.filled_amount);
                         const w = Math.min(100, (amt / maxAmt) * 100);
                         return (
                           <div key={`b-${b.price}`} className="book-row" onClick={() => pickFromBook(b)}>
                             <div className="book-bar bid" style={{ width: `${w}%` }} />
+                            <span className="bid-qty">{fmt(amt, 6)}</span>
                             <span className="price bid">{fmtPrice(b.price)}</span>
-                            <span>{fmt(amt, 6)}</span>
-                            <span>{fmt(b.price * amt, 2)}</span>
+                            <span className="ask-qty" />
                           </div>
                         );
                       })}
                       {!asks.length && !bids.length && (
-                        <div className="empty" style={{ height: 120 }}>
+                        <div className="book-empty">
                           {bybitStatus === "unsupported"
                             ? `Order book isn't available for ${pair.symbol}.`
                             : bybitStatus !== "connected"
@@ -1049,13 +1138,15 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                       </span>
                     </div>
                     <div className="check-row">
-                      <label>
-                        <input type="checkbox" checked={tpSl} onChange={(e) => setTpSl(e.target.checked)} /> TP/SL
+                      <label title="Take-profit / stop-loss is not supported by the current order router" style={{ opacity: 0.45, cursor: "default" }}>
+                        <input type="checkbox" checked={false} disabled /> TP/SL
                       </label>
-                      <label>
-                        <input type="checkbox" checked={postOnly} onChange={(e) => setPostOnly(e.target.checked)} /> Post-Only
+                      <label title="Post-Only is not supported by the current order router" style={{ opacity: 0.45, cursor: "default" }}>
+                        <input type="checkbox" checked={false} disabled /> Post-Only
                       </label>
-                      <span style={{ marginLeft: "auto", color: "#666" }}>GTC</span>
+                      <span style={{ marginLeft: "auto", color: "#666" }} title="Orders are good-til-cancelled limit orders">
+                        GTC
+                      </span>
                     </div>
                     {insufficient && (
                       <div className="warning">
@@ -1304,10 +1395,48 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
         )}
       </div>
 
+      {/* Sticky bottom Buy / Quantity / Sell bar — real live prices */}
+      {accountTab === "spot" && pair && (
+        <div className="sticky-trade-bar">
+          <button
+            className="stb-buy"
+            onClick={() => {
+              setSide("buy");
+              if (ticker?.ask_price != null) setP(String(ticker.ask_price));
+              setActivePct(null);
+              // scroll form into view on mobile
+              document.querySelector(".form-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          >
+            Buy
+            <span className="stb-price">{fmtPrice(ticker?.ask_price ?? last)}</span>
+          </button>
+          <div className="stb-qty">
+            Quantity
+            <b>{pair.base_asset}</b>
+          </div>
+          <button
+            className="stb-sell"
+            onClick={() => {
+              setSide("sell");
+              if (ticker?.bid_price != null) setP(String(ticker.bid_price));
+              setActivePct(null);
+              document.querySelector(".form-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          >
+            Sell
+            <span className="stb-price">{fmtPrice(ticker?.bid_price ?? last)}</span>
+          </button>
+        </div>
+      )}
+
       {/* Markets overlay (pair picker + full Hot list) */}
       {showMarkets && (
         <div className="markets-overlay">
           <div className="markets-header">
+            <button className="markets-close" onClick={() => setShowMarkets(false)} aria-label="Close">
+              ←
+            </button>
             <input
               className="markets-search"
               placeholder="Search pair…"
@@ -1315,29 +1444,49 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
               onChange={(e) => setMarketsFilter(e.target.value)}
               autoFocus
             />
-            <button className="markets-close" onClick={() => setShowMarkets(false)}>
-              ✕
-            </button>
           </div>
           <div className="markets-tabs">
-            <button className="markets-tab active">All</button>
-            <button className="markets-tab" onClick={() => setMarketsFilter("")}>
-              🔥 Hot
+            <button className="markets-tab active">Crypto</button>
+            <button className="markets-tab" type="button" disabled style={{ opacity: 0.45, cursor: "default" }}>
+              TradFi
             </button>
+          </div>
+          <div className="markets-tabs" style={{ borderBottom: "1px solid var(--ceo-border)" }}>
+            <button className="markets-tab active">Spot</button>
+            <button className="markets-tab" type="button" disabled style={{ opacity: 0.45, cursor: "default" }}>
+              Perpetual
+            </button>
+            <button className="markets-tab" type="button" disabled style={{ opacity: 0.45, cursor: "default" }}>
+              Expiry
+            </button>
+          </div>
+          <div className="book-head" style={{ padding: "6px 12px" }}>
+            <span>Trading Pairs / Vol</span>
+            <span style={{ textAlign: "right" }}>Price</span>
+            <span style={{ textAlign: "right" }}>24H Change</span>
           </div>
           <div className="markets-list">
             {filteredMarkets.map((m) => {
               const hot = hotMarkets.find((h) => h.symbol === m.symbol);
               const ch = hot?.change ?? null;
               return (
-                <div key={m.symbol} className="markets-row" onClick={() => switchPair(m.symbol)}>
+                <div key={m.symbol} className={`markets-row ${m.symbol === pair?.symbol ? "selected" : ""}`} onClick={() => switchPair(m.symbol)}>
                   <div>
-                    <div className="sym">{m.symbol}</div>
-                    <div className="vol">{m.base_asset}/{m.quote_asset}</div>
+                    <div className="sym">{m.base_asset} / {m.quote_asset}</div>
+                    <div className="vol">{hot?.price != null ? "" : m.symbol}</div>
                   </div>
-                  <div className="px">{fmtPrice(hot?.price ?? null)}</div>
-                  <div className={`ch ${ch != null && ch >= 0 ? "up" : "down"}`}>
-                    {ch != null ? `${ch >= 0 ? "+" : ""}${Number(ch).toFixed(2)}%` : "—"}
+                  <div className="px">
+                    {fmtPrice(hot?.price ?? null)}
+                    {hot?.price != null && <div className="vol" style={{ textAlign: "right" }}>{fmtPrice(hot.price)} USD</div>}
+                  </div>
+                  <div className="ch">
+                    {ch != null ? (
+                      <span className={`ch-pill ${ch >= 0 ? "up" : "down"}`}>
+                        {ch >= 0 ? "+" : ""}{Number(ch).toFixed(2)}%
+                      </span>
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
               );
