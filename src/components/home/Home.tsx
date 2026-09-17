@@ -395,10 +395,18 @@ function formatMoney(value: number) {
 
 
 /** Public CDN coin icon (MarketRow falls back to letter avatar on onError). */
+/** Primary coin icon CDN (broad coverage). */
 function coinIconUrl(symbol: string): string {
   const s = String(symbol || "").trim().toLowerCase();
   if (!s) return "";
-  // SpotHQ cryptocurrency-icons — widely used, no API key
+  // CoinCap static icons — covers far more tickers than SpotHQ alone
+  return `https://assets.coincap.io/assets/icons/${encodeURIComponent(s)}@2x.png`;
+}
+
+/** Fallback CDN when primary 404s. */
+function coinIconUrlFallback(symbol: string): string {
+  const s = String(symbol || "").trim().toLowerCase();
+  if (!s) return "";
   return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/${encodeURIComponent(s)}.png`;
 }
 
@@ -727,6 +735,13 @@ function Home({
     }
   }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarketPairs, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements, loadFavorites]);
 
+
+  // Market pairs are public catalog data — fetch immediately so the list is
+  // not blocked behind auth + the rest of loadAll (posts, wallets, …).
+  useEffect(() => {
+    void loadMarketPairs();
+  }, [loadMarketPairs]);
+
   // Local clock for relative timestamps (posts, notifications, etc.) — no extra DB calls.
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 30000);
@@ -784,6 +799,10 @@ function Home({
   // makeBybitSymbol, just not exported from there today.
   const bybitSymbols = useMemo(() => {
     const set = new Set<string>();
+    // Seed majors immediately so Bybit REST/WS starts before pairs API returns
+    for (const s of ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]) {
+      set.add(s);
+    }
     for (const pair of marketPairs) {
       const base = pair.base_asset?.trim().toUpperCase();
       const quote = pair.quote_asset?.trim().toUpperCase();
@@ -835,8 +854,14 @@ function Home({
     // "not connected" empty state below instead of silently reusing Spot data.
     if (marketCategory !== "Spot") return [];
 
-    // Only markets that actually have a last price (enabled / live data)
+    // Prefer live-priced rows; if Bybit snapshot has not arrived yet, still
+    // show the catalog so Home is not blank for several seconds on open.
     let list = markets.filter((m) => m.last_price != null && Number(m.last_price) > 0);
+    const pricesReady = list.length > 0;
+    if (!pricesReady && markets.length > 0) {
+      list = markets.filter((m) => (m.quote_asset || "").toUpperCase() === "USDT");
+      if (!list.length) list = markets.slice();
+    }
 
     if (marketTab === "Favorites") {
       list = list.filter((m) => favoriteSymbols.includes(m.symbol));
@@ -2009,6 +2034,13 @@ const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, 
   const vol = market.volume_24h == null ? null : Number(market.volume_24h);
   const volLabel = vol == null ? "" : vol >= 1_000_000 ? `${(vol / 1_000_000).toFixed(2)}M` : vol >= 1_000 ? `${(vol / 1_000).toFixed(1)}K` : formatMoney(vol);
   const [imgOk, setImgOk] = React.useState(true);
+  const [iconSrc, setIconSrc] = React.useState(() => coinIconUrl(base));
+
+  // Reset icon when the row base asset changes (recycled list rows)
+  React.useEffect(() => {
+    setImgOk(true);
+    setIconSrc(coinIconUrl(base));
+  }, [base]);
 
   // Subtle flash on real price movement only — mirrors the "row highlights
   // briefly on tick" behavior real exchange apps use (see the design/
@@ -2045,10 +2077,17 @@ const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, 
       </span>
       {imgOk ? (
         <img
-          src={coinIconUrl(base)}
+          src={iconSrc}
           alt={base}
           style={styles.coinImg}
-          onError={() => setImgOk(false)}
+          onError={() => {
+            const fb = coinIconUrlFallback(base);
+            if (iconSrc !== fb && !iconSrc.includes("spothq")) {
+              setIconSrc(fb);
+            } else {
+              setImgOk(false);
+            }
+          }}
         />
       ) : (
         <span style={styles.coinAvatar}>{letter}</span>
