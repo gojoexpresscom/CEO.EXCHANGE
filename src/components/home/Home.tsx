@@ -9,6 +9,8 @@ import SocialMessages from "./SocialMessages";
 import SocialProfile from "./SocialProfile";
 import SupportChat from "./SupportChat";
 import { PROMO_CARDS, type PromoCardItem } from "../promotion/content";
+import BottomNav from "../nav/BottomNav";
+import type { NavPage } from "../../lib/types";
 
 
 /** Catches render errors so one failed child cannot blank the entire Home page. */
@@ -462,11 +464,13 @@ function Home({
   onTrade,
   onP2P,
   onExperience,
+  onNavigate,
 }: {
   onLogout?: () => void;
   onTrade: (symbol: string) => void;
   onP2P?: () => void;
   onExperience?: () => void;
+  onNavigate?: (page: NavPage) => void;
 }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -1391,7 +1395,13 @@ function Home({
         </section>
 
         <section style={styles.quickGrid}>
-          <QuickAction icon="percent" label="CEO Earn" onClick={() => notify("CEO Earn is coming soon.")} />
+          <QuickAction icon="percent" label="CEO Earn" onClick={() => {
+            if (onNavigate) onNavigate("earn");
+            else {
+              window.history.pushState({}, "", "/earn");
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }
+          }} />
           <QuickAction icon="userPlus" label="Invite Friends" onClick={() => setModal("invite")} />
           <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
@@ -1507,13 +1517,31 @@ function Home({
         </div>
       )}
 
-      <nav style={styles.bottomNav}>
-        <NavItem icon="home" label="Home" active onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
-        <NavItem icon="chart" label="Markets" onClick={() => { const s = filteredMarkets[0]?.symbol || markets[0]?.symbol; if (s) onTrade(s); else notify("No markets available yet."); }} />
-        <NavItem icon="trade" label="Trade" onClick={() => { const s = filteredMarkets[0]?.symbol || markets[0]?.symbol; if (s) onTrade(s); else notify("No markets available yet."); }} />
-        <NavItem icon="percent" label="Earn" onClick={() => notify("CEO Earn is coming soon.")} />
-        <NavItem icon="wallet" label="Assets" onClick={() => setModal("menu")} />
-      </nav>
+      <BottomNav
+        active="home"
+        onNavigate={(page) => {
+          if (onNavigate) {
+            onNavigate(page);
+            return;
+          }
+          // Fallback if onNavigate not passed
+          if (page === "markets") {
+            window.history.pushState({}, "", "/markets");
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          } else if (page === "trade") {
+            window.history.pushState({}, "", "/trade-hub");
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          } else if (page === "earn") {
+            window.history.pushState({}, "", "/earn");
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          } else if (page === "assets") {
+            window.history.pushState({}, "", "/assets");
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          } else {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        }}
+      />
 
       {toast && <div style={styles.toast}>{toast}</div>}
       {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
@@ -1561,7 +1589,14 @@ function Home({
             else if (key === "support") setModal("support");
             else if (key === "menu") setModal("menu");
             else if (key === "buy" || key === "fiat") setModal("deposit");
-            else if (key === "convert") notify("Convert is coming soon.");
+            else if (key === "convert") {
+              closeModal();
+              if (onNavigate) onNavigate("trade");
+              else {
+                window.history.pushState({}, "", "/trade-hub");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }
+            }
             else notify("This service is not available yet.");
           }}
         />
