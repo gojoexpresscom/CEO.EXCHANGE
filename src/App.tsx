@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
+import TradeHubPage from "./components/trade/TradeHubPage";
 import P2PMarketplace from "./components/p2p/P2PMarketplace";
 import AdminPortal from "./components/admin/AdminPortal";
 import { PromotionsPage } from "./components/promotion";
@@ -15,6 +16,7 @@ import type { NavPage } from "./lib/types";
 type AppRoute =
   | { page: "home" }
   | { page: "trade"; symbol: string }
+  | { page: "trade-hub" }
   | { page: "p2p" }
   | { page: "experience" }
   | { page: "markets" }
@@ -31,6 +33,10 @@ function getRoute(): AppRoute {
       page: "trade",
       symbol: decodeURIComponent(tradeMatch[1]).toUpperCase(),
     };
+  }
+
+  if (path === "/trade" || path === "/trade-hub") {
+    return { page: "trade-hub" };
   }
 
   if (path === "/p2p") return { page: "p2p" };
@@ -191,19 +197,23 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
+  function goTradeHub() {
+    window.history.pushState({}, "", "/trade-hub");
+    setRoute({ page: "trade-hub" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
   function goConvert() {
-    window.history.pushState({}, "", "/convert");
-    setRoute({ page: "convert" });
+    window.history.pushState({}, "", "/trade-hub");
+    setRoute({ page: "trade-hub" });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
   function onNav(page: NavPage) {
     if (page === "home") goHome();
     else if (page === "markets") goMarkets();
-    else if (page === "trade") {
-      // Open trade for a default liquid pair; Markets remains the discovery surface
-      openTrade("BTCUSDT");
-    } else if (page === "earn") goEarn();
+    else if (page === "trade") goTradeHub();
+    else if (page === "earn") goEarn();
     else if (page === "assets") goAssets();
   }
 
@@ -328,7 +338,18 @@ export default function App() {
   }
 
   if (route.page === "trade") {
-    return <TradingPage symbol={route.symbol} onBack={goHome} />;
+    return (
+      <TradingPage
+        symbol={route.symbol}
+        onBack={() => {
+          goMarkets();
+        }}
+      />
+    );
+  }
+
+  if (route.page === "trade-hub") {
+    return <TradeHubPage onNavigate={onNav} onOpenPair={openTrade} />;
   }
 
   if (route.page === "p2p") {
@@ -353,8 +374,6 @@ export default function App() {
     return (
       <AssetsPage
         onNavigate={onNav}
-        onOpenDeposit={goHome}
-        onOpenWithdraw={goHome}
         onOpenEarn={goEarn}
         onOpenConvert={goConvert}
       />
@@ -366,7 +385,7 @@ export default function App() {
   }
 
   if (route.page === "convert") {
-    return <ConvertPage onNavigate={onNav} />;
+    return <TradeHubPage onNavigate={onNav} onOpenPair={openTrade} />;
   }
 
   return (
@@ -378,6 +397,7 @@ export default function App() {
       onTrade={openTrade}
       onP2P={openP2P}
       onExperience={openExperience}
+      onNavigate={onNav}
     />
   );
 }
