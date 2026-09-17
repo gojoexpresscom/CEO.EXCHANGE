@@ -229,11 +229,18 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
           {filtered.map((m) => {
             const up = (m.change_24h ?? 0) >= 0;
             return (
-              <button
+              <div
                 key={m.symbol}
-                type="button"
+                role="button"
+                tabIndex={0}
                 style={styles.row}
                 onClick={() => onTrade(m.symbol)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onTrade(m.symbol);
+                  }
+                }}
               >
                 <button
                   type="button"
@@ -279,7 +286,7 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
                     {formatPct(m.change_24h)}
                   </span>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -512,3 +519,4 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
 };
+          
