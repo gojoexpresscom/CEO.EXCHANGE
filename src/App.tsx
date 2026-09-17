@@ -5,19 +5,27 @@ import TradingPage from "./components/trade/TradingPage";
 import P2PMarketplace from "./components/p2p/P2PMarketplace";
 import AdminPortal from "./components/admin/AdminPortal";
 import { PromotionsPage } from "./components/promotion";
+import MarketsPage from "./components/markets/MarketsPage";
+import AssetsPage from "./components/assets/AssetsPage";
+import EarnPage from "./components/earn/EarnPage";
+import ConvertPage from "./components/convert/ConvertPage";
 import { supabase } from "./lib/supabase";
+import type { NavPage } from "./lib/types";
 
 type AppRoute =
   | { page: "home" }
   | { page: "trade"; symbol: string }
   | { page: "p2p" }
-  | { page: "experience" };
+  | { page: "experience" }
+  | { page: "markets" }
+  | { page: "assets" }
+  | { page: "earn" }
+  | { page: "convert" };
 
 function getRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
 
   const tradeMatch = path.match(/^\/trade\/(.+)$/i);
-
   if (tradeMatch) {
     return {
       page: "trade",
@@ -25,17 +33,13 @@ function getRoute(): AppRoute {
     };
   }
 
-  if (path === "/p2p") {
-    return {
-      page: "p2p",
-    };
-  }
-
-  if (path === "/experience" || path === "/promotions") {
-    return {
-      page: "experience",
-    };
-  }
+  if (path === "/p2p") return { page: "p2p" };
+  if (path === "/experience" || path === "/promotions")
+    return { page: "experience" };
+  if (path === "/markets") return { page: "markets" };
+  if (path === "/assets") return { page: "assets" };
+  if (path === "/earn") return { page: "earn" };
+  if (path === "/convert") return { page: "convert" };
 
   return { page: "home" };
 }
@@ -70,7 +74,6 @@ export default function App() {
         setIsBanned(banned);
 
         if (banned) {
-          // Force sign-out so the session cannot be reused
           await supabase.auth.signOut();
           setAuthenticated(false);
           setIsAdmin(false);
@@ -135,9 +138,7 @@ export default function App() {
     const handlePopState = () => {
       setRoute(getRoute());
     };
-
     window.addEventListener("popstate", handlePopState);
-
     return () => {
       window.removeEventListener("popstate", handlePopState);
     };
@@ -145,61 +146,65 @@ export default function App() {
 
   function openTrade(symbol: string) {
     const normalizedSymbol = symbol.toUpperCase();
-
     window.history.pushState(
       {},
       "",
       `/trade/${encodeURIComponent(normalizedSymbol)}`
     );
-
-    setRoute({
-      page: "trade",
-      symbol: normalizedSymbol,
-    });
-
-    window.scrollTo({
-      top: 0,
-      behavior: "instant",
-    });
+    setRoute({ page: "trade", symbol: normalizedSymbol });
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
 
   function openP2P() {
     window.history.pushState({}, "", "/p2p");
-
-    setRoute({
-      page: "p2p",
-    });
-
-    window.scrollTo({
-      top: 0,
-      behavior: "instant",
-    });
+    setRoute({ page: "p2p" });
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
 
   function openExperience() {
     window.history.pushState({}, "", "/experience");
-
-    setRoute({
-      page: "experience",
-    });
-
-    window.scrollTo({
-      top: 0,
-      behavior: "instant",
-    });
+    setRoute({ page: "experience" });
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
 
   function goHome() {
     window.history.pushState({}, "", "/");
+    setRoute({ page: "home" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
 
-    setRoute({
-      page: "home",
-    });
+  function goMarkets() {
+    window.history.pushState({}, "", "/markets");
+    setRoute({ page: "markets" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
 
-    window.scrollTo({
-      top: 0,
-      behavior: "instant",
-    });
+  function goAssets() {
+    window.history.pushState({}, "", "/assets");
+    setRoute({ page: "assets" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  function goEarn() {
+    window.history.pushState({}, "", "/earn");
+    setRoute({ page: "earn" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  function goConvert() {
+    window.history.pushState({}, "", "/convert");
+    setRoute({ page: "convert" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  function onNav(page: NavPage) {
+    if (page === "home") goHome();
+    else if (page === "markets") goMarkets();
+    else if (page === "trade") {
+      // Open trade for a default liquid pair; Markets remains the discovery surface
+      openTrade("BTCUSDT");
+    } else if (page === "earn") goEarn();
+    else if (page === "assets") goAssets();
   }
 
   if (!ready) {
@@ -236,7 +241,6 @@ export default function App() {
     );
   }
 
-  // Banned users see a clean blocked screen (session already signed out)
   if (isBanned) {
     return (
       <div
@@ -272,9 +276,17 @@ export default function App() {
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff" }}>
           Account suspended
         </h1>
-        <p style={{ margin: 0, maxWidth: 340, color: "#999", lineHeight: 1.55, fontSize: 14 }}>
-          This account has been suspended by the platform. If you believe this is a mistake,
-          contact support with your registered email.
+        <p
+          style={{
+            margin: 0,
+            maxWidth: 340,
+            color: "#999",
+            lineHeight: 1.55,
+            fontSize: 14,
+          }}
+        >
+          This account has been suspended by the platform. If you believe this
+          is a mistake, contact support with your registered email.
         </p>
         <button
           type="button"
@@ -311,18 +323,12 @@ export default function App() {
     );
   }
 
-  // Admin / Owner → Admin Portal
   if (isAdmin) {
     return <AdminPortal />;
   }
 
   if (route.page === "trade") {
-    return (
-      <TradingPage
-        symbol={route.symbol}
-        onBack={goHome}
-      />
-    );
+    return <TradingPage symbol={route.symbol} onBack={goHome} />;
   }
 
   if (route.page === "p2p") {
@@ -337,6 +343,30 @@ export default function App() {
         onP2P={openP2P}
       />
     );
+  }
+
+  if (route.page === "markets") {
+    return <MarketsPage onTrade={openTrade} onNavigate={onNav} />;
+  }
+
+  if (route.page === "assets") {
+    return (
+      <AssetsPage
+        onNavigate={onNav}
+        onOpenDeposit={goHome}
+        onOpenWithdraw={goHome}
+        onOpenEarn={goEarn}
+        onOpenConvert={goConvert}
+      />
+    );
+  }
+
+  if (route.page === "earn") {
+    return <EarnPage onNavigate={onNav} />;
+  }
+
+  if (route.page === "convert") {
+    return <ConvertPage onNavigate={onNav} />;
   }
 
   return (
