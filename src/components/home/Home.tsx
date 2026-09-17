@@ -393,6 +393,15 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
 
+
+/** Public CDN coin icon (MarketRow falls back to letter avatar on onError). */
+function coinIconUrl(symbol: string): string {
+  const s = String(symbol || "").trim().toLowerCase();
+  if (!s) return "";
+  // SpotHQ cryptocurrency-icons — widely used, no API key
+  return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/${encodeURIComponent(s)}.png`;
+}
+
 function formatPrice(value: number) {
   if (value >= 1000) return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
   if (value >= 1) return value.toFixed(2);
