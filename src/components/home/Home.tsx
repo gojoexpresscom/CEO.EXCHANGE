@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { useBybitTickers } from "../../trading/useBybitTickers";
 import Settings, { type SettingsTab } from "../settings/Settings";
 import NotificationsCenter from "./NotificationsCenter";
 import UserCenter from "./UserCenter";
@@ -376,7 +377,12 @@ export default function Home({
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [wallets, setWallets] = useState<Wallet[]>([]);
-  const [markets, setMarkets] = useState<Market[]>([]);
+  // Real trading pairs + asset metadata from CEO Exchange's own backend
+  // (trading_pairs/assets). Live price data (last_price/change_24h/
+  // volume_24h) is NOT stored here anymore — it's merged in below from
+  // Bybit's public ticker feed via useBybitTickers, the same architecture
+  // TradingPage already uses for the Trading page.
+  const [marketPairs, setMarketPairs] = useState<Market[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -449,36 +455,36 @@ export default function Home({
     return p as Profile | null;
   }, []);
 
-  const loadMarkets = useCallback(async () => {
-    const [{ data: pairs, error: pairError }, { data: tickers, error: tickerError }, { data: assets, error: assetError }] = await Promise.all([
-      supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active,listed_at").eq("is_active", true).order("symbol").limit(100),
-      supabase.from("market_tickers").select("symbol,last_price,change_24h,volume_24h,updated_at").limit(100),
-      supabase.from("assets").select("symbol,name,is_active").eq("is_active", true).order("symbol").limit(100),
+  // Real backend pair list ONLY — no price data queried here anymore.
+  // Every active pair CEO Exchange actually lists is included (not a
+  // hardcoded subset), regardless of whether Bybit ends up having live
+  // data for it; unsupported pairs are handled below once Bybit's ticker
+  // snapshot comes back.
+  const loadMarketPairs = useCallback(async () => {
+    const [{ data: pairs, error: pairError }, { data: assets, error: assetError }] = await Promise.all([
+      supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active,listed_at").eq("is_active", true).order("symbol").limit(200),
+      supabase.from("assets").select("symbol,name,is_active").eq("is_active", true).order("symbol").limit(200),
     ]);
     if (pairError) throw pairError;
-    if (tickerError) throw tickerError;
     if (assetError) throw assetError;
 
-    const normalize = (value: string) => value.replace(/[^a-z0-9]/gi, "").toUpperCase();
-    const tickerMap = new Map((tickers ?? []).map((ticker: any) => [normalize(String(ticker.symbol ?? "")), ticker]));
     const assetMap = new Map((assets ?? []).map((asset: any) => [String(asset.symbol ?? "").toUpperCase(), asset]));
     const rows = (pairs ?? []).map((pair: any) => {
       const symbol = String(pair.symbol ?? `${pair.base_asset}/${pair.quote_asset}`);
-      const ticker = tickerMap.get(normalize(symbol));
       return {
         symbol,
         base_asset: String(pair.base_asset ?? ""),
         quote_asset: String(pair.quote_asset ?? ""),
         base_name: assetMap.get(String(pair.base_asset ?? "").toUpperCase())?.name ?? undefined,
-        last_price: ticker?.last_price == null ? null : Number(ticker.last_price),
-        change_24h: ticker?.change_24h == null ? null : Number(ticker.change_24h),
-        volume_24h: ticker?.volume_24h == null ? null : Number(ticker.volume_24h),
-        updated_at: ticker?.updated_at ?? null,
-        hasTicker: Boolean(ticker),
+        last_price: null,
+        change_24h: null,
+        volume_24h: null,
+        updated_at: null,
+        hasTicker: false,
         listed_at: pair.listed_at ?? null,
       } as Market;
     });
-    setMarkets(rows);
+    setMarketPairs(rows);
   }, []);
 
   const loadPosts = useCallback(async (id: string, tab: FeedTab) => {
@@ -618,7 +624,7 @@ export default function Home({
     setError("");
     try {
       await Promise.all([
-        loadProfileAndWallets(id), loadMarkets(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
+        loadProfileAndWallets(id), loadMarketPairs(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
         loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id), loadFavorites(id),
       ]);
     } catch (e: any) {
@@ -626,7 +632,7 @@ export default function Home({
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements, loadFavorites]);
+  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarketPairs, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements, loadFavorites]);
 
   // Local clock for relative timestamps (posts, notifications, etc.) — no extra DB calls.
   useEffect(() => {
@@ -663,18 +669,65 @@ export default function Home({
 
   useEffect(() => {
     if (!userId) return;
-    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarkets(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => { void loadPlatformAnnouncements(); void loadNotifications(userId); }).subscribe();
+    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "trading_pairs" }, () => { void loadMarketPairs(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => { void loadPlatformAnnouncements(); void loadNotifications(userId); }).subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [feedTab, loadMarkets, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, loadPlatformAnnouncements, userId]);
+  }, [feedTab, loadMarketPairs, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, loadPlatformAnnouncements, userId]);
 
-  // Backup to the realtime subscription above: if the socket ever drops silently
-  // (backgrounded tab, network switch), prices shouldn't just sit frozen with no
-  // self-correction. Same 60s polling pattern already used on the trading page.
+  // Backup poll for the trading-pair LIST only (new/delisted pairs) in case
+  // the realtime event above is ever missed — pairs change rarely, so this
+  // is just a safety net, not the price-freshness mechanism. Live prices
+  // are no longer polled here at all: they come continuously from Bybit's
+  // public WebSocket via useBybitTickers below, which has its own
+  // reconnect/backoff handling independent of this component.
   useEffect(() => {
     if (!userId) return;
-    const id = window.setInterval(() => { void loadMarkets(); }, 60000);
+    const id = window.setInterval(() => { void loadMarketPairs(); }, 60000);
     return () => window.clearInterval(id);
-  }, [userId, loadMarkets]);
+  }, [userId, loadMarketPairs]);
+
+  // ---- Live Bybit market data for the Home market list ----
+  // base+quote → Bybit spot symbol (e.g. BTC + USDT → BTCUSDT). Pure/local
+  // on purpose: identical mapping rule to useBybitMarketData's
+  // makeBybitSymbol, just not exported from there today.
+  const bybitSymbols = useMemo(() => {
+    const set = new Set<string>();
+    for (const pair of marketPairs) {
+      const base = pair.base_asset?.trim().toUpperCase();
+      const quote = pair.quote_asset?.trim().toUpperCase();
+      if (!base || !quote) continue;
+      const symbol = `${base}${quote}`;
+      if (/^[A-Z0-9]+$/.test(symbol)) set.add(symbol);
+    }
+    return Array.from(set);
+  }, [marketPairs]);
+
+  const {
+    tickers: bybitTickers,
+    status: bybitMarketStatus,
+  } = useBybitTickers(bybitSymbols);
+
+  // Real backend pair list + real live Bybit prices merged together. This
+  // is the ONLY place price fields get set for Home's market section — no
+  // fake/random movement, no Kraken market-data dependency. Only symbols
+  // with an actual Bybit ticker get a price; everything else stays "—" in
+  // the UI via hasTicker/last_price staying null, exactly like the old
+  // hasTicker semantics.
+  const markets = useMemo<Market[]>(() => {
+    return marketPairs.map((pair) => {
+      const base = pair.base_asset?.trim().toUpperCase();
+      const quote = pair.quote_asset?.trim().toUpperCase();
+      const bybitSymbol = base && quote ? `${base}${quote}` : null;
+      const ticker = bybitSymbol ? bybitTickers.get(bybitSymbol) : undefined;
+      return {
+        ...pair,
+        last_price: ticker?.last_price ?? null,
+        change_24h: ticker?.change_24h ?? null,
+        volume_24h: ticker?.volume_24h ?? null,
+        updated_at: ticker?.updated_at ?? null,
+        hasTicker: Boolean(ticker),
+      };
+    });
+  }, [marketPairs, bybitTickers]);
 
   const marketMap = useMemo(() => new Map(markets.map((m) => [m.symbol.toUpperCase(), m])), [markets]);
   const totalUsd = useMemo(() => wallets.reduce((sum, w) => {
@@ -709,8 +762,13 @@ export default function Home({
       // that from, so this is the only honest definition of "new" available to us.
       list.sort((a, b) => new Date(b.listed_at ?? 0).getTime() - new Date(a.listed_at ?? 0).getTime());
     } else {
-      // Hot: purely 24h volume — the one real, deterministic "activity" metric we have.
-      list.sort((a, b) => Number(b.volume_24h ?? -Infinity) - Number(a.volume_24h ?? -Infinity));
+      // Hot: the four flagship markets the product spec calls for, in a
+      // fixed order — not a volume sort. Each one only appears once it
+      // actually has a real Bybit price (guaranteed by the `list` filter
+      // above), so the row fills in live rather than showing a fake price.
+      const HOT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT"];
+      const bySymbol = new Map(list.map((m) => [m.symbol.toUpperCase(), m]));
+      list = HOT_SYMBOLS.map((s) => bySymbol.get(s)).filter((m): m is Market => Boolean(m));
     }
 
     if (search.trim()) {
@@ -1200,6 +1258,19 @@ export default function Home({
               </button>
             ))}
           </div>
+          {marketCategory === "Spot" && bybitMarketStatus !== "connected" && (
+            <div style={styles.liveStatus}>
+              <span
+                style={{
+                  ...styles.liveDot,
+                  background: bybitMarketStatus === "connecting" ? "#f5b51b" : "#f04438",
+                }}
+              />
+              {bybitMarketStatus === "connecting"
+                ? "Connecting to live Bybit market data…"
+                : "Live market data disconnected — reconnecting…"}
+            </div>
+          )}
           {filteredMarkets.map((m) => (
             <MarketRow
               key={m.symbol}
@@ -1555,7 +1626,10 @@ function coinIconUrl(base: string): string {
   return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/${slug}.png`;
 }
 
-function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
+// Memoized: only the row(s) whose `market` object actually changed
+// re-render when the live Bybit feed flushes an update, instead of every
+// visible row re-rendering on every tick.
+const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
   const change = market.change_24h == null ? null : Number(market.change_24h);
   const up = change != null && change >= 0;
   const base = (market.base_asset || market.symbol?.split(/[\/\-]/)[0] || "?").toUpperCase();
@@ -1564,6 +1638,29 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
   const vol = market.volume_24h == null ? null : Number(market.volume_24h);
   const volLabel = vol == null ? "" : vol >= 1_000_000 ? `${(vol / 1_000_000).toFixed(2)}M` : vol >= 1_000 ? `${(vol / 1_000).toFixed(1)}K` : formatMoney(vol);
   const [imgOk, setImgOk] = React.useState(true);
+
+  // Subtle flash on real price movement only — mirrors the "row highlights
+  // briefly on tick" behavior real exchange apps use (see the design/
+  // motion reference video), never simulated: it only fires when
+  // market.last_price actually changes value.
+  const [flash, setFlash] = React.useState<"up" | "down" | null>(null);
+  const previousPriceRef = React.useRef<number | null>(
+    market.last_price == null ? null : Number(market.last_price),
+  );
+
+  React.useEffect(() => {
+    const price = market.last_price == null ? null : Number(market.last_price);
+    const previous = previousPriceRef.current;
+    previousPriceRef.current = price;
+
+    if (price == null || previous == null || price === previous) {
+      return;
+    }
+
+    setFlash(price > previous ? "up" : "down");
+    const timer = window.setTimeout(() => setFlash(null), 600);
+    return () => window.clearTimeout(timer);
+  }, [market.last_price]);
 
   return (
     <button type="button" style={styles.marketRow} onClick={onTrade}>
@@ -1592,7 +1689,19 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
         </div>
         {vol != null && <span style={styles.pairVol}>{volLabel} {quote}</span>}
       </div>
-      <div style={styles.priceCol}>
+      <div
+        style={{
+          ...styles.priceCol,
+          backgroundColor:
+            flash === "up"
+              ? "rgba(18,183,106,0.18)"
+              : flash === "down"
+              ? "rgba(240,68,56,0.18)"
+              : "transparent",
+          transition: "background-color 500ms ease",
+          borderRadius: 6,
+        }}
+      >
         <div style={styles.price}>{market.last_price == null ? "—" : formatPrice(Number(market.last_price))}</div>
       </div>
       <span
@@ -1607,7 +1716,7 @@ function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; 
       </span>
     </button>
   );
-}
+});
 
 function PostCard({ post, currentUserId, nowMs, onView, onLike, onComment, onRepost, onShare, onDelete, onOpenProfile }: {
   post: Post;
@@ -3296,6 +3405,8 @@ const styles: Record<string, React.CSSProperties> = {
   commentDelete: { border: 0, background: "transparent", color: "#ff6b6b", fontSize: 11, cursor: "pointer", padding: "4px 6px" },
   fabMenuIcon: { width: 28, height: 28, borderRadius: 999, background: "#2a2a2a", display: "grid", placeItems: "center", color: "#f5b51b" },
   viewAll: { width: "100%", border: 0, background: "transparent", color: "#9a9a9a", padding: "16px 0 8px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 },
+  liveStatus: { display: "flex", alignItems: "center", gap: 8, padding: "8px 2px", color: "#9a9a9a", fontSize: 12, fontWeight: 600 },
+  liveDot: { width: 7, height: 7, borderRadius: 999, flexShrink: 0 },
   feedSection: { borderTop: "1px solid #171717", paddingTop: 22 },
   sectionTitle: { display: "flex", alignItems: "center", gap: 9, fontWeight: 800, fontSize: 18, marginBottom: 15 },
   goldBar: { width: 5, height: 30, borderRadius: 4, background: GOLD },
