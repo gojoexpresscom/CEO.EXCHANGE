@@ -1,20 +1,19 @@
 import { useEffect, useRef } from "react";
 import {
+  createChart,
   CandlestickSeries,
-  ColorType,
-  CrosshairMode,
   HistogramSeries,
   LineSeries,
-  createChart,
-  type CandlestickData,
-  type HistogramData,
   type IChartApi,
   type ISeriesApi,
+  type CandlestickData,
+  type HistogramData,
   type LineData,
-  type UTCTimestamp,
+  ColorType,
+  CrosshairMode,
 } from "lightweight-charts";
 
-export type ChartCandle = {
+export type Candle = {
   open_time: string;
   open: number;
   high: number;
@@ -24,302 +23,195 @@ export type ChartCandle = {
 };
 
 type Props = {
-  candles: ChartCandle[];
-  // Real simple-moving-average overlay, computed from the same candle
-  // closes already on screen — no synthetic data. Defaults to on, matching
-  // the reference design's MA7/MA14/MA28 legend.
-  showMovingAverages?: boolean;
-  // Real crosshair toggle — a native lightweight-charts behavior, not a
-  // cosmetic-only switch.
-  showCrosshair?: boolean;
+  candles: Candle[];
+  height?: number;
+  showMA?: boolean;
 };
 
-function isValidCandle(candle: ChartCandle) {
-  return (
-    Number.isFinite(new Date(candle.open_time).getTime()) &&
-    Number.isFinite(candle.open) &&
-    Number.isFinite(candle.high) &&
-    Number.isFinite(candle.low) &&
-    Number.isFinite(candle.close) &&
-    Number.isFinite(candle.volume)
-  );
+function toUnix(iso: string): number {
+  return Math.floor(new Date(iso).getTime() / 1000);
 }
 
-function sortCandles(candles: ChartCandle[]) {
-  return candles
-    .filter(isValidCandle)
-    .slice()
-    .sort(
-      (a, b) =>
-        new Date(a.open_time).getTime() - new Date(b.open_time).getTime(),
-    );
-}
-
-function toUnixSeconds(iso: string): UTCTimestamp {
-  return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
-}
-
-function toBar(candle: ChartCandle): CandlestickData<UTCTimestamp> {
-  return {
-    time: toUnixSeconds(candle.open_time),
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-  };
-}
-
-function toVolumeBar(candle: ChartCandle): HistogramData<UTCTimestamp> {
-  return {
-    time: toUnixSeconds(candle.open_time),
-    value: candle.volume,
-    color:
-      candle.close >= candle.open
-        ? "rgba(22,199,132,0.5)"
-        : "rgba(234,57,67,0.5)",
-  };
-}
-
-// Real simple moving average over closing prices. Returns one point per
-// candle once enough history exists for the window (no padding/fake values).
-export function computeSMA(
-  candles: ChartCandle[],
-  period: number,
-): LineData<UTCTimestamp>[] {
-  const sorted = sortCandles(candles);
-  const out: LineData<UTCTimestamp>[] = [];
-  let sum = 0;
-  for (let i = 0; i < sorted.length; i++) {
-    sum += sorted[i].close;
-    if (i >= period) sum -= sorted[i - period].close;
-    if (i >= period - 1) {
-      out.push({ time: toUnixSeconds(sorted[i].open_time), value: sum / period });
+function sma(values: number[], period: number): (number | null)[] {
+  const out: (number | null)[] = [];
+  for (let i = 0; i < values.length; i++) {
+    if (i + 1 < period) {
+      out.push(null);
+      continue;
     }
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += values[j];
+    out.push(sum / period);
   }
   return out;
 }
 
-// Latest MA7/14/28 values for the text legend above the chart — same real
-// closes, just the last point of each series.
-export function latestMAs(candles: ChartCandle[]) {
-  const ma7 = computeSMA(candles, 7);
-  const ma14 = computeSMA(candles, 14);
-  const ma28 = computeSMA(candles, 28);
-  return {
-    ma7: ma7.length ? ma7[ma7.length - 1].value : null,
-    ma14: ma14.length ? ma14[ma14.length - 1].value : null,
-    ma28: ma28.length ? ma28[ma28.length - 1].value : null,
-  };
-}
-
-const UP_COLOR = "#16c784";
-const DOWN_COLOR = "#ea3943";
-const GOLD = "#f4c542";
-const MA7_COLOR = "#f0b90b";
-const MA14_COLOR = "#4fa8e0";
-const MA28_COLOR = "#c86ee0";
-
-export default function TradingChart({ candles, showMovingAverages = true, showCrosshair = true }: Props) {
+export default function TradingChart({ candles, height = 320, showMA = true }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef =
-    useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const ma7SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const ma14SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const ma28SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const previousCandlesRef = useRef<ChartCandle[]>([]);
+  const ma7Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma14Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma28Ref = useRef<ISeriesApi<"Line"> | null>(null);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    if (!containerRef.current) return;
 
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight,
+    const chart = createChart(containerRef.current, {
+      height,
       layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#9a9a9a",
-        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
-        fontSize: 11,
+        background: { type: ColorType.Solid, color: "#0a0a0a" },
+        textColor: "#8b8b8b",
       },
       grid: {
-        vertLines: { color: "rgba(255,255,255,0.05)" },
-        horzLines: { color: "rgba(255,255,255,0.05)" },
+        vertLines: { color: "#161616" },
+        horzLines: { color: "#161616" },
       },
-      crosshair: {
-        mode: showCrosshair ? CrosshairMode.Normal : CrosshairMode.Hidden,
-        vertLine: {
-          color: "rgba(244,197,66,0.35)",
-          labelBackgroundColor: "#171307",
-          width: 1,
-        },
-        horzLine: {
-          color: "rgba(244,197,66,0.35)",
-          labelBackgroundColor: "#171307",
-          width: 1,
-        },
-      },
-      rightPriceScale: {
-        borderColor: "#1c1c1c",
-        scaleMargins: { top: 0.08, bottom: 0.22 },
-      },
-      timeScale: {
-        borderColor: "#1c1c1c",
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: 4,
-      },
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: false,
-      },
-      handleScale: {
-        mouseWheel: true,
-        pinch: true,
-        axisPressedMouseMove: true,
-      },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: "#1a1a1a" },
+      timeScale: { borderColor: "#1a1a1a", timeVisible: true, secondsVisible: false },
+      width: containerRef.current.clientWidth,
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: UP_COLOR,
-      downColor: DOWN_COLOR,
-      borderUpColor: UP_COLOR,
-      borderDownColor: DOWN_COLOR,
-      wickUpColor: UP_COLOR,
-      wickDownColor: DOWN_COLOR,
-      priceLineColor: GOLD,
-      priceLineVisible: true,
-      lastValueVisible: true,
+      upColor: "#16c784",
+      downColor: "#ea3943",
+      borderUpColor: "#16c784",
+      borderDownColor: "#ea3943",
+      wickUpColor: "#16c784",
+      wickDownColor: "#ea3943",
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
-      priceScaleId: "ceo-volume",
+      priceScaleId: "vol",
     });
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },
+    chart.priceScale("vol").applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    const ma7Series = chart.addSeries(LineSeries, {
-      color: MA7_COLOR,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    const ma14Series = chart.addSeries(LineSeries, {
-      color: MA14_COLOR,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    const ma28Series = chart.addSeries(LineSeries, {
-      color: MA28_COLOR,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
+    let ma7: ISeriesApi<"Line"> | null = null;
+    let ma14: ISeriesApi<"Line"> | null = null;
+    let ma28: ISeriesApi<"Line"> | null = null;
+
+    if (showMA) {
+      ma7 = chart.addSeries(LineSeries, {
+        color: "#f0b90b",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      ma14 = chart.addSeries(LineSeries, {
+        color: "#3861fb",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      ma28 = chart.addSeries(LineSeries, {
+        color: "#e91e8c",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+    }
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
-    ma7SeriesRef.current = ma7Series;
-    ma14SeriesRef.current = ma14Series;
-    ma28SeriesRef.current = ma28Series;
-    previousCandlesRef.current = [];
+    ma7Ref.current = ma7;
+    ma14Ref.current = ma14;
+    ma28Ref.current = ma28;
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      if (width > 0 && height > 0) chart.applyOptions({ width, height });
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+      }
     });
-    resizeObserver.observe(container);
+    ro.observe(containerRef.current);
 
     return () => {
-      resizeObserver.disconnect();
+      ro.disconnect();
       chart.remove();
       chartRef.current = null;
-      candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      ma7SeriesRef.current = null;
-      ma14SeriesRef.current = null;
-      ma28SeriesRef.current = null;
-      previousCandlesRef.current = [];
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Crosshair mode can change without a full chart teardown.
-  useEffect(() => {
-    chartRef.current?.applyOptions({
-      crosshair: { mode: showCrosshair ? CrosshairMode.Normal : CrosshairMode.Hidden },
-    });
-  }, [showCrosshair]);
-
-  // Show/hide the MA lines without recomputing on every toggle.
-  useEffect(() => {
-    const opts = { visible: showMovingAverages };
-    ma7SeriesRef.current?.applyOptions(opts);
-    ma14SeriesRef.current?.applyOptions(opts);
-    ma28SeriesRef.current?.applyOptions(opts);
-  }, [showMovingAverages]);
+  }, [height, showMA]);
 
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current;
-    const volumeSeries = volumeSeriesRef.current;
-    const chart = chartRef.current;
-    if (!candleSeries || !volumeSeries || !chart) return;
-
-    const nextCandles = sortCandles(candles);
-    const previousCandles = previousCandlesRef.current;
-    const isReload =
-      nextCandles.length === 0 ||
-      previousCandles.length === 0 ||
-      nextCandles.length < previousCandles.length ||
-      nextCandles[0]?.open_time !== previousCandles[0]?.open_time ||
-      nextCandles.length - previousCandles.length > 1;
-
-    if (isReload) {
-      candleSeries.setData(nextCandles.map(toBar));
-      volumeSeries.setData(nextCandles.map(toVolumeBar));
-      ma7SeriesRef.current?.setData(computeSMA(nextCandles, 7));
-      ma14SeriesRef.current?.setData(computeSMA(nextCandles, 14));
-      ma28SeriesRef.current?.setData(computeSMA(nextCandles, 28));
-      if (nextCandles.length) chart.timeScale().fitContent();
-    } else {
-      const last = nextCandles[nextCandles.length - 1];
-      const previousLast = previousCandles[previousCandles.length - 1];
-      if (
-        last &&
-        (!previousLast ||
-          last.open_time !== previousLast.open_time ||
-          last.close !== previousLast.close ||
-          last.volume !== previousLast.volume)
-      ) {
-        candleSeries.update(toBar(last));
-        volumeSeries.update(toVolumeBar(last));
-        const ma7 = computeSMA(nextCandles, 7);
-        const ma14 = computeSMA(nextCandles, 14);
-        const ma28 = computeSMA(nextCandles, 28);
-        if (ma7.length) ma7SeriesRef.current?.update(ma7[ma7.length - 1]);
-        if (ma14.length) ma14SeriesRef.current?.update(ma14[ma14.length - 1]);
-        if (ma28.length) ma28SeriesRef.current?.update(ma28[ma28.length - 1]);
-      }
+    if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+    if (!candles.length) {
+      candleSeriesRef.current.setData([]);
+      volumeSeriesRef.current.setData([]);
+      ma7Ref.current?.setData([]);
+      ma14Ref.current?.setData([]);
+      ma28Ref.current?.setData([]);
+      return;
     }
 
-    previousCandlesRef.current = nextCandles;
-  }, [candles]);
+    const sorted = [...candles].sort(
+      (a, b) => new Date(a.open_time).getTime() - new Date(b.open_time).getTime()
+    );
+
+    const candleData: CandlestickData[] = sorted.map((c) => ({
+      time: toUnix(c.open_time) as CandlestickData["time"],
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+
+    const volumeData: HistogramData[] = sorted.map((c) => ({
+      time: toUnix(c.open_time) as HistogramData["time"],
+      value: c.volume,
+      color: c.close >= c.open ? "rgba(22,199,132,0.45)" : "rgba(234,57,67,0.45)",
+    }));
+
+    candleSeriesRef.current.setData(candleData);
+    volumeSeriesRef.current.setData(volumeData);
+
+    if (showMA && ma7Ref.current && ma14Ref.current && ma28Ref.current) {
+      const closes = sorted.map((c) => c.close);
+      const s7 = sma(closes, 7);
+      const s14 = sma(closes, 14);
+      const s28 = sma(closes, 28);
+
+      const line = (vals: (number | null)[]): LineData[] =>
+        sorted
+          .map((c, i) =>
+            vals[i] == null
+              ? null
+              : { time: toUnix(c.open_time) as LineData["time"], value: vals[i] as number }
+          )
+          .filter((x): x is LineData => x != null);
+
+      ma7Ref.current.setData(line(s7));
+      ma14Ref.current.setData(line(s14));
+      ma28Ref.current.setData(line(s28));
+    }
+
+    chartRef.current?.timeScale().fitContent();
+  }, [candles, showMA]);
 
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: "100%", position: "relative" }}
+      style={{ width: "100%", height, position: "relative" }}
     />
   );
+}
+
+/** Real SMA values for the MA legend (computed from candle closes). */
+export function computeMALegend(candles: Candle[]) {
+  if (!candles.length) return { ma7: null as number | null, ma14: null as number | null, ma28: null as number | null };
+  const sorted = [...candles].sort(
+    (a, b) => new Date(a.open_time).getTime() - new Date(b.open_time).getTime()
+  );
+  const closes = sorted.map((c) => c.close);
+  const last = (period: number) => {
+    if (closes.length < period) return null;
+    let sum = 0;
+    for (let i = closes.length - period; i < closes.length; i++) sum += closes[i];
+    return sum / period;
+  };
+  return { ma7: last(7), ma14: last(14), ma28: last(28) };
 }

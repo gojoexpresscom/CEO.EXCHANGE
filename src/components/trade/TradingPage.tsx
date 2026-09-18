@@ -1,10 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import TradingChart, { latestMAs } from "./TradingChart";
+import TradingChart, { computeMALegend } from "./TradingChart";
 import { useBybitMarketData } from "../../trading/useBybitMarketData";
 
 type Props = { symbol?: string; onBack?: () => void; onAddFunds?: () => void };
-type Pair = { id: string; symbol: string; base_asset: string; quote_asset: string; is_active: boolean };
+
+type Pair = {
+  id: string;
+  symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  is_active: boolean;
+};
+
 type Ticker = {
   symbol: string;
   last_price: number | null;
@@ -15,8 +23,23 @@ type Ticker = {
   volume_24h: number | null;
   change_24h: number | null;
 };
-type Candle = { open_time: string; open: number; high: number; low: number; close: number; volume: number };
-type BookRow = { side: "buy" | "sell"; price: number; amount: number; filled_amount: number };
+
+type Candle = {
+  open_time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+type BookRow = {
+  side: "buy" | "sell";
+  price: number;
+  amount: number;
+  filled_amount: number;
+};
+
 type Wallet = {
   asset: string;
   balance: number;
@@ -26,6 +49,7 @@ type Wallet = {
   account_type?: string | null;
   status?: string | null;
 };
+
 type Order = {
   id: string;
   user_id: string;
@@ -38,7 +62,22 @@ type Order = {
   status: string;
   created_at: string;
 };
-type RecentTrade = { id: string; trading_pair?: string; price: number; amount: number; created_at: string };
+
+type RecentTrade = {
+  id: string;
+  trading_pair?: string;
+  price: number;
+  amount: number;
+  created_at: string;
+  side?: string;
+};
+
+type ViewMode = "standard" | "terminal";
+type ContentTab = "chart" | "overview" | "data" | "feed";
+type MarketTab = "chart" | "book" | "trades";
+type BottomTab = "orders" | "positions" | "assets" | "borrowings" | "tx";
+type KeypadField = "price" | "qty" | "value" | null;
+
 type HotMarket = {
   symbol: string;
   base: string;
@@ -49,365 +88,39 @@ type HotMarket = {
   image?: string;
 };
 
-const TF = [
-  { label: "15m", value: "15m" },
-  { label: "1H", value: "1h" },
-  { label: "4H", value: "4h" },
-  { label: "1D", value: "1d" },
-] as const;
+type AccountTab = "spot" | "futures" | "funding";
 
-const ACCOUNT_TABS = [
-  { label: "Spot", value: "spot" },
-  { label: "Futures", value: "futures" },
-  { label: "Funding", value: "funding" },
-] as const;
-
-const BOTTOM_TABS = [
-  { label: "Orders", value: "orders" },
-  { label: "Positions", value: "positions" },
-  { label: "Assets", value: "assets" },
-] as const;
-
-const CANCELLABLE = new Set(["open", "partially_filled"]);
-const PCT_STOPS = [0, 0.25, 0.5, 0.75, 1] as const;
-const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "back"] as const;
-
-// Data sources:
-// - trading_pairs, orders, wallets (with account_type): Supabase — unchanged.
-// - Order routing/cancellation: kraken-spot Edge Function — unchanged. Order
-//   execution was NOT touched by the Bybit market-data migration below, nor
-//   by this visual redesign.
-// - LIVE MARKET DATA for the Trading UI (ticker, candles, order book, recent
-//   trades/tape): Bybit's PUBLIC REST API (initial snapshot) + Bybit's
-//   PUBLIC WebSocket (live updates), via useBybitMarketData/BybitProvider.
-//   market_tickers and market_candles are no longer read for the live
-//   Trading UI. No Bybit credentials are used anywhere — public
-//   market-data endpoints only.
-// - CoinGecko free /coins/markets for Hot ranking — unchanged.
-// - Order-book "precision" grouping below is a real aggregation of the real
-//   book levels (rounding + summing), not synthetic data.
-// No mock data, no demo buttons, no placeholder prices, no simulated candles.
-
-const css = `
-:root{
-  --ceo-bg:#060606;
-  --ceo-surface:#0a0a0a;
-  --ceo-surface-2:#0d0d0d;
-  --ceo-border:#181818;
-  --ceo-border-strong:#242424;
-  --ceo-text:#e8e8e8;
-  --ceo-text-dim:#8a8a8a;
-  --ceo-text-faint:#5c5c5c;
-  --ceo-gold:#d4af5a;
-  --ceo-gold-bright:#f0c766;
-  --ceo-gold-dim:#7a6428;
-  --ceo-up:#16c784;
-  --ceo-down:#ea3943;
-  --ceo-radius:8px;
+function routeSymbol() {
+  try {
+    const m = window.location.pathname.match(/^\/trade\/(.+)$/i);
+    return m ? decodeURIComponent(m[1]).toUpperCase() : "";
+  } catch {
+    return "";
+  }
 }
-*{box-sizing:border-box}
-.trade-page{min-height:100vh;background:var(--ceo-bg);color:var(--ceo-text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased;font-size:13px}
-.trade-shell{width:min(1440px,100%);margin:auto;padding:0 0 60px;box-sizing:border-box;position:relative}
 
-/* ===== Top bar ===== */
-.trade-top{display:flex;align-items:center;gap:8px;min-height:44px;padding:7px 10px;border-bottom:1px solid var(--ceo-border);position:sticky;top:0;background:rgba(6,6,6,0.97);z-index:40}
-.trade-back{width:28px;height:28px;border:0;background:none;color:#fff;cursor:pointer;font-size:17px;display:grid;place-items:center;flex-shrink:0}
-.trade-top-title{flex:1;text-align:center;font-size:15px;font-weight:700;color:#fff;letter-spacing:.2px}
-.icon-btn{width:28px;height:28px;border:0;background:none;color:var(--ceo-text-dim);cursor:pointer;display:grid;place-items:center;font-size:15px}
-.icon-btn:hover{color:var(--ceo-gold)}
-
-/* ===== Pair strip ===== */
-.pair-strip{display:flex;align-items:center;gap:8px;padding:6px 10px 8px;background:var(--ceo-bg)}
-.trade-pair{display:flex;flex-direction:column;gap:1px;cursor:pointer;flex-shrink:0}
-.pair-name{font-size:16px;font-weight:800;color:#fff;white-space:nowrap;display:flex;align-items:center;gap:3px}
-.pair-name .chev{font-size:10px;color:var(--ceo-text-dim)}
-.pair-change-inline{font-size:11.5px;font-weight:700}
-.pair-view-toggle{margin-left:auto;display:flex;align-items:center;background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);border-radius:999px;padding:2px;gap:2px;flex-shrink:0}
-.pair-view-toggle button{width:26px;height:24px;border:0;border-radius:999px;background:none;color:var(--ceo-text-dim);cursor:pointer;font-size:12px;display:grid;place-items:center}
-.pair-view-toggle button.active{background:#2a2a2a;color:#fff}
-.data-status{font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid transparent;white-space:nowrap}
-.data-status.ok{color:var(--ceo-text-faint)}
-.data-status.warn{color:var(--ceo-gold-bright);border-color:var(--ceo-gold-dim);background:rgba(212,175,90,0.08)}
-.data-status.bad{color:var(--ceo-down);border-color:rgba(234,57,67,0.3);background:rgba(234,57,67,0.08)}
-
-/* ===== Account type tabs ===== */
-.account-tabs{display:flex;gap:0;padding:0 10px;border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
-.account-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:9px 6px;font-size:12px;font-weight:700;letter-spacing:.1px;cursor:pointer;position:relative}
-.account-tab.active{color:var(--ceo-gold-bright)}
-.account-tab.active::after{content:"";position:absolute;bottom:0;left:26%;right:26%;height:2px;background:var(--ceo-gold-bright);border-radius:2px 2px 0 0}
-
-/* ===== Main grid ===== */
-.main-grid{display:block}
-
-/* ===== Terminal (combo) layout ===== */
-.terminal-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid var(--ceo-border)}
-.terminal-form{border-right:1px solid var(--ceo-border);background:var(--ceo-surface)}
-.terminal-book{background:var(--ceo-surface);padding-top:6px}
-@media(max-width:520px){.terminal-layout{grid-template-columns:1fr}.terminal-form{border-right:0;border-bottom:1px solid var(--ceo-border)}}
-
-.market-card{border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
-.stats-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:6px 12px 10px;flex-wrap:wrap}
-.stat-price{font-size:26px;font-weight:800;letter-spacing:-.4px;font-variant-numeric:tabular-nums;line-height:1.1}
-.stat-usd{font-size:11px;color:var(--ceo-text-dim);margin-top:2px}
-.stat-grid{display:grid;grid-template-columns:auto auto;gap:1px 14px;text-align:right}
-.stat-mini{font-size:10px;color:var(--ceo-text-dim);line-height:1.5;white-space:nowrap}
-.stat-mini b{color:#d4d4d4;font-weight:600;font-variant-numeric:tabular-nums;margin-left:6px}
-
-.market-tabs{display:flex;border-bottom:1px solid var(--ceo-border);align-items:center}
-.market-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:8px 4px;font-size:11.5px;font-weight:700;letter-spacing:.1px;cursor:pointer}
-.market-tab.active{color:#fff;border-bottom:2px solid var(--ceo-gold-bright)}
-.book-view-btn{flex-shrink:0;background:none;border:0;color:var(--ceo-text-dim);cursor:pointer;font-size:13px;padding:6px 10px}
-.book-view-btn:hover{color:var(--ceo-gold-bright)}
-
-.tf-row{display:flex;gap:2px;padding:6px 8px;border-bottom:1px solid var(--ceo-border);overflow:auto}
-.tf-btn{background:none;border:0;border-radius:5px;color:var(--ceo-text-dim);padding:5px 11px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;min-height:28px}
-.tf-btn.active{color:var(--ceo-gold-bright);background:rgba(212,175,90,0.1)}
-.chart-wrap{height:400px;position:relative}
-@media(min-width:601px){.chart-wrap{height:460px}}
-@media(min-width:901px){.chart-wrap{height:480px}}
-.empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--ceo-text-faint);padding:20px;box-sizing:border-box;font-size:11.5px;line-height:1.5}
-
-/* ===== Order book: merged rank-paired style (matches reference) ===== */
-.book-toolbar{display:flex;align-items:center;justify-content:space-between;padding:6px 10px 4px;gap:8px}
-.book-toolbar .side-label{font-size:10.5px;font-weight:700}
-.precision-select{background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);color:var(--ceo-text-dim);border-radius:5px;padding:3px 6px;font-size:10.5px;cursor:pointer}
-.book-ratio{display:flex;height:3px;margin:0 10px 4px;border-radius:2px;overflow:hidden}
-.book-ratio .buy{background:var(--ceo-up)}
-.book-ratio .sell{background:var(--ceo-down)}
-.book-ratio-labels{display:flex;justify-content:space-between;padding:0 10px 5px;font-size:10px;font-weight:700}
-.book-wrap{padding:0 0 4px;max-height:min(52vh,420px);overflow:auto;-webkit-overflow-scrolling:touch}
-.book-wrap.full{max-height:none;overflow:visible}
-.terminal-book .book-wrap{max-height:min(60vh,560px)}
-.book-head{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;padding:2px 10px;font-size:9.5px;color:var(--ceo-text-faint);position:sticky;top:0;background:var(--ceo-surface);z-index:1}
-.book-head span:first-child{text-align:left}
-.book-head span:nth-child(2){text-align:right}
-.book-head span:nth-child(3){text-align:left}
-.book-head span:last-child{text-align:right}
-.book-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;padding:0 10px;font-size:11px;font-variant-numeric:tabular-nums;height:22px;align-items:center;column-gap:4px}
-.book-cell{position:relative;height:100%;display:flex;align-items:center}
-.book-cell.bidq{justify-content:flex-start}
-.book-cell.bidp{justify-content:flex-end;cursor:pointer}
-.book-cell.askp{justify-content:flex-start;cursor:pointer}
-.book-cell.askq{justify-content:flex-end}
-.book-bar{position:absolute;top:1px;bottom:1px;opacity:.16;pointer-events:none}
-.book-bar.bid{right:0;background:var(--ceo-up)}
-.book-bar.ask{left:0;background:var(--ceo-down)}
-.book-row .qty{color:var(--ceo-text);position:relative;z-index:1}
-.book-row .price.bid{color:var(--ceo-up);font-weight:600;position:relative;z-index:1}
-.book-row .price.ask{color:var(--ceo-down);font-weight:600;position:relative;z-index:1}
-.book-mid{display:flex;justify-content:center;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--ceo-border);border-bottom:1px solid var(--ceo-border);color:#fff;font-weight:700;font-size:14px;font-variant-numeric:tabular-nums;background:rgba(255,255,255,0.02);margin:2px 0}
-.book-mid .chg{font-size:11px;font-weight:700}
-.book-empty{text-align:center;color:var(--ceo-text-faint);font-size:11px;padding:24px 10px}
-
-/* Classic (stacked) order book, kept as an alternate view */
-.book-wrap.classic .book-head{grid-template-columns:1fr 1.25fr 1fr}
-.book-row.classic-row{grid-template-columns:1fr 1.25fr 1fr;position:relative}
-.book-row.classic-row .price{text-align:center}
-.book-row.classic-row:hover{background:#111}
-
-/* ===== Trades tape ===== */
-.tape{padding:2px 0;max-height:280px;overflow:auto}
-.tape-head{display:grid;grid-template-columns:1fr 1fr 1fr;padding:3px 10px;font-size:9.5px;color:var(--ceo-text-faint)}
-.tape-head span:nth-child(2){text-align:right}
-.tape-head span:last-child{text-align:right}
-.tape-row{display:grid;grid-template-columns:1fr 1fr 1fr;padding:2px 10px;font-size:11.5px;font-variant-numeric:tabular-nums;height:20px;align-items:center}
-.tape-row span:nth-child(2){text-align:right}
-.tape-row span:last-child{text-align:right;color:var(--ceo-text-dim)}
-.up{color:var(--ceo-up)}.down{color:var(--ceo-down)}
-
-/* ===== Order entry form ===== */
-.form-card{border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
-.side-pill{position:relative;display:grid;grid-template-columns:1fr 1fr;margin:10px 10px 0;border-radius:999px;overflow:hidden;height:36px;background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong)}
-.side-pill-thumb{position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 4px);border-radius:999px;background:var(--ceo-up);transition:transform 160ms ease,background 160ms ease;z-index:0}
-.side-pill-thumb.sell{background:var(--ceo-down);transform:translateX(calc(100% + 4px))}
-.side-pill button{position:relative;z-index:1;border:0;background:none;color:var(--ceo-text-dim);font-weight:700;cursor:pointer;font-size:12.5px}
-.side-pill button.buy.active{color:#04140d}
-.side-pill button.sell.active{color:#1a0506}
-.form-body{padding:0 10px 12px}
-.type-row{display:flex;align-items:center;justify-content:space-between;margin:10px 0 2px;font-size:10.5px;color:var(--ceo-text-dim)}
-.type-select-wrap{position:relative}
-.type-select{background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);color:#eee;border-radius:7px;padding:7px 10px;font-size:12.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:88px;justify-content:space-between}
-.type-menu{position:absolute;top:calc(100% + 4px);left:0;background:#141414;border:1px solid var(--ceo-border-strong);border-radius:8px;overflow:hidden;z-index:30;min-width:120px;box-shadow:0 8px 24px rgba(0,0,0,0.5)}
-.type-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:#ddd;padding:9px 12px;font-size:12.5px;cursor:pointer}
-.type-menu button:hover{background:#1e1e1e}
-.type-menu button.active{color:var(--ceo-gold-bright)}
-.market-note{font-size:10px;color:var(--ceo-text-faint);margin:2px 0 4px;line-height:1.4}
-.label{display:flex;justify-content:space-between;color:var(--ceo-text-dim);font-size:10.5px;margin:8px 0 4px}
-.input-wrap{display:flex;align-items:center;border:1px solid var(--ceo-border-strong);border-radius:7px;background:var(--ceo-surface-2);height:40px;transition:border-color 150ms ease}
-.input-wrap.focused{border-color:var(--ceo-gold-dim)}
-.input{flex:1;min-width:0;background:none;color:#eee;border:0;padding:0 11px;font-size:13.5px;font-variant-numeric:tabular-nums;outline:none;height:100%}
-.suffix{color:var(--ceo-text-dim);font-size:10.5px;padding-right:11px}
-.pct-track{position:relative;display:flex;justify-content:space-between;align-items:center;margin:14px 4px 4px;height:16px}
-.pct-track::before{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--ceo-border-strong);transform:translateY(-50%)}
-.pct-dot{position:relative;z-index:1;width:14px;height:14px;border-radius:50%;border:2px solid var(--ceo-border-strong);background:var(--ceo-bg);cursor:pointer;padding:0}
-.pct-dot.active{border-color:var(--ceo-gold-bright);background:var(--ceo-gold-bright)}
-.pct-labels{display:flex;justify-content:space-between;margin:2px 2px 0;font-size:9.5px;color:var(--ceo-text-faint)}
-.available,.total{display:flex;justify-content:space-between;font-size:10.5px;margin-top:8px}
-.available{color:var(--ceo-text-dim)}
-.total{border-top:1px solid var(--ceo-border);padding-top:7px}
-.order-btn{width:100%;border:0;border-radius:999px;padding:12px;margin-top:10px;min-height:44px;color:#fff;font-weight:800;font-size:13.5px;cursor:pointer}
-.order-btn.buy{background:var(--ceo-up);color:#04140d}
-.order-btn.sell{background:var(--ceo-down);color:#1a0506}
-.order-btn:disabled{background:var(--ceo-border-strong);color:var(--ceo-text-faint);cursor:not-allowed}
-.warning{margin-top:8px;border:1px solid #5c4b1b;background:#141006;color:#d2bd73;border-radius:7px;padding:8px;font-size:11px;line-height:1.4}
-.add{color:var(--ceo-gold-bright);margin-top:6px;border:1px solid var(--ceo-gold-dim);background:var(--ceo-surface-2);border-radius:6px;padding:6px 9px;cursor:pointer;display:block;width:100%;text-align:center;font-size:11.5px}
-.check-row{display:flex;gap:12px;margin-top:9px;font-size:11px;color:var(--ceo-text-dim);align-items:center}
-.check-row label{display:flex;align-items:center;gap:5px;cursor:default}
-.check-row input{accent-color:var(--ceo-gold)}
-
-/* ===== Custom numeric keypad ===== */
-.keypad-backdrop{position:fixed;inset:0;z-index:59;background:transparent}
-.keypad{position:fixed;left:0;right:0;bottom:0;z-index:60;background:#111;border-top:1px solid var(--ceo-border-strong);padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 24px rgba(0,0,0,0.5)}
-@media(min-width:901px){.keypad{position:sticky;max-width:1440px;margin:0 auto}}
-.keypad-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:6px}
-.keypad-key{height:42px;border-radius:8px;border:0;background:#1c1c1c;color:#eee;font-size:16px;font-weight:600;cursor:pointer}
-.keypad-key:active{background:#262626}
-.keypad-key.confirm{background:var(--ceo-gold-bright);color:#231a06;font-weight:800}
-.keypad-key.back{color:var(--ceo-text-dim)}
-
-/* ===== Bottom panel ===== */
-.bottom-panel{border-top:1px solid var(--ceo-border);background:var(--ceo-surface);z-index:20}
-@media(min-width:901px){.bottom-panel{position:sticky;bottom:0}}
-@media(max-width:900px){.bottom-panel{margin-bottom:8px}}
-.bottom-tabs{display:flex;border-bottom:1px solid var(--ceo-border)}
-.bottom-tab{flex:1;background:none;border:0;color:var(--ceo-text-dim);padding:8px 4px;font-size:11.5px;font-weight:700;cursor:pointer}
-.bottom-tab.active{color:var(--ceo-gold-bright);border-bottom:2px solid var(--ceo-gold-bright)}
-.bottom-body{max-height:220px;overflow:auto;padding:6px 0}
-.all-markets-row{display:flex;align-items:center;gap:6px;padding:4px 12px 6px;font-size:10.5px;color:var(--ceo-text-dim)}
-.all-markets-row input{accent-color:var(--ceo-gold)}
-.order-table{width:100%;border-collapse:collapse;font-size:11px}
-.order-table th,.order-table td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--ceo-border);white-space:nowrap;font-variant-numeric:tabular-nums}
-.order-table th{color:var(--ceo-text-faint);font-weight:500;font-variant-numeric:normal}
-.cancel-btn{border:1px solid #5c1d26;background:#150607;color:#ff8f9c;border-radius:5px;padding:4px 8px;font-size:10px;cursor:pointer}
-.cancel-btn:disabled{opacity:.5;cursor:not-allowed}
-
-/* ===== Hot markets + markets overlay ===== */
-.hot-section{padding:8px 10px;border-bottom:1px solid var(--ceo-border);background:var(--ceo-surface)}
-.hot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.hot-title{font-size:12px;font-weight:700;color:var(--ceo-gold-bright)}
-.view-more{background:none;border:0;color:var(--ceo-text-dim);font-size:11px;cursor:pointer}
-.view-more:hover{color:var(--ceo-gold-bright)}
-.hot-row{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
-.hot-card{min-width:98px;background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);border-radius:8px;padding:7px 9px;cursor:pointer;flex-shrink:0}
-.hot-card:hover{border-color:var(--ceo-gold-dim)}
-.hot-card .sym{font-size:11px;font-weight:700;color:#fff}
-.hot-card .px{font-size:12px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
-.hot-card .ch{font-size:10.5px;font-weight:700;margin-top:1px}
-
-.markets-overlay{position:fixed;inset:0;background:var(--ceo-bg);z-index:100;display:flex;flex-direction:column}
-.markets-header{display:flex;align-items:center;gap:8px;padding:10px}
-.markets-search{flex:1;background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);border-radius:8px;color:#eee;padding:9px 11px;font-size:13px;outline:none}
-.markets-search:focus{border-color:var(--ceo-gold-dim)}
-.markets-close{width:32px;height:32px;border:1px solid var(--ceo-border-strong);border-radius:8px;background:var(--ceo-surface-2);color:var(--ceo-gold);cursor:pointer;font-size:14px}
-.markets-tabs{display:flex;gap:0;padding:0 10px;border-bottom:1px solid var(--ceo-border)}
-.markets-tab{background:none;border:0;color:var(--ceo-text-dim);padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer}
-.markets-tab.active{color:var(--ceo-gold-bright);border-bottom:2px solid var(--ceo-gold-bright)}
-.markets-list{flex:1;overflow:auto}
-.markets-row{display:grid;grid-template-columns:1.4fr 1fr 0.8fr;padding:11px 12px;border-bottom:1px solid var(--ceo-border);cursor:pointer;align-items:center;min-height:48px}
-.markets-row:hover{background:#0e0e0e}
-.markets-row .sym{font-weight:700;font-size:12.5px}
-.markets-row .vol{font-size:10.5px;color:var(--ceo-text-faint);margin-top:1px}
-.markets-row .px{text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums}
-.markets-row .ch{text-align:right;font-size:11px;font-weight:700}
-.markets-row .ch-pill{display:inline-block;min-width:62px;text-align:center;padding:3px 6px;border-radius:6px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
-.markets-row .ch-pill.up{background:rgba(22,199,132,0.15);color:var(--ceo-up)}
-.markets-row .ch-pill.down{background:rgba(234,57,67,0.15);color:var(--ceo-down)}
-.markets-row.selected{background:rgba(212,175,90,0.08)}
-
-/* ===== Futures / Funding panels ===== */
-.account-panel{padding:14px 10px}
-.coming-soon{text-align:center;padding:32px 16px;color:var(--ceo-text-dim)}
-.coming-soon h3{color:var(--ceo-gold-bright);margin:0 0 6px;font-size:15px}
-.coming-soon p{font-size:12.5px;line-height:1.5;margin:0}
-.balance-card{background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);border-radius:9px;padding:12px;margin-bottom:8px}
-.balance-card .asset{font-size:13px;font-weight:700;margin-bottom:5px}
-.balance-card .row{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ceo-text-dim);margin-top:3px}
-.balance-card .row b{color:#eee;font-weight:600;font-variant-numeric:tabular-nums}
-.transfer-btn{width:100%;margin-top:10px;border:1px solid var(--ceo-gold-dim);background:var(--ceo-surface-2);color:var(--ceo-gold-bright);border-radius:8px;padding:11px;font-weight:700;cursor:pointer;font-size:12.5px;min-height:42px}
-.transfer-btn:disabled{opacity:.5;cursor:not-allowed}
-.transfer-form{margin-top:10px;border:1px solid var(--ceo-border-strong);border-radius:9px;background:var(--ceo-surface-2);padding:11px}
-.transfer-select,.transfer-input{width:100%;background:var(--ceo-surface);border:1px solid var(--ceo-border-strong);border-radius:7px;color:#eee;padding:9px;font-size:12.5px;margin-top:5px;box-sizing:border-box}
-.transfer-select:focus,.transfer-input:focus{border-color:var(--ceo-gold-dim);outline:0}
-.transfer-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-.transfer-cancel{border:1px solid var(--ceo-border-strong);background:var(--ceo-surface-2);color:var(--ceo-text-dim);border-radius:8px;padding:10px;font-weight:700;cursor:pointer;font-size:12.5px}
-.transfer-confirm{border:0;background:var(--ceo-up);color:#04140d;border-radius:8px;padding:10px;font-weight:800;cursor:pointer;font-size:12.5px}
-.transfer-confirm:disabled,.transfer-cancel:disabled{opacity:.5;cursor:not-allowed}
-
-.error{margin:8px 10px;border:1px solid #5b1d26;background:#150607;color:#ff9aa6;border-radius:8px;padding:9px;font-size:11.5px}
-.notice-ok{margin:8px 10px;border:1px solid #1e4a34;background:#06120c;color:#8fe0bb;border-radius:8px;padding:9px;font-size:11.5px}
-.loading{min-height:100vh;display:grid;place-items:center;color:var(--ceo-gold)}
-@media(max-width:900px){.trade-shell{padding-bottom:88px}.chart-wrap{height:380px}}
-
-/* ===== Sticky bottom Buy / Quantity / Sell bar ===== */
-.sticky-trade-bar{
-  position:fixed;left:0;right:0;bottom:0;z-index:50;
-  display:flex;align-items:center;gap:8px;
-  padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));
-  background:rgba(8,8,8,0.97);
-  border-top:1px solid var(--ceo-border-strong);
-  backdrop-filter:blur(12px);
-}
-.stb-buy,.stb-sell{
-  flex:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  border:0;border-radius:999px;padding:8px 6px;min-height:48px;cursor:pointer;
-  font-weight:800;font-size:12px;line-height:1.15;
-}
-.stb-buy{background:var(--ceo-up);color:#04140d}
-.stb-sell{background:var(--ceo-down);color:#1a0506}
-.stb-buy:active,.stb-sell:active{opacity:.88}
-.stb-price{font-size:13.5px;font-variant-numeric:tabular-nums;font-weight:800;margin-top:1px}
-.stb-qty{
-  flex:0.7;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:var(--ceo-surface-2);border:1px solid var(--ceo-border-strong);
-  border-radius:12px;padding:6px 4px;min-height:48px;color:var(--ceo-text-dim);font-size:10px;
-}
-.stb-qty b{color:#eee;font-size:12px;font-weight:700;margin-top:1px}
-@media(min-width:901px){
-  .sticky-trade-bar{position:sticky;max-width:1440px;margin:0 auto}
-}
-`;
-
-function fmt(v: number | null | undefined, d = 2) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString(undefined, { maximumFractionDigits: d });
-}
-function fmtPrice(v: number | null | undefined) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const a = Math.abs(v);
-  return v.toLocaleString(undefined, { maximumFractionDigits: a >= 1000 ? 2 : a >= 1 ? 4 : 8 });
-}
-// Fixed-decimal formatters for the order book specifically. Bybit's book
-// never reflows column widths as ticks stream in — every row holds the same
-// number of decimal places. toLocaleString's default maximumFractionDigits
-// (used elsewhere) drops trailing zeros, which is exactly what made the
-// book "jump" as prices/quantities updated. These lock both min and max.
-function fmtFixed(v: number | null | undefined, d: number) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
-}
 function decimalsForTick(tick: number) {
   if (!Number.isFinite(tick) || tick <= 0) return 2;
   const s = tick.toString();
   const dot = s.indexOf(".");
   return dot === -1 ? 0 : s.length - dot - 1;
 }
-function fmtTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+function baseTickFor(price: number | null | undefined) {
+  if (price == null || !Number.isFinite(price) || price <= 0) return 0.1;
+  if (price >= 1000) return 0.1;
+  if (price >= 100) return 0.01;
+  if (price >= 1) return 0.001;
+  if (price >= 0.01) return 0.0001;
+  return 0.000001;
 }
-function routeSymbol() {
-  const m = window.location.pathname.match(/^\/trade\/(.+)$/i);
-  return m ? decodeURIComponent(m[1]).toUpperCase() : "";
-}
-function applyKey(current: string, key: (typeof KEYS)[number]): string {
-  if (key === "back") return current.slice(0, -1);
-  if (key === ".") return current.includes(".") ? current : current === "" ? "0." : current + ".";
-  if (current === "0") return key;
-  return current + key;
-}
-// Real aggregation of real book levels — rounds to a tick size and sums
-// quantities that land in the same bucket. No synthetic levels are added.
-function groupLevels(rows: { price: number; amt: number }[], tick: number, dir: "bid" | "ask") {
+
+/** Real aggregation of real book levels — rounds to tick and sums quantities. */
+function groupLevels(
+  rows: { price: number; amt: number }[],
+  tick: number,
+  dir: "bid" | "ask"
+) {
   const map = new Map<number, number>();
   for (const r of rows) {
     if (r.amt <= 0) continue;
@@ -418,193 +131,202 @@ function groupLevels(rows: { price: number; amt: number }[], tick: number, dir: 
   arr.sort((a, b) => (dir === "ask" ? a.price - b.price : b.price - a.price));
   return arr;
 }
-function baseTickFor(price: number | null | undefined) {
-  if (price == null || !Number.isFinite(price) || price <= 0) return 0.01;
-  if (price >= 10000) return 0.1;
-  if (price >= 100) return 0.01;
-  if (price >= 1) return 0.001;
-  return 0.0001;
+
+
+const TF = [
+  { label: "15m", value: "15m" },
+  { label: "1H", value: "1h" },
+  { label: "4H", value: "4h" },
+  { label: "1D", value: "1d" },
+] as const;
+
+const CANCELLABLE = new Set(["open", "partially_filled"]);
+
+function fmt(v: number | null | undefined, d = 2) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString(undefined, { maximumFractionDigits: d });
 }
 
-// Real depth chart — a cumulative-volume area chart built directly from the
-// live, grouped order book (same data as the merged book view). No synthetic
-// levels, no smoothing beyond the price grouping already applied upstream.
-function DepthChart({
-  bids,
-  asks,
-  lastPrice,
-}: {
-  bids: { price: number; amt: number }[];
-  asks: { price: number; amt: number }[];
-  lastPrice: number | null;
-}) {
-  const W = 700;
-  const H = 300;
-  if (!bids.length && !asks.length) {
-    return <div className="empty" style={{ height: "100%" }}>No order book depth to chart yet.</div>;
+function fmtPrice(v: number | null | undefined, decimals?: number) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (decimals != null) {
+    return v.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
   }
-  const bidsSorted = [...bids].sort((a, b) => b.price - a.price);
-  const asksSorted = [...asks].sort((a, b) => a.price - b.price);
-  let cum = 0;
-  const bidCum = bidsSorted.map((b) => {
-    cum += b.amt;
-    return { price: b.price, cum };
+  const a = Math.abs(v);
+  const d = a >= 1000 ? 1 : a >= 100 ? 2 : a >= 1 ? 4 : a >= 0.01 ? 6 : 8;
+  return v.toLocaleString(undefined, {
+    minimumFractionDigits: Math.min(d, 2),
+    maximumFractionDigits: d,
   });
-  cum = 0;
-  const askCum = asksSorted.map((a) => {
-    cum += a.amt;
-    return { price: a.price, cum };
-  });
-  const lastOf = <T,>(arr: T[]): T | undefined => (arr.length ? arr[arr.length - 1] : undefined);
-  const maxCum = Math.max(lastOf(bidCum)?.cum ?? 0, lastOf(askCum)?.cum ?? 0, 0.0001);
-  const minP = Math.min(lastOf(bidsSorted)?.price ?? lastPrice ?? 0, asksSorted[0]?.price ?? lastPrice ?? 0);
-  const maxP = Math.max(bidsSorted[0]?.price ?? lastPrice ?? 1, lastOf(asksSorted)?.price ?? lastPrice ?? 1);
-  const spanP = Math.max(maxP - minP, 1e-9);
-  const xFor = (price: number) => ((price - minP) / spanP) * W;
-  const yFor = (c: number) => H - (c / maxCum) * (H - 20) - 4;
-
-  const bidPath =
-    bidCum.length > 0
-      ? `M ${xFor(bidCum[0].price)} ${H} ` +
-        bidCum.map((p) => `L ${xFor(p.price)} ${yFor(p.cum)}`).join(" ") +
-        ` L ${xFor(lastOf(bidCum)!.price)} ${H} Z`
-      : "";
-  const askPath =
-    askCum.length > 0
-      ? `M ${xFor(askCum[0].price)} ${H} ` +
-        askCum.map((p) => `L ${xFor(p.price)} ${yFor(p.cum)}`).join(" ") +
-        ` L ${xFor(lastOf(askCum)!.price)} ${H} Z`
-      : "";
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "100%", display: "block" }}>
-      {bidPath && <path d={bidPath} fill="rgba(22,199,132,0.22)" stroke="#16c784" strokeWidth={1.5} />}
-      {askPath && <path d={askPath} fill="rgba(234,57,67,0.22)" stroke="#ea3943" strokeWidth={1.5} />}
-      {lastPrice != null && spanP > 0 && (
-        <line x1={xFor(lastPrice)} x2={xFor(lastPrice)} y1={0} y2={H} stroke="#f0c766" strokeDasharray="3,3" strokeWidth={1} />
-      )}
-    </svg>
-  );
 }
 
-export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: Props) {
-  const [symbol, setSymbol] = useState((propSymbol || routeSymbol()).toUpperCase());
+function fmtQty(v: number | null | undefined, decimals = 4) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function fmtTime(iso: string) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function fixedDec(v: number, d: number) {
+  return v.toLocaleString(undefined, {
+    minimumFractionDigits: d,
+    maximumFractionDigits: d,
+  });
+}
+
+export default function TradingPage({
+  symbol: initialSymbol,
+  onBack,
+  onAddFunds,
+}: Props) {
+  const [symbol, setSymbol] = useState((initialSymbol || routeSymbol() || "BTC/USDT").toUpperCase());
   const [pair, setPair] = useState<Pair | null>(null);
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [tf, setTf] = useState<(typeof TF)[number]["value"]>("15m");
-  const [marketTab, setMarketTab] = useState<"chart" | "book" | "trades">("chart");
-  const [bookView, setBookView] = useState<"merged" | "classic">("merged");
-  const [precisionIdx, setPrecisionIdx] = useState(0);
-  // Standard = single scrolling column (chart/book/trades, form below).
-  // Terminal = the reference video's side-by-side combo view: order form on
-  // the left, live order book on the right, reached via the second header
-  // icon next to the pair name.
-  const [layoutMode, setLayoutMode] = useState<"standard" | "terminal">("standard");
-  const [chartView, setChartView] = useState<"candles" | "depth">("candles");
-  const [showCrosshair, setShowCrosshair] = useState(true);
-  const [showMA, setShowMA] = useState(true);
-  const [accountTab, setAccountTab] = useState<"spot" | "futures" | "funding">("spot");
-  const [bottomTab, setBottomTab] = useState<"orders" | "positions" | "assets">("orders");
-  const [allMarketsOrders, setAllMarketsOrders] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const [viewMode, setViewMode] = useState<ViewMode>("standard");
+  const [contentTab, setContentTab] = useState<ContentTab>("chart");
+  const [marketTab, setMarketTab] = useState<MarketTab>("chart");
+  const [bottomTab, setBottomTab] = useState<BottomTab>("orders");
+  const [orderTab, setOrderTab] = useState<"open" | "history">("open");
+
+  const [tf, setTf] = useState<string>("15m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderType, setOrderType] = useState<"limit" | "market">("limit");
-  const [showTypeMenu, setShowTypeMenu] = useState(false);
   const [p, setP] = useState("");
   const [amount, setAmount] = useState("");
-  const [orderValueStr, setOrderValueStr] = useState("");
-  const [activeField, setActiveField] = useState<"price" | "amount" | "orderValue" | "transfer" | null>(null);
-  const [busy, setBusy] = useState(true);
+  const [orderValue, setOrderValue] = useState("");
+  const [activePct, setActivePct] = useState<number | null>(null);
+  const [priceTouched, setPriceTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [noticeOk, setNoticeOk] = useState(false);
-  const [orderTab, setOrderTab] = useState<"open" | "history">("open");
-  const [activePct, setActivePct] = useState<number | null>(null);
   const [showMarkets, setShowMarkets] = useState(false);
-  const [hotMarkets, setHotMarkets] = useState<HotMarket[]>([]);
   const [marketsFilter, setMarketsFilter] = useState("");
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [favorite, setFavorite] = useState(false);
+  const [keypadField, setKeypadField] = useState<KeypadField>(null);
+  const [bookPrecision, setBookPrecision] = useState(1);
+  const [accountTab, setAccountTab] = useState<AccountTab>("spot");
+  const [allMarketsOrders, setAllMarketsOrders] = useState(false);
+  const [hotMarkets, setHotMarkets] = useState<HotMarket[]>([]);
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferAsset, setTransferAsset] = useState("");
   const [transferDirection, setTransferDirection] = useState<"from_spot" | "to_spot">("from_spot");
   const [transferAmount, setTransferAmount] = useState("");
   const [transferring, setTransferring] = useState(false);
-  const keypadTouchRef = useRef(false);
+  const [precisionIdx, setPrecisionIdx] = useState(0);
 
-  // LIVE MARKET DATA — Bybit public REST snapshot + public WebSocket only.
-  // Ticker/candles/order book/recent-trade tape for the Trading UI come
-  // exclusively from this hook; Supabase's market_tickers/market_candles
-  // tables are no longer read here. Order execution below is untouched
-  // and continues to route through Kraken.
+
   const {
     ticker,
     candles,
     book,
-    trades: recentTrades,
+    trades,
     status: bybitStatus,
-  } = useBybitMarketData(pair?.base_asset ?? null, pair?.quote_asset ?? null, tf) as {
+  } = useBybitMarketData(
+    pair?.base_asset ?? null,
+    pair?.quote_asset ?? null,
+    tf
+  ) as {
     ticker: Ticker | null;
     candles: Candle[];
     book: BookRow[];
     trades: RecentTrade[];
-    status: "connecting" | "connected" | "disconnected" | "unsupported";
+    status: string;
   };
 
-  // Load pair + all active pairs
-  const loadPair = useCallback(async () => {
-    if (!symbol) return;
-    setBusy(true);
-    const [{ data, error }, { data: all, error: e2 }] = await Promise.all([
-      supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active").eq("symbol", symbol).maybeSingle(),
-      supabase.from("trading_pairs").select("id,symbol,base_asset,quote_asset,is_active").eq("is_active", true).order("symbol").limit(500),
+  const loadPair = useCallback(async (sym: string) => {
+    setLoading(true);
+    setNotice(null);
+    const [{ data: one }, { data: all }] = await Promise.all([
+      supabase
+        .from("trading_pairs")
+        .select("id,symbol,base_asset,quote_asset,is_active")
+        .eq("symbol", sym)
+        .maybeSingle(),
+      supabase
+        .from("trading_pairs")
+        .select("id,symbol,base_asset,quote_asset,is_active")
+        .eq("is_active", true)
+        .order("symbol")
+        .limit(500),
     ]);
-    if (error || e2) {
-      setNotice(error?.message || e2?.message || "Unable to load pairs.");
-      setNoticeOk(false);
-      setBusy(false);
-      return;
+    setPairs((all as Pair[]) || []);
+    if (one) {
+      setPair(one as Pair);
+      setSymbol((one as Pair).symbol);
+    } else {
+      const compact = sym.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+      const found = ((all as Pair[]) || []).find(
+        (x) =>
+          x.symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() === compact ||
+          `${x.base_asset}${x.quote_asset}`.toUpperCase() === compact
+      );
+      setPair(found || null);
+      if (found) setSymbol(found.symbol);
     }
-    if (!data || !data.is_active) {
-      setNotice("This trading pair is unavailable.");
-      setNoticeOk(false);
-      setPair(null);
-      setBusy(false);
-      return;
-    }
-    setPair(data as Pair);
-    setPairs((all || []) as Pair[]);
-    setP("");
-    setAmount("");
-    setOrderValueStr("");
-    setActivePct(null);
-    setBusy(false);
-  }, [symbol]);
+    setLoading(false);
+  }, []);
 
-  // Orders are fetched WITHOUT a trading_pair filter so the "All Markets"
-  // toggle in the bottom panel can show every pair's orders from real data;
-  // the pair-scoped view simply filters this same result client-side.
   const loadUser = useCallback(async () => {
-    if (!pair) return;
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setWallets([]);
+      setOrders([]);
+      return;
+    }
     const [{ data: w }, { data: o }] = await Promise.all([
-      supabase.from("wallets").select("asset,balance,locked_balance,escrow_balance,wallet_type,account_type,status").eq("user_id", user.id),
+      supabase
+        .from("wallets")
+        .select(
+          "asset,balance,locked_balance,escrow_balance,wallet_type,account_type,status"
+        )
+        .eq("user_id", user.id),
       supabase
         .from("orders")
-        .select("id,user_id,trading_pair,side,order_type,price,amount,filled_amount,status,created_at")
+        .select(
+          "id,user_id,trading_pair,side,order_type,price,amount,filled_amount,status,created_at"
+        )
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(200),
+        .limit(100),
     ]);
-    setWallets((w || []) as Wallet[]);
-    setOrders((o || []) as Order[]);
-  }, [pair]);
+    setWallets((w as Wallet[]) || []);
+    setOrders((o as Order[]) || []);
+  }, []);
 
-  // Hot markets: CoinGecko market-cap rank cross-matched to our active pairs
+  useEffect(() => {
+    void loadPair(symbol);
+  }, [symbol, loadPair]);
+
+  useEffect(() => {
+    setPrecisionIdx(0);
+  }, [pair?.symbol]);
+
+
   const loadHot = useCallback(async () => {
     try {
       const res = await fetch(
@@ -612,27 +334,32 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       );
       if (!res.ok) return;
       const cg = (await res.json()) as Array<{
-        id: string;
         symbol: string;
-        name: string;
-        image: string;
         market_cap_rank: number;
-        current_price: number;
-        price_change_percentage_24h: number;
+        image: string;
       }>;
-      // Cross-match against our active pairs (prefer USDT pairs)
-      const our = pairs.length
-        ? pairs
-        : ((
-            await supabase.from("trading_pairs").select("symbol,base_asset,quote_asset,is_active").eq("is_active", true).limit(300)
-          ).data as Pair[]) || [];
+      const our =
+        pairs.length > 0
+          ? pairs
+          : ((
+              await supabase
+                .from("trading_pairs")
+                .select("id,symbol,base_asset,quote_asset,is_active")
+                .eq("is_active", true)
+                .limit(300)
+            ).data as Pair[]) || [];
       const matched: HotMarket[] = [];
       for (const coin of cg) {
-        const sym = coin.symbol.toUpperCase();
+        const sym = (coin.symbol || "").toUpperCase();
         const candidates = our.filter(
-          (p) => p.base_asset.toUpperCase() === sym && (p.quote_asset === "USDT" || p.quote_asset === "USD" || p.quote_asset === "USDC")
+          (p) =>
+            p.base_asset.toUpperCase() === sym &&
+            (p.quote_asset === "USDT" ||
+              p.quote_asset === "USD" ||
+              p.quote_asset === "USDC")
         );
-        const pick = candidates.find((c) => c.quote_asset === "USDT") || candidates[0];
+        const pick =
+          candidates.find((c) => c.quote_asset === "USDT") || candidates[0];
         if (!pick) continue;
         matched.push({
           symbol: pick.symbol,
@@ -645,7 +372,6 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
         });
         if (matched.length >= 40) break;
       }
-      // Overlay live prices from our tickers
       if (matched.length) {
         const { data: ticks } = await supabase
           .from("market_tickers")
@@ -654,7 +380,12 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
             "symbol",
             matched.map((m) => m.symbol)
           );
-        const map = new Map((ticks || []).map((t: any) => [t.symbol, t]));
+        const map = new Map(
+          (ticks || []).map((t: { symbol: string; last_price: number; change_24h: number }) => [
+            t.symbol,
+            t,
+          ])
+        );
         for (const m of matched) {
           const t = map.get(m.symbol);
           if (t) {
@@ -670,156 +401,212 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   }, [pairs]);
 
   useEffect(() => {
-    void loadPair();
-  }, [loadPair]);
-  useEffect(() => {
     void loadUser();
   }, [loadUser]);
+
   useEffect(() => {
     if (pairs.length) void loadHot();
   }, [pairs, loadHot]);
-  // Pre-fill the price field with the live Bybit last price once, without
-  // overwriting anything the user has already typed.
-  useEffect(() => {
-    if (!p && ticker?.last_price != null) setP(String(ticker.last_price));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticker?.last_price]);
-  // Reset precision grouping whenever the pair changes, since tick size is
-  // derived from that pair's price magnitude.
-  useEffect(() => {
-    setPrecisionIdx(0);
-  }, [pair?.symbol]);
 
-  // Realtime: internal account data only (orders + wallets). Market data
-  // (ticker/candles/book/tape) now comes live from Bybit's public
-  // WebSocket via useBybitMarketData — Supabase Realtime is no longer
-  // part of the live market-data path.
   useEffect(() => {
-    if (!pair) return;
+    if (ticker?.last_price != null && !priceTouched && !p) {
+      setP(String(ticker.last_price));
+    }
+  }, [ticker?.last_price, priceTouched, p]);
+
+  useEffect(() => {
     const ch = supabase
-      .channel(`trade-account-${pair.symbol}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
-        void loadUser();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, () => void loadUser())
+      .channel("trade-page-account")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        () => void loadUser()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "wallets" },
+        () => void loadUser()
+      )
       .subscribe();
     return () => {
       void supabase.removeChannel(ch);
     };
-  }, [pair, loadUser]);
+  }, [loadUser]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!pair) {
+        setFavorite(false);
+        return;
+      }
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      const { data } = await supabase
+        .from("market_favorites")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("trading_pair_id", pair.id)
+        .maybeSingle();
+      if (!cancelled) setFavorite(!!data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pair]);
+
+  const toggleFavorite = async () => {
+    if (!pair) return;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setNotice("Sign in to manage favorites.");
+      setNoticeOk(false);
+      return;
+    }
+    if (favorite) {
+      await supabase
+        .from("market_favorites")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("trading_pair_id", pair.id);
+      setFavorite(false);
+    } else {
+      await supabase.from("market_favorites").insert({
+        user_id: user.id,
+        trading_pair_id: pair.id,
+      });
+      setFavorite(true);
+    }
+  };
 
   const wallet = useMemo(() => {
     if (!pair) return null;
     const asset = side === "buy" ? pair.quote_asset : pair.base_asset;
-    const rows = wallets.filter((x) => x.asset.toUpperCase() === asset.toUpperCase());
-    // Prefer spot account_type when present
+    const rows = wallets.filter(
+      (x) => x.asset.toUpperCase() === asset.toUpperCase()
+    );
     const row =
-      rows.find((x) => (x.account_type || x.wallet_type || "").toLowerCase() === "spot") ||
+      rows.find(
+        (x) =>
+          (x.account_type || x.wallet_type || "").toLowerCase() === "spot"
+      ) ||
       rows.find((x) => (x.wallet_type || "").toLowerCase() === "spot") ||
       rows[0];
-    return {
-      asset,
-      available: row ? Math.max(0, Number(row.balance || 0) - Number(row.locked_balance || 0) - Number(row.escrow_balance || 0)) : 0,
-      exists: !!row,
-    };
+    if (!row) return { asset, available: 0, exists: false };
+    const available = Math.max(
+      0,
+      Number(row.balance) -
+        Number(row.locked_balance || 0) -
+        Number(row.escrow_balance || 0)
+    );
+    return { asset, available, exists: true };
   }, [wallets, pair, side]);
 
-  const fundingWallets = useMemo(() => {
-    return wallets.filter((w) => (w.account_type || w.wallet_type || "").toLowerCase() === "funding");
-  }, [wallets]);
+  const fundingWallets = useMemo(
+    () =>
+      wallets.filter(
+        (w) => (w.account_type || w.wallet_type || "").toLowerCase() === "funding"
+      ),
+    [wallets]
+  );
+  const futuresWallets = useMemo(
+    () =>
+      wallets.filter(
+        (w) => (w.account_type || w.wallet_type || "").toLowerCase() === "futures"
+      ),
+    [wallets]
+  );
+  const spotWallets = useMemo(
+    () =>
+      wallets.filter(
+        (w) =>
+          (w.account_type || w.wallet_type || "").toLowerCase() === "spot" ||
+          !w.account_type
+      ),
+    [wallets]
+  );
 
-  const futuresWallets = useMemo(() => {
-    return wallets.filter((w) => (w.account_type || w.wallet_type || "").toLowerCase() === "futures");
-  }, [wallets]);
 
-  const spotWallets = useMemo(() => {
-    return wallets.filter((w) => (w.account_type || w.wallet_type || "").toLowerCase() === "spot" || !w.account_type);
-  }, [wallets]);
+  const np = Number(p);
+  const na = Number(amount);
+  const total =
+    Number.isFinite(np) && Number.isFinite(na) && np > 0 && na > 0
+      ? np * na
+      : 0;
 
-  const np = Number(p),
-    na = Number(amount),
-    total = Number.isFinite(np) && Number.isFinite(na) ? np * na : 0;
+  const last = ticker?.last_price ?? null;
+  const liveAsk = ticker?.ask_price ?? last;
+  const liveBid = ticker?.bid_price ?? last;
+  const change = ticker?.change_24h ?? null;
+  const changeUp = change == null ? true : change >= 0;
 
-  const handleAmountChange = (v: string) => {
-    setAmount(v);
-    setActivePct(null);
-    const n = Number(v);
-    setOrderValueStr(Number.isFinite(n) && n > 0 && np > 0 ? String(Number((n * np).toFixed(8))) : "");
-  };
-  // Order Value is a real derived field (value = qty * price), editable in
-  // either direction — not a separate fake data source.
-  const handleOrderValueChange = (v: string) => {
-    setOrderValueStr(v);
-    setActivePct(null);
-    const n = Number(v);
-    setAmount(Number.isFinite(n) && n > 0 && np > 0 ? String(Number((n / np).toFixed(8))) : "");
-  };
   const setPercent = (pct: number) => {
-    if (!wallet || !np) return;
+    if (!wallet || !Number.isFinite(np) || np <= 0) return;
     setActivePct(pct);
-    const nextAmount = pct === 0 ? 0 : (side === "buy" ? wallet.available / np : wallet.available) * pct;
-    setAmount(pct === 0 ? "" : String(nextAmount));
-    setOrderValueStr(pct === 0 ? "" : String(Number((nextAmount * np).toFixed(8))));
-  };
-
-  // Fullscreen toggle — browser Fullscreen API; no-op when unsupported.
-  useEffect(() => {
-    const onFsChange = () => {
-      const el = document.fullscreenElement || (document as any).webkitFullscreenElement;
-      setIsFullscreen(!!el);
-    };
-    document.addEventListener("fullscreenchange", onFsChange);
-    document.addEventListener("webkitfullscreenchange", onFsChange as EventListener);
-    return () => {
-      document.removeEventListener("fullscreenchange", onFsChange);
-      document.removeEventListener("webkitfullscreenchange", onFsChange as EventListener);
-    };
-  }, []);
-
-  const toggleFullscreen = async () => {
-    try {
-      const doc: any = document;
-      const root = document.documentElement as any;
-      if (doc.fullscreenElement || doc.webkitFullscreenElement) {
-        if (doc.exitFullscreen) await doc.exitFullscreen();
-        else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
-      } else if (root.requestFullscreen) {
-        await root.requestFullscreen();
-      } else if (root.webkitRequestFullscreen) {
-        await root.webkitRequestFullscreen();
-      }
-    } catch {
-      // Fullscreen may be blocked on some mobile browsers — ignore.
+    if (side === "buy") {
+      const spend = (wallet.available * pct) / 100;
+      const q = spend / np;
+      setAmount(q > 0 ? String(Number(q.toFixed(8))) : "");
+      setOrderValue(spend > 0 ? String(Number(spend.toFixed(4))) : "");
+    } else {
+      const q = (wallet.available * pct) / 100;
+      setAmount(q > 0 ? String(Number(q.toFixed(8))) : "");
+      setOrderValue(q * np > 0 ? String(Number((q * np).toFixed(4))) : "");
     }
   };
 
-  const pickPrice = (price: number, forSide: "buy" | "sell") => {
-    setSide(forSide);
-    setP(String(price));
-    setActivePct(null);
-    if (na > 0) setOrderValueStr(String(Number((na * price).toFixed(8))));
+  const onPriceChange = (val: string) => {
+    setPriceTouched(true);
+    setP(val);
+    const price = Number(val);
+    const qty = Number(amount);
+    if (Number.isFinite(price) && price > 0 && Number.isFinite(qty) && qty > 0) {
+      setOrderValue(String(Number((price * qty).toFixed(4))));
+    }
   };
 
-  // ===== Order execution — UNCHANGED. Still routes through Kraken. =====
-  const submit = async () => {
-    setNotice("");
+  const onQtyChange = (val: string) => {
+    setAmount(val);
+    setActivePct(null);
+    const qty = Number(val);
+    const price = Number(p);
+    if (Number.isFinite(price) && price > 0 && Number.isFinite(qty) && qty > 0) {
+      setOrderValue(String(Number((price * qty).toFixed(4))));
+    }
+  };
+
+  const onValueChange = (val: string) => {
+    setOrderValue(val);
+    setActivePct(null);
+    const value = Number(val);
+    const price = Number(p);
+    if (Number.isFinite(price) && price > 0 && Number.isFinite(value) && value > 0) {
+      setAmount(String(Number((value / price).toFixed(8))));
+    }
+  };
+
+  const placeOrder = async () => {
     if (!pair) return;
     if (orderType === "market") {
-      setNotice("Market orders aren't supported by the current order router yet. Use Limit.");
+      setNotice("Market orders are not available yet. Use Limit.");
       setNoticeOk(false);
       return;
     }
-    if (!wallet || !wallet.exists || wallet.available <= 0) {
-      setNotice("Insufficient balance.");
+    if (!Number.isFinite(np) || np <= 0) {
+      setNotice("Enter a valid price.");
       setNoticeOk(false);
       return;
     }
-    if (!Number.isFinite(np) || np <= 0 || !Number.isFinite(na) || na <= 0) {
-      setNotice("Enter a valid price and amount.");
+    if (!Number.isFinite(na) || na <= 0) {
+      setNotice("Enter a valid quantity.");
       setNoticeOk(false);
       return;
     }
-    if (total > wallet.available) {
+    if (!wallet || !wallet.exists || wallet.available <= 0 || total > wallet.available) {
       setNotice("Insufficient balance.");
       setNoticeOk(false);
       return;
@@ -828,22 +615,33 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      setNotice("Please sign in to trade.");
+      setNotice("Sign in to place orders.");
       setNoticeOk(false);
       return;
     }
     setSubmitting(true);
     const { data, error } = await supabase.functions.invoke("kraken-spot", {
-      body: { action: "place_order", trading_pair: pair.symbol, side, price: np, amount: na },
+      body: {
+        action: "place_order",
+        trading_pair: pair.symbol,
+        side,
+        order_type: orderType,
+        price: orderType === "limit" ? np : undefined,
+        amount: na,
+      },
     });
     setSubmitting(false);
     if (error) {
-      setNotice(error.message || "Unable to reach the Kraken order routing service.");
+      setNotice(error.message || "Order failed.");
       setNoticeOk(false);
       return;
     }
     if (data?.error) {
-      setNotice(/balance|insufficient|fund/i.test(data.error) ? "Insufficient balance." : data.error);
+      setNotice(
+        /balance|insufficient|fund/i.test(String(data.error))
+          ? "Insufficient balance."
+          : String(data.error)
+      );
       setNoticeOk(false);
       return;
     }
@@ -852,16 +650,18 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       setNoticeOk(false);
       return;
     }
-    if (!data?.order_id) {
+    if (!data?.order_id && !data?.kraken_order_id) {
       setNotice("The server did not return an order id.");
       setNoticeOk(false);
       return;
     }
-    setAmount("");
-    setOrderValueStr("");
-    setActivePct(null);
-    setNotice(`Order routed to Kraken (ref ${data.kraken_order_id}). It settles automatically once Kraken reports a real fill.`);
+    setNotice(
+      `Order routed to Kraken${data?.kraken_order_id ? ` (ref ${data.kraken_order_id})` : ""}.`
+    );
     setNoticeOk(true);
+    setAmount("");
+    setOrderValue("");
+    setActivePct(null);
     void loadUser();
   };
 
@@ -881,7 +681,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       return;
     }
     if (data?.error) {
-      setNotice(data.error);
+      setNotice(String(data.error));
       setNoticeOk(false);
       return;
     }
@@ -890,23 +690,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       setNoticeOk(false);
       return;
     }
-    setNotice("Cancellation confirmed with Kraken — any unfilled amount was released back to your wallet.");
+    setNotice("Cancellation confirmed with Kraken.");
     setNoticeOk(true);
     void loadUser();
   };
-  // ===== End order execution (unchanged) =====
 
-  const switchPair = (s: string) => {
-    setSymbol(s);
-    setShowMarkets(false);
-    window.history.pushState({}, "", `/trade/${encodeURIComponent(s.toUpperCase())}`);
-  };
 
-  // Real internal transfer via the existing transfer_between_accounts() RPC —
-  // only Spot<->Funding here since this panel is the Funding tab; the RPC itself
-  // enforces spot-must-be-one-side, real balance checks, and real ledger writes.
   const submitTransfer = async () => {
-    setNotice("");
     const amt = Number(transferAmount);
     if (!transferAsset) {
       setNotice("Choose an asset to transfer.");
@@ -934,868 +724,291 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       setNoticeOk(false);
       return;
     }
-    setNotice(`Transferred ${fmt(amt, 8)} ${transferAsset.toUpperCase()} from ${fromAccount} to ${toAccount}.`);
+    setNotice(
+      `Transferred ${fmt(amt, 8)} ${transferAsset.toUpperCase()} from ${fromAccount} to ${toAccount}.`
+    );
     setNoticeOk(true);
     setTransferAmount("");
     setShowTransfer(false);
     void loadUser();
   };
 
-  // Raw book split
+  // Precision grouping — real aggregation of the live book
+  const baseTick = baseTickFor(ticker?.last_price ?? null);
+  const precisionOptions = [baseTick, baseTick * 10, baseTick * 100];
+  const tick = precisionOptions[precisionIdx] ?? baseTick;
+  const bookPriceDecimals = decimalsForTick(tick);
+  const bookQtyDecimals = 4;
+  const bookLevelCap = viewMode === "terminal" ? 12 : 28;
+
   const rawAsks = book.filter((x) => x.side === "sell");
   const rawBids = book.filter((x) => x.side === "buy");
-  const bidVol = rawBids.reduce((s, r) => s + Math.max(0, r.amount - r.filled_amount), 0);
-  const askVol = rawAsks.reduce((s, r) => s + Math.max(0, r.amount - r.filled_amount), 0);
+
+  const groupedAsks = useMemo(
+    () =>
+      groupLevels(
+        rawAsks.map((a) => ({
+          price: a.price,
+          amt: a.amount - a.filled_amount,
+        })),
+        tick,
+        "ask"
+      ).slice(0, bookLevelCap),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [book, tick, bookLevelCap]
+  );
+  const groupedBids = useMemo(
+    () =>
+      groupLevels(
+        rawBids.map((b) => ({
+          price: b.price,
+          amt: b.amount - b.filled_amount,
+        })),
+        tick,
+        "bid"
+      ).slice(0, bookLevelCap),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [book, tick, bookLevelCap]
+  );
+
+  const asks = groupedAsks.map((a) => ({
+    side: "sell" as const,
+    price: a.price,
+    amount: a.amt,
+    filled_amount: 0,
+  }));
+  const bids = groupedBids.map((b) => ({
+    side: "buy" as const,
+    price: b.price,
+    amount: b.amt,
+    filled_amount: 0,
+  }));
+
+  const maxAmt = Math.max(
+    ...asks.map((a) => a.amount),
+    ...bids.map((b) => b.amount),
+    0.0001
+  );
+  const bidVol = bids.reduce((s, r) => s + r.amount, 0);
+  const askVol = asks.reduce((s, r) => s + r.amount, 0);
   const totalVol = bidVol + askVol || 1;
   const bidPct = Math.round((bidVol / totalVol) * 100);
   const askPct = 100 - bidPct;
 
-  // Precision grouping — real aggregation of the live book, not fake levels.
-  const baseTick = baseTickFor(ticker?.last_price ?? null);
-  const precisionOptions = [baseTick, baseTick * 10, baseTick * 100];
-  const tick = precisionOptions[precisionIdx] ?? baseTick;
-  // Fixed decimal counts for the book so rows never reflow as ticks stream
-  // in — same idea as real Bybit: every row in a given precision holds the
-  // same number of decimals on both price and quantity.
-  const bookPriceDecimals = decimalsForTick(tick);
-  const bookQtyDecimals = 4;
-  const bookLevelCap = layoutMode === "terminal" ? 12 : 28;
-  const groupedAsks = groupLevels(
-    rawAsks.map((a) => ({ price: a.price, amt: a.amount - a.filled_amount })),
-    tick,
-    "ask"
-  ).slice(0, bookLevelCap);
-  const groupedBids = groupLevels(
-    rawBids.map((b) => ({ price: b.price, amt: b.amount - b.filled_amount })),
-    tick,
-    "bid"
-  ).slice(0, bookLevelCap);
-  const mergedRowCount = Math.max(groupedAsks.length, groupedBids.length);
-  const maxLevelAmt = Math.max(...groupedAsks.map((a) => a.amt), ...groupedBids.map((b) => b.amt), 0.0001);
-
-  // Classic stacked view (kept as an alternate real display of the same data)
-  const classicAsks = [...groupedAsks];
-  const classicBids = [...groupedBids];
-
-  const open = orders.filter((x) => CANCELLABLE.has(x.status.toLowerCase()));
-  const history = orders.filter((x) => !CANCELLABLE.has(x.status.toLowerCase()));
-  const pairScoped = (list: Order[]) => (allMarketsOrders || !pair ? list : list.filter((o) => o.trading_pair === pair.symbol));
-  const displayOrders = pairScoped(orderTab === "open" ? open : history);
-  const scopedOpenCount = pairScoped(open).length;
-
-  const filteredMarkets = useMemo(() => {
-    const q = marketsFilter.trim().toUpperCase();
-    const list = pairs.filter((p) => !q || p.symbol.includes(q) || p.base_asset.includes(q));
-    // Prefer hot order when no filter
-    if (!q && hotMarkets.length) {
-      const hotSet = new Set(hotMarkets.map((h) => h.symbol));
-      const hotFirst = hotMarkets.map((h) => pairs.find((p) => p.symbol === h.symbol)).filter(Boolean) as Pair[];
-      const rest = list.filter((p) => !hotSet.has(p.symbol));
-      return [...hotFirst, ...rest];
+  const pairedRows = useMemo(() => {
+    const n = Math.max(asks.length, bids.length, 1);
+    const rows: {
+      bidQty: number | null;
+      bidPrice: number | null;
+      askPrice: number | null;
+      askQty: number | null;
+    }[] = [];
+    for (let i = 0; i < n && i < bookLevelCap; i++) {
+      rows.push({
+        bidQty: bids[i]?.amount ?? null,
+        bidPrice: bids[i]?.price ?? null,
+        askPrice: asks[i]?.price ?? null,
+        askQty: asks[i]?.amount ?? null,
+      });
     }
-    return list;
-  }, [pairs, marketsFilter, hotMarkets]);
+    return rows;
+  }, [asks, bids, bookLevelCap]);
 
-  const bybitStatusLabel =
-    bybitStatus === "unsupported" ? "Pair unavailable" : bybitStatus === "connecting" ? "Connecting…" : "Reconnecting…";
-  const bybitStatusClass = bybitStatus === "unsupported" ? "bad" : "warn";
+  const openOrders = orders.filter((x) =>
+    CANCELLABLE.has(x.status.toLowerCase())
+  );
+  const historyOrders = orders.filter(
+    (x) => !CANCELLABLE.has(x.status.toLowerCase())
+  );
+  const pairScoped = (list: Order[]) =>
+    allMarketsOrders || !pair
+      ? list
+      : list.filter((o) => o.trading_pair === pair.symbol);
+  const displayOrders = pairScoped(
+    orderTab === "open" ? openOrders : historyOrders
+  );
+  const scopedOpenCount = pairScoped(openOrders).length;
 
-  // ===== Custom numeric keypad wiring =====
-  const fieldValue = activeField === "price" ? p : activeField === "amount" ? amount : activeField === "orderValue" ? orderValueStr : transferAmount;
-  const setFieldValue = (v: string) => {
-    if (activeField === "price") {
-      setP(v);
-      const n = Number(amount);
-      if (Number.isFinite(n) && n > 0 && Number(v) > 0) setOrderValueStr(String(Number((n * Number(v)).toFixed(8))));
-    } else if (activeField === "amount") handleAmountChange(v);
-    else if (activeField === "orderValue") handleOrderValueChange(v);
-    else if (activeField === "transfer") setTransferAmount(v);
+  const filteredPairs = useMemo(() => {
+    const q = marketsFilter.trim().toUpperCase();
+    return pairs.filter(
+      (x) =>
+        !q ||
+        x.symbol.toUpperCase().includes(q) ||
+        x.base_asset.toUpperCase().includes(q)
+    );
+  }, [pairs, marketsFilter]);
+
+  const ma = useMemo(() => computeMALegend(candles), [candles]);
+  const liveOk =
+    bybitStatus === "connected" || bybitStatus === "live" || !!ticker;
+
+  const openTerminal = (s: "buy" | "sell") => {
+    setSide(s);
+    setViewMode("terminal");
+    if (!priceTouched && last != null) {
+      setP(String(s === "buy" ? liveAsk ?? last : liveBid ?? last));
+    }
   };
-  const pressKey = (key: (typeof KEYS)[number]) => {
-    if (!activeField) return;
-    setFieldValue(applyKey(fieldValue, key));
-  };
-  const closeKeypad = () => setActiveField(null);
 
-  if (busy)
+  const keypadPress = (key: string) => {
+    if (!keypadField) return;
+    const current =
+      keypadField === "price" ? p : keypadField === "qty" ? amount : orderValue;
+    if (key === "back") {
+      const next = current.slice(0, -1);
+      if (keypadField === "price") onPriceChange(next);
+      else if (keypadField === "qty") onQtyChange(next);
+      else onValueChange(next);
+      return;
+    }
+    if (key === "ok") {
+      setKeypadField(null);
+      return;
+    }
+    if (key === "." && current.includes(".")) return;
+    const next = current + key;
+    if (keypadField === "price") onPriceChange(next);
+    else if (keypadField === "qty") onQtyChange(next);
+    else onValueChange(next);
+  };
+
+  if (loading && !pair) {
     return (
-      <div className="trade-page">
-        <style>{css}</style>
-        <div className="loading">Loading real market data…</div>
+      <div className="tp">
+        <style>{CSS}</style>
+        <div className="tp-center">Loading market…</div>
       </div>
     );
-  if (!pair)
+  }
+
+  if (!pair) {
     return (
-      <div className="trade-page">
-        <style>{css}</style>
-        <div className="trade-shell">
-          <button className="trade-back" onClick={onBack || (() => window.history.back())}>
+      <div className="tp">
+        <style>{CSS}</style>
+        <div className="tp-shell">
+          <button
+            className="tp-back"
+            onClick={onBack || (() => window.history.back())}
+          >
             ←
           </button>
-          <div className="error">{notice || "Trading pair not found."}</div>
+          <div className="tp-center">Trading pair not found.</div>
         </div>
       </div>
     );
-
-  const change = Number(ticker?.change_24h ?? 0);
-  const last = ticker?.last_price ?? null;
+  }
 
   return (
-    <div className="trade-page">
-      <style>{css}</style>
-      <div className="trade-shell">
-        {/* Top bar */}
-        <header className="trade-top">
-          <button className="trade-back" onClick={onBack || (() => window.history.back())} aria-label="Back">
+    <div className="tp">
+      <style>{CSS}</style>
+      <div className="tp-shell">
+        {/* TOP BAR */}
+        <header className="tp-head">
+          <button
+            className="tp-back"
+            type="button"
+            onClick={onBack || (() => window.history.back())}
+            aria-label="Back"
+          >
             ←
           </button>
-          <div className="trade-top-title">Trade</div>
-          <button
-            className="icon-btn"
-            type="button"
-            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            onClick={() => void toggleFullscreen()}
-          >
+          <div className="tp-title">Trade</div>
+          <button className="tp-icon" type="button" aria-label="Expand">
             ⛶
           </button>
         </header>
 
-        {/* Pair + live price strip */}
-        <div className="pair-strip">
-          <div className="trade-pair" onClick={() => setShowMarkets(true)}>
-            <span className="pair-name">
-              {pair.symbol} <span className="chev">▾</span>
-            </span>
-            {last != null && (
-              <span className={`pair-change-inline ${change >= 0 ? "up" : "down"}`}>
-                {change >= 0 ? "+" : ""}
-                {change.toFixed(2)}%
+        {/* PAIR + VIEW TOGGLE */}
+        <div className="tp-pair-strip">
+          <div className="tp-pair-left">
+            <button
+              className="tp-pair-btn"
+              type="button"
+              onClick={() => setShowMarkets(true)}
+            >
+              <span className="tp-pair-name">{pair.symbol}</span>
+              <span className="tp-chev">▾</span>
+            </button>
+            {change != null && (
+              <span className={`tp-chg ${changeUp ? "up" : "down"}`}>
+                {changeUp ? "+" : ""}
+                {fmt(change, 2)}%
               </span>
             )}
           </div>
-          {bybitStatus !== "connected" && <span className={`data-status ${bybitStatusClass}`}>{bybitStatusLabel}</span>}
-          {accountTab === "spot" && (
-            <div className="pair-view-toggle" role="group" aria-label="Trading layout">
+          <div className="tp-pair-right">
+            <span className={`tp-live-pill ${liveOk ? "ok" : ""}`}>
+              {liveOk ? "Live" : "…"}
+            </span>
+            <div className="tp-view-toggle">
               <button
-                className={layoutMode === "standard" ? "active" : ""}
-                onClick={() => setLayoutMode("standard")}
-                title="Standard view"
                 type="button"
+                className={`tp-view-btn ${viewMode === "standard" ? "on" : ""}`}
+                onClick={() => setViewMode("standard")}
+                aria-label="Standard view"
+                title="Standard"
               >
-                ⛊
+                ⧉
               </button>
               <button
-                className={layoutMode === "terminal" ? "active" : ""}
-                onClick={() => setLayoutMode("terminal")}
-                title="Terminal view (form + order book side by side)"
                 type="button"
+                className={`tp-view-btn ${viewMode === "terminal" ? "on" : ""}`}
+                onClick={() => setViewMode("terminal")}
+                aria-label="Terminal view"
+                title="Terminal"
               >
-                ▤
+                ☰
               </button>
             </div>
-          )}
+          </div>
         </div>
 
         {notice && (
-          <div className={noticeOk ? "notice-ok" : "error"}>
+          <div
+            className={noticeOk ? "tp-ok" : "tp-err"}
+            onClick={() => setNotice(null)}
+          >
             {notice}
-            {!noticeOk && notice === "Insufficient balance." && onAddFunds && (
-              <button
-                onClick={onAddFunds}
-                style={{ marginLeft: 8, background: "none", border: 0, color: "inherit", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: "inherit" }}
-              >
-                Add funds
-              </button>
-            )}
           </div>
         )}
 
-        {/* Account type tabs */}
-        <div className="account-tabs">
-          {ACCOUNT_TABS.map((t) => (
-            <button key={t.value} className={`account-tab ${accountTab === t.value ? "active" : ""}`} onClick={() => setAccountTab(t.value)}>
-              {t.label}
+
+        {/* Account type tabs — Spot (live) / Futures (coming soon) / Funding (real balances + transfer) */}
+        <div className="tp-account-tabs">
+          {(
+            [
+              ["spot", "Spot"],
+              ["futures", "Futures"],
+              ["funding", "Funding"],
+            ] as [AccountTab, string][]
+          ).map(([val, label]) => (
+            <button
+              key={val}
+              type="button"
+              className={`tp-account-tab ${accountTab === val ? "on" : ""}`}
+              onClick={() => setAccountTab(val)}
+            >
+              {label}
             </button>
           ))}
         </div>
 
-        {/* ===== SPOT (fully live) ===== */}
-        {accountTab === "spot" && (
-          <>
-            {/* Hot markets carousel */}
-            {hotMarkets.length > 0 && (
-              <div className="hot-section">
-                <div className="hot-header">
-                  <span className="hot-title">🔥 Hot</span>
-                  <button className="view-more" onClick={() => setShowMarkets(true)}>
-                    View more →
-                  </button>
-                </div>
-                <div className="hot-row">
-                  {hotMarkets.slice(0, 4).map((h) => (
-                    <div key={h.symbol} className="hot-card" onClick={() => switchPair(h.symbol)}>
-                      <div className="sym">{h.symbol}</div>
-                      <div className="px">{fmtPrice(h.price)}</div>
-                      <div className={`ch ${Number(h.change) >= 0 ? "up" : "down"}`}>
-                        {h.change != null ? `${Number(h.change) >= 0 ? "+" : ""}${Number(h.change).toFixed(2)}%` : "—"}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {layoutMode === "standard" && (
-            <div className="main-grid">
-              {/* Left / main: chart + book + trades */}
-              <div>
-                <div className="market-card">
-                  <div className="stats-row">
-                    <div>
-                      <div className={`stat-price ${last == null ? "" : change >= 0 ? "up" : "down"}`}>{fmtPrice(last)}</div>
-                      {last != null && <div className="stat-usd">≈ {fmtPrice(last)} USD</div>}
-                    </div>
-                    <div className="stat-grid">
-                      <span className="stat-mini">24h High</span>
-                      <span className="stat-mini">
-                        <b>{fmtPrice(ticker?.high_24h)}</b>
-                      </span>
-                      <span className="stat-mini">24h Low</span>
-                      <span className="stat-mini">
-                        <b>{fmtPrice(ticker?.low_24h)}</b>
-                      </span>
-                      <span className="stat-mini">24h Turnover</span>
-                      <span className="stat-mini">
-                        <b>{fmt(ticker?.volume_24h, 2)}</b>
-                      </span>
-                    </div>
-                  </div>
-                  <div className="market-tabs">
-                    <button className={`market-tab ${marketTab === "chart" ? "active" : ""}`} onClick={() => setMarketTab("chart")}>
-                      Chart
-                    </button>
-                    <button className={`market-tab ${marketTab === "book" ? "active" : ""}`} onClick={() => setMarketTab("book")}>
-                      Order Book
-                    </button>
-                    <button className={`market-tab ${marketTab === "trades" ? "active" : ""}`} onClick={() => setMarketTab("trades")}>
-                      Trades
-                    </button>
-                  </div>
-
-                  {marketTab === "chart" && (
-                    <>
-                      <div className="tf-row">
-                        {TF.map((x) => (
-                          <button key={x.value} className={`tf-btn ${tf === x.value ? "active" : ""}`} onClick={() => setTf(x.value)}>
-                            {x.label}
-                          </button>
-                        ))}
-                        <span style={{ flex: 1 }} />
-                        <button
-                          className={`tf-btn ${chartView === "depth" ? "active" : ""}`}
-                          type="button"
-                          title="Depth chart (built from the live order book)"
-                          onClick={() => setChartView((v) => (v === "candles" ? "depth" : "candles"))}
-                        >
-                          Depth
-                        </button>
-                        <button
-                          className="tf-btn"
-                          type="button"
-                          title="Drawing tools aren't available yet"
-                          style={{ opacity: 0.4, cursor: "default" }}
-                        >
-                          ✎
-                        </button>
-                        <button
-                          className={`tf-btn ${showCrosshair ? "active" : ""}`}
-                          type="button"
-                          title="Toggle crosshair"
-                          onClick={() => setShowCrosshair((v) => !v)}
-                        >
-                          ⌖
-                        </button>
-                      </div>
-                      {chartView === "candles" && candles.length > 0 && (
-                        <div style={{ display: "flex", gap: 10, padding: "4px 10px 0", fontSize: 10 }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--ceo-text-dim)", cursor: "pointer" }}>
-                            <input type="checkbox" checked={showMA} onChange={(e) => setShowMA(e.target.checked)} style={{ accentColor: "#f0b90b" }} />
-                            MA
-                          </label>
-                          {showMA &&
-                            (() => {
-                              const ma = latestMAs(candles);
-                              return (
-                                <>
-                                  <span style={{ color: "#f0b90b" }}>MA7: {fmtPrice(ma.ma7)}</span>
-                                  <span style={{ color: "#4fa8e0" }}>MA14: {fmtPrice(ma.ma14)}</span>
-                                  <span style={{ color: "#c86ee0" }}>MA28: {fmtPrice(ma.ma28)}</span>
-                                </>
-                              );
-                            })()}
-                        </div>
-                      )}
-                      <div className="chart-wrap">
-                        {chartView === "depth" ? (
-                          <DepthChart bids={groupedBids} asks={groupedAsks} lastPrice={last} />
-                        ) : candles.length ? (
-                          <TradingChart candles={candles} showMovingAverages={showMA} showCrosshair={showCrosshair} />
-                        ) : (
-                          <div className="empty" style={{ height: "100%" }}>
-                            {bybitStatus === "unsupported"
-                              ? `Live data isn't available for ${pair.symbol}.`
-                              : bybitStatus === "disconnected"
-                              ? "Live market data is disconnected. Reconnecting…"
-                              : bybitStatus === "connecting"
-                              ? `Connecting to live data for ${pair.symbol}…`
-                              : `No chart data available yet for ${pair.symbol} (${tf}).`}
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-
-                  {marketTab === "book" && (
-                    <>
-                      <div className="book-toolbar">
-                        <span className="side-label up">Buy</span>
-                        <span className="side-label down">Sell</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <select
-                            className="precision-select"
-                            value={precisionIdx}
-                            onChange={(e) => setPrecisionIdx(Number(e.target.value))}
-                            aria-label="Order book price grouping"
-                          >
-                            {precisionOptions.map((t, i) => (
-                              <option key={i} value={i}>
-                                {t < 1 ? t.toFixed(String(t).split(".")[1]?.length || 2) : t}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            className="book-view-btn"
-                            type="button"
-                            title={bookView === "merged" ? "Switch to classic view" : "Switch to merged view"}
-                            onClick={() => setBookView((v) => (v === "merged" ? "classic" : "merged"))}
-                            style={{ padding: "3px 6px" }}
-                          >
-                            {bookView === "merged" ? "⋮⋮" : "≡"}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="book-ratio">
-                        <div className="buy" style={{ width: `${bidPct}%` }} />
-                        <div className="sell" style={{ width: `${askPct}%` }} />
-                      </div>
-                      <div className="book-ratio-labels">
-                        <span className="up">B {bidPct}%</span>
-                        <span className="down">S {askPct}%</span>
-                      </div>
-
-                      {bookView === "merged" ? (
-                        <div className="book-wrap full">
-                          <div className="book-head">
-                            <span>Qty ({pair.base_asset})</span>
-                            <span>Price</span>
-                            <span>Price</span>
-                            <span>Qty ({pair.base_asset})</span>
-                          </div>
-                          {mergedRowCount === 0 ? (
-                            <div className="book-empty">
-                              {bybitStatus === "unsupported"
-                                ? `Order book isn't available for ${pair.symbol}.`
-                                : bybitStatus !== "connected"
-                                ? "Order book disconnected. Reconnecting…"
-                                : "No open orders for this pair yet."}
-                            </div>
-                          ) : (
-                            Array.from({ length: mergedRowCount }).map((_, i) => {
-                              const bid = groupedBids[i];
-                              const ask = groupedAsks[i];
-                              const bidW = bid ? Math.min(100, (bid.amt / maxLevelAmt) * 100) : 0;
-                              const askW = ask ? Math.min(100, (ask.amt / maxLevelAmt) * 100) : 0;
-                              return (
-                                <div className="book-row" key={i}>
-                                  <div className="book-cell bidq">
-                                    {bid && <div className="book-bar bid" style={{ width: `${bidW}%` }} />}
-                                    {bid && <span className="qty">{fmtFixed(bid.amt, bookQtyDecimals)}</span>}
-                                  </div>
-                                  <div className="book-cell bidp" onClick={() => bid && pickPrice(bid.price, "sell")}>
-                                    {bid && <span className="price bid">{fmtFixed(bid.price, bookPriceDecimals)}</span>}
-                                  </div>
-                                  <div className="book-cell askp" onClick={() => ask && pickPrice(ask.price, "buy")}>
-                                    {ask && <span className="price ask">{fmtFixed(ask.price, bookPriceDecimals)}</span>}
-                                  </div>
-                                  <div className="book-cell askq">
-                                    {ask && <div className="book-bar ask" style={{ width: `${askW}%` }} />}
-                                    {ask && <span className="qty">{fmtFixed(ask.amt, bookQtyDecimals)}</span>}
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      ) : (
-                        <div className="book-wrap classic full">
-                          <div className="book-head">
-                            <span>Qty ({pair.base_asset})</span>
-                            <span>Price ({pair.quote_asset})</span>
-                            <span>Qty ({pair.base_asset})</span>
-                          </div>
-                          {[...classicAsks].reverse().map((a) => {
-                            const w = Math.min(100, (a.amt / maxLevelAmt) * 100);
-                            return (
-                              <div key={`a-${a.price}`} className="book-row classic-row" onClick={() => pickPrice(a.price, "buy")}>
-                                <div className="book-bar ask" style={{ right: "auto", left: 0, width: `${w}%` }} />
-                                <span />
-                                <span className="price ask">{fmtFixed(a.price, bookPriceDecimals)}</span>
-                                <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmtFixed(a.amt, bookQtyDecimals)}</span>
-                              </div>
-                            );
-                          })}
-                          <div className="book-mid">
-                            {fmtFixed(last, bookPriceDecimals)}
-                            {last != null && (
-                              <span className={`chg ${change >= 0 ? "up" : "down"}`}>
-                                {change >= 0 ? "+" : ""}
-                                {change.toFixed(2)}%
-                              </span>
-                            )}
-                          </div>
-                          {classicBids.map((b) => {
-                            const w = Math.min(100, (b.amt / maxLevelAmt) * 100);
-                            return (
-                              <div key={`b-${b.price}`} className="book-row classic-row" onClick={() => pickPrice(b.price, "sell")}>
-                                <div className="book-bar bid" style={{ width: `${w}%` }} />
-                                <span style={{ position: "relative", zIndex: 1 }}>{fmtFixed(b.amt, bookQtyDecimals)}</span>
-                                <span className="price bid">{fmtFixed(b.price, bookPriceDecimals)}</span>
-                                <span />
-                              </div>
-                            );
-                          })}
-                          {!classicAsks.length && !classicBids.length && (
-                            <div className="book-empty">
-                              {bybitStatus === "unsupported"
-                                ? `Order book isn't available for ${pair.symbol}.`
-                                : bybitStatus !== "connected"
-                                ? "Order book disconnected. Reconnecting…"
-                                : "No open orders for this pair yet."}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {marketTab === "trades" && (
-                    <div className="tape">
-                      <div className="tape-head">
-                        <span>Time</span>
-                        <span>Price ({pair.quote_asset})</span>
-                        <span>Amount ({pair.base_asset})</span>
-                      </div>
-                      {!recentTrades.length ? (
-                        <div className="empty" style={{ height: 120 }}>
-                          {bybitStatus === "unsupported"
-                            ? `Trade feed isn't available for ${pair.symbol}.`
-                            : bybitStatus !== "connected"
-                            ? "Trade feed disconnected. Reconnecting…"
-                            : `No trades have executed on ${pair.symbol} yet.`}
-                        </div>
-                      ) : (
-                        recentTrades.map((t, i) => {
-                          const prev = recentTrades[i + 1];
-                          const up = !prev || t.price >= prev.price;
-                          return (
-                            <div className="tape-row" key={t.id}>
-                              <span style={{ color: "#888" }}>{fmtTime(t.created_at)}</span>
-                              <span className={up ? "up" : "down"}>{fmtPrice(t.price)}</span>
-                              <span>{fmt(t.amount, 6)}</span>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Standard view has no inline order form — matches the
-                  reference recording, which only shows the sticky 3-pill
-                  bar here and reserves the full form for Terminal view. */}
-            </div>
-            )}
-
-            {/* ===== Terminal view: form + live order book side by side, ===== */}
-            {/* matching the reference recording's second header-icon layout. */}
-            {layoutMode === "terminal" && (
-              <div className="terminal-layout">
-                <div className="terminal-form">
-                  <div className="side-pill" style={{ margin: "10px 10px 0" }}>
-                    <div className={`side-pill-thumb ${side === "sell" ? "sell" : ""}`} />
-                    <button
-                      className={`buy ${side === "buy" ? "active" : ""}`}
-                      onClick={() => {
-                        setSide("buy");
-                        setActivePct(null);
-                      }}
-                    >
-                      Buy
-                    </button>
-                    <button
-                      className={`sell ${side === "sell" ? "active" : ""}`}
-                      onClick={() => {
-                        setSide("sell");
-                        setActivePct(null);
-                      }}
-                    >
-                      Sell
-                    </button>
-                  </div>
-                  <div className="form-body">
-                    <div className="type-row" title="Margin trading isn't supported by the current backend yet">
-                      <span style={{ opacity: 0.5 }}>Margin</span>
-                      <span style={{ opacity: 0.5 }}>Off</span>
-                    </div>
-                    <div className="available">
-                      <span>Available</span>
-                      <span>
-                        {fmt(wallet?.available ?? 0, 8)} {wallet?.asset || (side === "buy" ? pair.quote_asset : pair.base_asset)}
-                      </span>
-                    </div>
-                    <div className="type-row" style={{ marginTop: 8 }}>
-                      <div className="type-select-wrap">
-                        <button className="type-select" type="button" onClick={() => setShowTypeMenu((v) => !v)}>
-                          {orderType === "limit" ? "Limit" : "Market"} <span style={{ fontSize: 9 }}>▾</span>
-                        </button>
-                        {showTypeMenu && (
-                          <div className="type-menu">
-                            <button
-                              className={orderType === "limit" ? "active" : ""}
-                              onClick={() => {
-                                setOrderType("limit");
-                                setShowTypeMenu(false);
-                              }}
-                            >
-                              Limit
-                            </button>
-                            <button
-                              className={orderType === "market" ? "active" : ""}
-                              onClick={() => {
-                                setOrderType("market");
-                                setShowTypeMenu(false);
-                              }}
-                            >
-                              Market
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="label">
-                      <span>Price</span>
-                      <span>{pair.quote_asset}</span>
-                    </div>
-                    <div className={`input-wrap ${activeField === "price" ? "focused" : ""}`}>
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        value={p}
-                        onFocus={() => setActiveField("price")}
-                        onChange={(e) => {
-                          setP(e.target.value);
-                          const n = Number(amount);
-                          if (Number.isFinite(n) && n > 0 && Number(e.target.value) > 0)
-                            setOrderValueStr(String(Number((n * Number(e.target.value)).toFixed(8))));
-                        }}
-                        placeholder="Price"
-                        disabled={orderType === "market"}
-                      />
-                      <span className="suffix">{pair.quote_asset}</span>
-                    </div>
-                    <div className="label">
-                      <span>Quantity</span>
-                      <span>{pair.base_asset}</span>
-                    </div>
-                    <div className={`input-wrap ${activeField === "amount" ? "focused" : ""}`}>
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        value={amount}
-                        onFocus={() => setActiveField("amount")}
-                        onChange={(e) => handleAmountChange(e.target.value)}
-                        placeholder="Quantity"
-                      />
-                      <span className="suffix">{pair.base_asset}</span>
-                    </div>
-                    <div className="pct-track">
-                      {PCT_STOPS.map((x) => (
-                        <button
-                          key={x}
-                          className={`pct-dot ${activePct === x ? "active" : ""}`}
-                          onClick={() => setPercent(x)}
-                          aria-label={`${x * 100}%`}
-                          type="button"
-                        />
-                      ))}
-                    </div>
-                    <div className="label" style={{ marginTop: 12 }}>
-                      <span>Order Value</span>
-                      <span>{pair.quote_asset}</span>
-                    </div>
-                    <div className={`input-wrap ${activeField === "orderValue" ? "focused" : ""}`}>
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        value={orderValueStr}
-                        onFocus={() => setActiveField("orderValue")}
-                        onChange={(e) => handleOrderValueChange(e.target.value)}
-                        placeholder="Order value"
-                      />
-                      <span className="suffix">{pair.quote_asset}</span>
-                    </div>
-                    <div className="total">
-                      <span>{side === "buy" ? "Max. Buy" : "Max. Sell"}</span>
-                      <span>
-                        {side === "buy" && np > 0 ? fmt((wallet?.available ?? 0) / np, 6) : fmt(wallet?.available ?? 0, 6)} {pair.base_asset}
-                      </span>
-                    </div>
-                    <div className="check-row">
-                      <label title="Take-profit / stop-loss is not supported by the current order router" style={{ opacity: 0.45 }}>
-                        <input type="checkbox" checked={false} disabled /> TP/SL
-                      </label>
-                      <label title="Post-Only is not supported by the current order router" style={{ opacity: 0.45 }}>
-                        <input type="checkbox" checked={false} disabled /> Post-Only
-                      </label>
-                      <span style={{ marginLeft: "auto", color: "#666" }}>GTC</span>
-                    </div>
-                    <button
-                      className={`order-btn ${side}`}
-                      disabled={submitting || orderType === "market" || !Number.isFinite(np) || np <= 0 || !Number.isFinite(na) || na <= 0}
-                      onClick={submit}
-                    >
-                      {submitting ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${pair.base_asset}`}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="terminal-book">
-                  <div className="book-head" style={{ position: "static" }}>
-                    <span>Price ({pair.quote_asset})</span>
-                    <span style={{ textAlign: "right" }}>Qty ({pair.base_asset})</span>
-                  </div>
-                  <div className="book-wrap classic">
-                    {[...classicAsks]
-                      .slice(0, 6)
-                      .reverse()
-                      .map((a) => {
-                        const w = Math.min(100, (a.amt / maxLevelAmt) * 100);
-                        return (
-                          <div
-                            key={`ta-${a.price}`}
-                            className="book-row classic-row"
-                            style={{ gridTemplateColumns: "1fr 1fr" }}
-                            onClick={() => pickPrice(a.price, "buy")}
-                          >
-                            <div className="book-bar ask" style={{ right: "auto", left: 0, width: `${w}%` }} />
-                            <span className="price ask">{fmtFixed(a.price, bookPriceDecimals)}</span>
-                            <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmtFixed(a.amt, bookQtyDecimals)}</span>
-                          </div>
-                        );
-                      })}
-                    <div className="book-mid" style={{ fontSize: 15 }}>
-                      {fmtFixed(last, bookPriceDecimals)}
-                      <span aria-hidden style={{ opacity: 0 }}>→</span>
-                    </div>
-                    {classicBids.slice(0, 6).map((b) => {
-                      const w = Math.min(100, (b.amt / maxLevelAmt) * 100);
-                      return (
-                        <div
-                          key={`tb-${b.price}`}
-                          className="book-row classic-row"
-                          style={{ gridTemplateColumns: "1fr 1fr" }}
-                          onClick={() => pickPrice(b.price, "sell")}
-                        >
-                          <div className="book-bar bid" style={{ width: `${w}%` }} />
-                          <span className="price bid">{fmtFixed(b.price, bookPriceDecimals)}</span>
-                          <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmtFixed(b.amt, bookQtyDecimals)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="book-ratio">
-                    <div className="buy" style={{ width: `${bidPct}%` }} />
-                    <div className="sell" style={{ width: `${askPct}%` }} />
-                  </div>
-                  <div className="book-ratio-labels">
-                    <span className="up">B {bidPct}%</span>
-                    <span className="down">S {askPct}%</span>
-                  </div>
-                  <div style={{ padding: "4px 10px 8px", display: "flex", justifyContent: "space-between" }}>
-                    <select
-                      className="precision-select"
-                      value={precisionIdx}
-                      onChange={(e) => setPrecisionIdx(Number(e.target.value))}
-                      aria-label="Order book price grouping"
-                    >
-                      {precisionOptions.map((t, i) => (
-                        <option key={i} value={i}>
-                          {t < 1 ? t.toFixed(String(t).split(".")[1]?.length || 2) : t}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Bottom panel */}
-            <div className="bottom-panel">
-              <div className="bottom-tabs">
-                {BOTTOM_TABS.map((t) => (
-                  <button key={t.value} className={`bottom-tab ${bottomTab === t.value ? "active" : ""}`} onClick={() => setBottomTab(t.value)}>
-                    {t.label}
-                    {t.value === "orders" ? ` (${scopedOpenCount})` : ""}
-                  </button>
-                ))}
-                {layoutMode === "terminal" && (
-                  <>
-                    <button
-                      className="bottom-tab"
-                      type="button"
-                      style={{ opacity: 0.4, cursor: "default" }}
-                      title="Margin borrowing isn't supported by the current backend yet"
-                    >
-                      Borrowings (0)
-                    </button>
-                    <button
-                      className="bottom-tab"
-                      type="button"
-                      style={{ opacity: 0.4, cursor: "default" }}
-                      title="Transaction history view isn't available yet"
-                    >
-                      Tx
-                    </button>
-                  </>
-                )}
-              </div>
-              <div className="bottom-body">
-                {bottomTab === "orders" && (
-                  <>
-                    <div style={{ display: "flex", gap: 16, padding: "0 12px 2px" }}>
-                      <button
-                        className={`bottom-tab ${orderTab === "open" ? "active" : ""}`}
-                        style={{ flex: "none", padding: "4px 0" }}
-                        onClick={() => setOrderTab("open")}
-                      >
-                        Open ({pairScoped(open).length})
-                      </button>
-                      <button
-                        className={`bottom-tab ${orderTab === "history" ? "active" : ""}`}
-                        style={{ flex: "none", padding: "4px 0" }}
-                        onClick={() => setOrderTab("history")}
-                      >
-                        History ({pairScoped(history).length})
-                      </button>
-                    </div>
-                    <label className="all-markets-row">
-                      <input type="checkbox" checked={allMarketsOrders} onChange={(e) => setAllMarketsOrders(e.target.checked)} />
-                      All Markets
-                    </label>
-                    {!displayOrders.length ? (
-                      <div className="empty" style={{ height: 100 }}>
-                        No {orderTab === "open" ? "open orders" : "order history"} {allMarketsOrders ? "yet." : `for ${pair.symbol}.`}
-                      </div>
-                    ) : (
-                      <table className="order-table">
-                        <thead>
-                          <tr>
-                            {allMarketsOrders && <th>Pair</th>}
-                            <th>Side</th>
-                            <th>Type</th>
-                            <th>Amount</th>
-                            <th>Filled</th>
-                            <th>Price</th>
-                            <th>Status</th>
-                            {orderTab === "open" && <th></th>}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {displayOrders.map((o) => (
-                            <tr key={o.id}>
-                              {allMarketsOrders && <td>{o.trading_pair}</td>}
-                              <td className={o.side === "buy" ? "up" : "down"}>{o.side.toUpperCase()}</td>
-                              <td>{o.order_type}</td>
-                              <td>
-                                {fmt(o.amount, 6)} {allMarketsOrders ? "" : pair.base_asset}
-                              </td>
-                              <td>{fmt(o.filled_amount, 6)}</td>
-                              <td>
-                                {fmtPrice(o.price)} {allMarketsOrders ? "" : pair.quote_asset}
-                              </td>
-                              <td>{o.status}</td>
-                              {orderTab === "open" && (
-                                <td>
-                                  <button className="cancel-btn" disabled={cancellingId === o.id} onClick={() => cancelOrder(o.id)}>
-                                    {cancellingId === o.id ? "…" : "Cancel"}
-                                  </button>
-                                </td>
-                              )}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </>
-                )}
-                {bottomTab === "positions" && (
-                  <div className="empty" style={{ height: 100 }}>
-                    No open positions on Spot. Spot trades settle into your wallet balance.
-                  </div>
-                )}
-                {bottomTab === "assets" && (
-                  <div style={{ padding: "4px 12px" }}>
-                    {spotWallets.length === 0 ? (
-                      <div className="empty" style={{ height: 80 }}>
-                        No spot balances yet.
-                      </div>
-                    ) : (
-                      spotWallets.map((w) => (
-                        <div key={w.asset} className="balance-card" style={{ marginBottom: 8 }}>
-                          <div className="asset">{w.asset}</div>
-                          <div className="row">
-                            <span>Available</span>
-                            <b>{fmt(Math.max(0, Number(w.balance) - Number(w.locked_balance) - Number(w.escrow_balance)), 8)}</b>
-                          </div>
-                          <div className="row">
-                            <span>Locked</span>
-                            <b>{fmt(Number(w.locked_balance) + Number(w.escrow_balance), 8)}</b>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* ===== FUTURES (balance only + Coming soon) ===== */}
         {accountTab === "futures" && (
-          <div className="account-panel">
-            <div className="coming-soon">
+          <div className="tp-account-panel">
+            <div className="tp-coming-soon">
               <h3>Futures — Coming soon</h3>
               <p>
-                Kraken Futures integration is not yet connected. Your futures balance bucket already exists and is real; order routing will appear
-                here once the backend is live.
+                Futures order routing is not connected yet. Your futures
+                balance bucket is real; trading will appear here once the
+                backend is live.
               </p>
             </div>
-            {futuresWallets.length > 0 ? (
+            {futuresWallets.length === 0 ? (
+              <div className="tp-empty-sm">No futures balances yet.</div>
+            ) : (
               futuresWallets.map((w) => (
-                <div key={w.asset} className="balance-card">
+                <div key={w.asset} className="tp-balance-card">
                   <div className="asset">{w.asset}</div>
                   <div className="row">
                     <span>Balance</span>
@@ -1803,95 +1016,128 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                   </div>
                   <div className="row">
                     <span>Locked</span>
-                    <b>{fmt(Number(w.locked_balance) + Number(w.escrow_balance), 8)}</b>
+                    <b>
+                      {fmt(
+                        Number(w.locked_balance || 0) +
+                          Number(w.escrow_balance || 0),
+                        8
+                      )}
+                    </b>
                   </div>
                 </div>
               ))
-            ) : (
-              <div className="balance-card">
-                <div className="asset">No futures balances yet</div>
-                <div className="row">
-                  <span>Transfer funds from Spot or Funding when Futures goes live.</span>
-                </div>
-              </div>
             )}
           </div>
         )}
 
-        {/* ===== FUNDING (real balances + transfer) ===== */}
         {accountTab === "funding" && (
-          <div className="account-panel">
-            <p style={{ color: "#888", fontSize: 13, margin: "0 0 14px" }}>
-              Funding is your internal balance ledger. Move funds between Spot, Funding, Futures and Earn with real transfers.
+          <div className="tp-account-panel">
+            <p className="tp-funding-note">
+              Funding is your internal balance ledger. Move funds between Spot
+              and Funding with real transfers.
             </p>
             {fundingWallets.length === 0 ? (
-              <div className="balance-card">
-                <div className="asset">No funding balances</div>
-                <div className="row">
-                  <span>Deposit or transfer from Spot to get started.</span>
-                </div>
-              </div>
+              <div className="tp-empty-sm">No funding balances yet.</div>
             ) : (
               fundingWallets.map((w) => (
-                <div key={w.asset} className="balance-card">
+                <div key={w.asset} className="tp-balance-card">
                   <div className="asset">{w.asset}</div>
                   <div className="row">
                     <span>Available</span>
-                    <b>{fmt(Math.max(0, Number(w.balance) - Number(w.locked_balance) - Number(w.escrow_balance)), 8)}</b>
+                    <b>
+                      {fmt(
+                        Math.max(
+                          0,
+                          Number(w.balance) -
+                            Number(w.locked_balance || 0) -
+                            Number(w.escrow_balance || 0)
+                        ),
+                        8
+                      )}
+                    </b>
                   </div>
                   <div className="row">
                     <span>Locked</span>
-                    <b>{fmt(Number(w.locked_balance) + Number(w.escrow_balance), 8)}</b>
+                    <b>
+                      {fmt(
+                        Number(w.locked_balance || 0) +
+                          Number(w.escrow_balance || 0),
+                        8
+                      )}
+                    </b>
                   </div>
                 </div>
               ))
             )}
             {!showTransfer ? (
-              <button className="transfer-btn" onClick={() => setShowTransfer(true)}>
+              <button
+                type="button"
+                className="tp-transfer-btn"
+                onClick={() => setShowTransfer(true)}
+              >
                 Transfer between accounts
               </button>
             ) : (
-              <div className="transfer-form">
-                <div className="label">
-                  <span>Direction</span>
-                </div>
-                <select
-                  className="transfer-select"
-                  value={transferDirection}
-                  onChange={(e) => setTransferDirection(e.target.value as "from_spot" | "to_spot")}
-                >
-                  <option value="from_spot">Spot → Funding</option>
-                  <option value="to_spot">Funding → Spot</option>
-                </select>
-                <div className="label">
-                  <span>Asset</span>
-                </div>
-                <select className="transfer-select" value={transferAsset} onChange={(e) => setTransferAsset(e.target.value)}>
-                  <option value="">Select asset</option>
-                  {Array.from(new Set((transferDirection === "from_spot" ? spotWallets : fundingWallets).map((w) => w.asset.toUpperCase()))).map(
-                    (a) => (
+              <div className="tp-transfer-form">
+                <label>
+                  Direction
+                  <select
+                    value={transferDirection}
+                    onChange={(e) =>
+                      setTransferDirection(
+                        e.target.value as "from_spot" | "to_spot"
+                      )
+                    }
+                  >
+                    <option value="from_spot">Spot → Funding</option>
+                    <option value="to_spot">Funding → Spot</option>
+                  </select>
+                </label>
+                <label>
+                  Asset
+                  <select
+                    value={transferAsset}
+                    onChange={(e) => setTransferAsset(e.target.value)}
+                  >
+                    <option value="">Select asset</option>
+                    {Array.from(
+                      new Set(
+                        (transferDirection === "from_spot"
+                          ? spotWallets
+                          : fundingWallets
+                        ).map((w) => w.asset.toUpperCase())
+                      )
+                    ).map((a) => (
                       <option key={a} value={a}>
                         {a}
                       </option>
-                    )
-                  )}
-                </select>
-                <div className="label">
-                  <span>Amount</span>
-                </div>
-                <input
-                  className="transfer-input"
-                  inputMode="decimal"
-                  value={transferAmount}
-                  onFocus={() => setActiveField("transfer")}
-                  onChange={(e) => setTransferAmount(e.target.value)}
-                  placeholder="0.00"
-                />
-                <div className="transfer-actions">
-                  <button className="transfer-cancel" onClick={() => setShowTransfer(false)} disabled={transferring}>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Amount
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </label>
+                <div className="tp-transfer-actions">
+                  <button
+                    type="button"
+                    onClick={() => setShowTransfer(false)}
+                    disabled={transferring}
+                  >
                     Cancel
                   </button>
-                  <button className="transfer-confirm" onClick={submitTransfer} disabled={transferring}>
+                  <button
+                    type="button"
+                    className="confirm"
+                    onClick={() => void submitTransfer()}
+                    disabled={transferring}
+                  >
                     {transferring ? "Transferring…" : "Confirm transfer"}
                   </button>
                 </div>
@@ -1899,180 +1145,981 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
             )}
           </div>
         )}
-      </div>
 
-      {/* Sticky bottom Buy / Quantity / Sell bar — real live prices */}
-      {accountTab === "spot" && pair && !activeField && layoutMode === "standard" && (
-        <div className="sticky-trade-bar">
-          <button
-            className="stb-buy"
-            onClick={() => {
-              setSide("buy");
-              if (ticker?.ask_price != null) setP(String(ticker.ask_price));
-              setActivePct(null);
-              setLayoutMode("terminal");
-            }}
-          >
-            Buy
-            <span className="stb-price">{fmtFixed(ticker?.ask_price ?? last, bookPriceDecimals)}</span>
-          </button>
-          <div className="stb-qty">
-            Quantity
-            <b>{pair.base_asset}</b>
-          </div>
-          <button
-            className="stb-sell"
-            onClick={() => {
-              setSide("sell");
-              if (ticker?.bid_price != null) setP(String(ticker.bid_price));
-              setActivePct(null);
-              setLayoutMode("terminal");
-            }}
-          >
-            Sell
-            <span className="stb-price">{fmtFixed(ticker?.bid_price ?? last, bookPriceDecimals)}</span>
-          </button>
-        </div>
-      )}
+        {/* ==================== STANDARD VIEW ==================== */}
+        {accountTab === "spot" && viewMode === "standard" && (
+          <>
+            <div className="tp-content-tabs">
+              {(["chart", "overview", "data", "feed"] as ContentTab[]).map(
+                (t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`tp-ctab ${contentTab === t ? "on" : ""}`}
+                    onClick={() => setContentTab(t)}
+                  >
+                    {t === "chart"
+                      ? "Chart"
+                      : t === "overview"
+                      ? "Overview"
+                      : t === "data"
+                      ? "Data"
+                      : "Feed"}
+                  </button>
+                )
+              )}
+              <div className="tp-ctab-icons">
+                <span className={`tp-dot ${liveOk ? "ok" : ""}`} />
+                <button
+                  type="button"
+                  className={`tp-star ${favorite ? "on" : ""}`}
+                  onClick={() => void toggleFavorite()}
+                  aria-label="Favorite"
+                >
+                  {favorite ? "★" : "☆"}
+                </button>
+                <button type="button" className="tp-mini" aria-label="Alerts">
+                  🔔
+                </button>
+                <button type="button" className="tp-mini" aria-label="Share">
+                  ↗
+                </button>
+              </div>
+            </div>
 
-      {/* Custom numeric keypad — appears while Price / Quantity / Order Value /
-          transfer amount is focused, keeps the field visible above it, and
-          never lets the OS keyboard cover the submit button. */}
-      {activeField && (
-        <>
-          <div
-            className="keypad-backdrop"
-            onClick={() => {
-              if (!keypadTouchRef.current) closeKeypad();
-            }}
-          />
-          <div
-            className="keypad"
-            onMouseDown={(e) => {
-              keypadTouchRef.current = true;
-              e.preventDefault();
-            }}
-            onMouseUp={() => {
-              keypadTouchRef.current = false;
-            }}
-          >
-            <div className="keypad-row">
-              {KEYS.slice(0, 3).map((k) => (
-                <button key={k} className="keypad-key" onClick={() => pressKey(k)} type="button">
-                  {k}
-                </button>
-              ))}
-            </div>
-            <div className="keypad-row">
-              {KEYS.slice(3, 6).map((k) => (
-                <button key={k} className="keypad-key" onClick={() => pressKey(k)} type="button">
-                  {k}
-                </button>
-              ))}
-            </div>
-            <div className="keypad-row">
-              {KEYS.slice(6, 9).map((k) => (
-                <button key={k} className="keypad-key" onClick={() => pressKey(k)} type="button">
-                  {k}
-                </button>
-              ))}
-            </div>
-            <div className="keypad-row">
-              <button className="keypad-key" onClick={() => pressKey(".")} type="button">
-                .
-              </button>
-              <button className="keypad-key" onClick={() => pressKey("0")} type="button">
-                0
-              </button>
-              <button className="keypad-key back" onClick={() => pressKey("back")} type="button">
-                ⌫
-              </button>
-            </div>
-            <div className="keypad-row" style={{ gridTemplateColumns: "1fr" }}>
-              <button className="keypad-key confirm" onClick={closeKeypad} type="button">
-                ✓ Done
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Markets overlay (pair picker + full Hot list) */}
-      {showMarkets && (
-        <div className="markets-overlay">
-          <div className="markets-header">
-            <button className="markets-close" onClick={() => setShowMarkets(false)} aria-label="Close">
-              ←
-            </button>
-            <input
-              className="markets-search"
-              placeholder="Search pair…"
-              value={marketsFilter}
-              onChange={(e) => setMarketsFilter(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="markets-tabs">
-            <button className="markets-tab active">Crypto</button>
-            <button className="markets-tab" type="button" disabled style={{ opacity: 0.45, cursor: "default" }}>
-              TradFi
-            </button>
-          </div>
-          <div className="markets-tabs" style={{ borderBottom: "1px solid var(--ceo-border)" }}>
-            <button className="markets-tab active">Spot</button>
-            <button className="markets-tab" type="button" disabled style={{ opacity: 0.45, cursor: "default" }}>
-              Perpetual
-            </button>
-            <button className="markets-tab" type="button" disabled style={{ opacity: 0.45, cursor: "default" }}>
-              Expiry
-            </button>
-          </div>
-          <div className="book-head" style={{ padding: "6px 12px", gridTemplateColumns: "1.4fr 1fr 0.8fr" }}>
-            <span>Trading Pairs / Vol</span>
-            <span style={{ textAlign: "right" }}>Price</span>
-            <span style={{ textAlign: "right" }}>24H Change</span>
-          </div>
-          <div className="markets-list">
-            {filteredMarkets.map((m) => {
-              const hot = hotMarkets.find((h) => h.symbol === m.symbol);
-              const ch = hot?.change ?? null;
-              return (
-                <div key={m.symbol} className={`markets-row ${m.symbol === pair?.symbol ? "selected" : ""}`} onClick={() => switchPair(m.symbol)}>
-                  <div>
-                    <div className="sym">
-                      {m.base_asset} / {m.quote_asset}
-                    </div>
-                    <div className="vol">{hot?.price != null ? "" : m.symbol}</div>
-                  </div>
-                  <div className="px">
-                    {fmtPrice(hot?.price ?? null)}
-                    {hot?.price != null && (
-                      <div className="vol" style={{ textAlign: "right" }}>
-                        {fmtPrice(hot.price)} USD
-                      </div>
-                    )}
-                  </div>
-                  <div className="ch">
-                    {ch != null ? (
-                      <span className={`ch-pill ${ch >= 0 ? "up" : "down"}`}>
-                        {ch >= 0 ? "+" : ""}
-                        {Number(ch).toFixed(2)}%
+            {contentTab === "chart" && (
+              <>
+                <div className="tp-stats">
+                  <div className="tp-last">
+                    <span className={changeUp ? "up" : "down"}>
+                      {fmtPrice(last)}
+                    </span>
+                    {last != null && (
+                      <span className="tp-usd">
+                        ≈ {fmtPrice(last)} {pair.quote_asset}
                       </span>
-                    ) : (
-                      "—"
                     )}
+                  </div>
+                  <div className="tp-stats-grid">
+                    <div>
+                      <span>24h High</span>
+                      <b>{fmtPrice(ticker?.high_24h)}</b>
+                    </div>
+                    <div>
+                      <span>24h Low</span>
+                      <b>{fmtPrice(ticker?.low_24h)}</b>
+                    </div>
+                    <div>
+                      <span>24h Turnover</span>
+                      <b>{fmt(ticker?.volume_24h, 2)}</b>
+                    </div>
                   </div>
                 </div>
-              );
-            })}
-            {!filteredMarkets.length && (
-              <div className="empty" style={{ height: 200 }}>
-                No pairs match your search.
+
+                <div className="tp-sec-tabs">
+                  {(["chart", "book", "trades"] as MarketTab[]).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`tp-sec ${marketTab === t ? "on" : ""}`}
+                      onClick={() => setMarketTab(t)}
+                    >
+                      {t === "chart"
+                        ? "Chart"
+                        : t === "book"
+                        ? "Order Book"
+                        : "Trades"}
+                    </button>
+                  ))}
+                </div>
+
+                {marketTab === "chart" && (
+                  <div className="tp-chart-block">
+                    <div className="tp-tf-row">
+                      <span className="tp-tf-label">Time</span>
+                      {TF.map((x) => (
+                        <button
+                          key={x.value}
+                          type="button"
+                          className={`tp-tf ${tf === x.value ? "on" : ""}`}
+                          onClick={() => setTf(x.value)}
+                        >
+                          {x.label}
+                        </button>
+                      ))}
+                      <span className="tp-tf-more">More ▾</span>
+                      <div className="tp-tf-tools">
+                        <span>Depth</span>
+                        <span>✎</span>
+                        <span>⌖</span>
+                        <span>⊞</span>
+                      </div>
+                    </div>
+                    <div className="tp-ma-legend">
+                      <span className="ma7">
+                        MA7: {ma.ma7 != null ? fmtPrice(ma.ma7) : "—"}
+                      </span>
+                      <span className="ma14">
+                        MA14: {ma.ma14 != null ? fmtPrice(ma.ma14) : "—"}
+                      </span>
+                      <span className="ma28">
+                        MA28: {ma.ma28 != null ? fmtPrice(ma.ma28) : "—"}
+                      </span>
+                    </div>
+                    <TradingChart candles={candles} height={340} showMA />
+                    <div className="tp-ind-bar">
+                      {[
+                        "MA",
+                        "EMA",
+                        "BOLL",
+                        "SAR",
+                        "MAVOL",
+                        "MACD",
+                        "KDJ",
+                        "RSI",
+                        "WR",
+                      ].map((ind) => (
+                        <button
+                          key={ind}
+                          type="button"
+                          className={`tp-ind ${
+                            ind === "MA" || ind === "MAVOL" ? "on" : "off"
+                          }`}
+                          title={
+                            ind === "MA" || ind === "MAVOL"
+                              ? ind
+                              : "Not available yet"
+                          }
+                          disabled={ind !== "MA" && ind !== "MAVOL"}
+                        >
+                          {ind}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {marketTab === "book" && (
+                  <div className="tp-book">
+                    <div className="tp-book-head-row">
+                      <span className="buy-lbl">Buy</span>
+                      <span className="sell-lbl">Sell</span>
+                      <select
+                        className="tp-prec"
+                        value={precisionIdx}
+                        onChange={(e) =>
+                          setPrecisionIdx(Number(e.target.value))
+                        }
+                        aria-label="Order book price grouping"
+                      >
+                        {precisionOptions.map((t, i) => (
+                          <option key={i} value={i}>
+                            {t < 1
+                              ? t.toFixed(
+                                  String(t).split(".")[1]?.length || 2
+                                )
+                              : t}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="tp-book-ratio">
+                      <div className="bid" style={{ width: `${bidPct}%` }} />
+                      <div className="ask" style={{ width: `${askPct}%` }} />
+                    </div>
+                    <div className="tp-book-ratio-lbl">
+                      <span className="up">B {bidPct}%</span>
+                      <span className="down">{askPct}% S</span>
+                    </div>
+                    <div className="tp-book-cols">
+                      <span>Qty ({pair.base_asset})</span>
+                      <span>Price ({pair.quote_asset})</span>
+                      <span>Price ({pair.quote_asset})</span>
+                      <span>Qty ({pair.base_asset})</span>
+                    </div>
+                    <div className="tp-book-body-paired">
+                      {pairedRows.length === 0 && (
+                        <div className="tp-empty-sm">No order book data</div>
+                      )}
+                      {pairedRows.map((row, i) => (
+                        <div key={i} className="tp-pair-row-book">
+                          <button
+                            type="button"
+                            className="cell qty"
+                            onClick={() =>
+                              row.bidPrice != null &&
+                              pickFromBook(row.bidPrice, "sell")
+                            }
+                          >
+                            {row.bidQty != null
+                              ? fixedDec(row.bidQty, 4)
+                              : ""}
+                          </button>
+                          <button
+                            type="button"
+                            className="cell bid"
+                            onClick={() =>
+                              row.bidPrice != null &&
+                              pickFromBook(row.bidPrice, "sell")
+                            }
+                          >
+                            {row.bidPrice != null
+                              ? fixedDec(row.bidPrice, bookPriceDecimals)
+                              : ""}
+                            {row.bidPrice != null && (
+                              <span
+                                className="bar bid"
+                                style={{
+                                  width: `${
+                                    ((row.bidQty || 0) / maxAmt) * 100
+                                  }%`,
+                                }}
+                              />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="cell ask"
+                            onClick={() =>
+                              row.askPrice != null &&
+                              pickFromBook(row.askPrice, "buy")
+                            }
+                          >
+                            {row.askPrice != null
+                              ? fixedDec(row.askPrice, bookPriceDecimals)
+                              : ""}
+                            {row.askPrice != null && (
+                              <span
+                                className="bar ask"
+                                style={{
+                                  width: `${
+                                    ((row.askQty || 0) / maxAmt) * 100
+                                  }%`,
+                                }}
+                              />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="cell qty"
+                            onClick={() =>
+                              row.askPrice != null &&
+                              pickFromBook(row.askPrice, "buy")
+                            }
+                          >
+                            {row.askQty != null
+                              ? fixedDec(row.askQty, 4)
+                              : ""}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {marketTab === "trades" && (
+                  <div className="tp-trades">
+                    <div className="tp-trades-head">
+                      <span>Time</span>
+                      <span>Price ({pair.quote_asset})</span>
+                      <span>Amount ({pair.base_asset})</span>
+                    </div>
+                    {trades.length === 0 && (
+                      <div className="tp-empty-sm">No recent trades</div>
+                    )}
+                    {trades.slice(0, 40).map((t, i) => {
+                      const prev = trades[i + 1];
+                      const up = prev == null ? true : t.price >= prev.price;
+                      return (
+                        <div key={t.id} className="tp-trade-row">
+                          <span>{fmtTime(t.created_at)}</span>
+                          <span className={up ? "up" : "down"}>
+                            {fmtPrice(t.price)}
+                          </span>
+                          <span>{fmtQty(t.amount)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {contentTab !== "chart" && (
+              <div className="tp-na">
+                <div className="tp-na-icon">📋</div>
+                <div>Not available yet</div>
+                <div className="tp-na-sub">
+                  {contentTab === "overview"
+                    ? "Overview data is not connected."
+                    : contentTab === "data"
+                    ? "Market data panels are not connected."
+                    : "Feed is not connected."}
+                </div>
+              </div>
+            )}
+
+            {!keypadField && (
+              <div className="tp-sticky">
+                <button
+                  type="button"
+                  className="tp-sticky-buy"
+                  onClick={() => openTerminal("buy")}
+                >
+                  <span>Buy</span>
+                  <small>{fmtPrice(liveAsk)}</small>
+                </button>
+                <button type="button" className="tp-sticky-qty">
+                  Quantity
+                  <small>{pair.base_asset}</small>
+                </button>
+                <button
+                  type="button"
+                  className="tp-sticky-sell"
+                  onClick={() => openTerminal("sell")}
+                >
+                  <span>Sell</span>
+                  <small>{fmtPrice(liveBid)}</small>
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ==================== TERMINAL VIEW ==================== */}
+        {accountTab === "spot" && viewMode === "terminal" && (
+          <div className="tp-terminal">
+            <div className="tp-term-main">
+              <div className="tp-form">
+                <div className="tp-side-seg">
+                  <button
+                    type="button"
+                    className={`buy ${side === "buy" ? "on" : ""}`}
+                    onClick={() => setSide("buy")}
+                  >
+                    Buy
+                  </button>
+                  <button
+                    type="button"
+                    className={`sell ${side === "sell" ? "on" : ""}`}
+                    onClick={() => setSide("sell")}
+                  >
+                    Sell
+                  </button>
+                </div>
+
+                <div className="tp-form-row muted">
+                  <span>Margin</span>
+                  <label
+                    className="tp-switch disabled"
+                    title="Margin isn't supported yet"
+                  >
+                    <input type="checkbox" disabled />
+                    <span>Off</span>
+                  </label>
+                </div>
+
+                <div className="tp-form-row">
+                  <span>Available</span>
+                  <span>
+                    {fmt(wallet?.available ?? 0, 4)} {wallet?.asset || "—"}
+                    {onAddFunds && (
+                      <button
+                        type="button"
+                        className="tp-add"
+                        onClick={onAddFunds}
+                      >
+                        +
+                      </button>
+                    )}
+                  </span>
+                </div>
+
+                <div className="tp-form-row">
+                  <select
+                    className="tp-select"
+                    value={orderType}
+                    onChange={(e) =>
+                      setOrderType(e.target.value as "limit" | "market")
+                    }
+                  >
+                    <option value="limit">Limit</option>
+                    <option value="market">Market (not available yet)</option>
+                  </select>
+                </div>
+
+                <div className="tp-field">
+                  <label>Price</label>
+                  <div className="tp-input-wrap">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={p}
+                      onChange={(e) => onPriceChange(e.target.value)}
+                      onFocus={() => setKeypadField("price")}
+                      placeholder="0"
+                    />
+                    <span>{pair.quote_asset}</span>
+                  </div>
+                </div>
+
+                <div className="tp-field">
+                  <label>Quantity</label>
+                  <div className="tp-input-wrap">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={amount}
+                      onChange={(e) => onQtyChange(e.target.value)}
+                      onFocus={() => setKeypadField("qty")}
+                      placeholder="0"
+                    />
+                    <span>{pair.base_asset}</span>
+                  </div>
+                </div>
+
+                <div className="tp-pct">
+                  {[0, 25, 50, 75, 100].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      className={activePct === pct ? "on" : ""}
+                      onClick={() => setPercent(pct)}
+                    >
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
+
+                <div className="tp-field">
+                  <label>Order Value</label>
+                  <div className="tp-input-wrap">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={orderValue}
+                      onChange={(e) => onValueChange(e.target.value)}
+                      onFocus={() => setKeypadField("value")}
+                      placeholder="0"
+                    />
+                    <span>{pair.quote_asset}</span>
+                  </div>
+                </div>
+
+                <div className="tp-form-row muted">
+                  <span>Max {side === "buy" ? "Buy" : "Sell"}</span>
+                  <span>
+                    {side === "buy"
+                      ? `${fmt(
+                          wallet && np > 0 ? wallet.available / np : 0,
+                          6
+                        )} ${pair.base_asset}`
+                      : `${fmt(wallet?.available ?? 0, 6)} ${pair.quote_asset}`}
+                  </span>
+                </div>
+
+                <div className="tp-checks">
+                  <label title="Not available yet">
+                    <input type="checkbox" disabled /> TP/SL
+                  </label>
+                  <label title="Not available yet">
+                    <input type="checkbox" disabled /> Post-Only
+                  </label>
+                  <span className="tp-tif">GTC ▾</span>
+                </div>
+
+                <button
+                  type="button"
+                  className={`tp-submit ${side}`}
+                  disabled={
+                    submitting ||
+                    !Number.isFinite(np) ||
+                    np <= 0 ||
+                    !Number.isFinite(na) ||
+                    na <= 0
+                  }
+                  onClick={() => void placeOrder()}
+                >
+                  {submitting
+                    ? "Submitting…"
+                    : `${side === "buy" ? "Buy" : "Sell"} ${pair.base_asset}`}
+                </button>
+              </div>
+
+              <div className="tp-term-book">
+                <div className="tp-term-book-head">
+                  <span>Price ({pair.quote_asset})</span>
+                  <span>Qty ({pair.base_asset})</span>
+                </div>
+                <div className="tp-term-asks">
+                  {[...asks]
+                    .reverse()
+                    .slice(0, 8)
+                    .map((a) => (
+                      <button
+                        key={`ta-${a.price}`}
+                        type="button"
+                        className="tp-term-row ask"
+                        onClick={() => pickFromBook(a.price, "buy")}
+                      >
+                        <span className="down">
+                          {fixedDec(a.price, bookPriceDecimals)}
+                        </span>
+                        <span>{fmtQty(a.amount - a.filled_amount)}</span>
+                      </button>
+                    ))}
+                </div>
+                <div className="tp-term-mid">
+                  <span className={changeUp ? "up" : "down"}>
+                    {fmtPrice(last)}
+                  </span>
+                  <span className="tp-term-usd">≈ {fmtPrice(last)} USD</span>
+                </div>
+                <div className="tp-term-bids">
+                  {bids.slice(0, 8).map((b) => (
+                    <button
+                      key={`tb-${b.price}`}
+                      type="button"
+                      className="tp-term-row bid"
+                      onClick={() => pickFromBook(b.price, "sell")}
+                    >
+                      <span className="up">
+                        {fixedDec(b.price, bookPriceDecimals)}
+                      </span>
+                      <span>{fmtQty(b.amount - b.filled_amount)}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="tp-book-ratio term">
+                  <div className="bid" style={{ width: `${bidPct}%` }} />
+                  <div className="ask" style={{ width: `${askPct}%` }} />
+                </div>
+                <div className="tp-book-ratio-lbl">
+                  <span className="up">B {bidPct}%</span>
+                  <span className="down">{askPct}% S</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="tp-bottom-tabs">
+              {(
+                [
+                  ["orders", `Orders(${scopedOpenCount})`],
+                  ["positions", "Positions(0)"],
+                  ["assets", "Assets"],
+                  ["borrowings", "Borrowings(0)"],
+                  ["tx", "Tx"],
+                ] as [BottomTab, string][]
+              ).map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  className={`tp-btab ${bottomTab === val ? "on" : ""} ${
+                    val === "borrowings" ||
+                    val === "positions" ||
+                    val === "tx"
+                      ? "disabled"
+                      : ""
+                  }`}
+                  onClick={() => setBottomTab(val)}
+                  title={
+                    val === "borrowings" ||
+                    val === "positions" ||
+                    val === "tx"
+                      ? "Not available yet"
+                      : undefined
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {bottomTab === "orders" && (
+              <div className="tp-orders">
+                <div className="tp-order-sub">
+                  <button
+                    type="button"
+                    className={orderTab === "open" ? "on" : ""}
+                    onClick={() => setOrderTab("open")}
+                  >
+                    Open ({pairScoped(openOrders).length})
+                  </button>
+                  <button
+                    type="button"
+                    className={orderTab === "history" ? "on" : ""}
+                    onClick={() => setOrderTab("history")}
+                  >
+                    History ({pairScoped(historyOrders).length})
+                  </button>
+                </div>
+                <label className="tp-all-markets">
+                  <input
+                    type="checkbox"
+                    checked={allMarketsOrders}
+                    onChange={(e) => setAllMarketsOrders(e.target.checked)}
+                  />
+                  All Markets
+                </label>
+                {displayOrders.length === 0 && (
+                  <div className="tp-empty">
+                    <div className="tp-empty-icon">📄</div>
+                    <div>No Available Data</div>
+                  </div>
+                )}
+                {displayOrders.map((o) => (
+                  <div key={o.id} className="tp-order-row">
+                    <div>
+                      <b className={o.side === "buy" ? "up" : "down"}>
+                        {o.side.toUpperCase()}
+                      </b>{" "}
+                      {o.trading_pair} · {o.order_type}
+                    </div>
+                    <div className="tp-order-meta">
+                      {fmtPrice(o.price)} × {fmtQty(o.amount)} · {o.status}
+                    </div>
+                    {CANCELLABLE.has(o.status.toLowerCase()) && (
+                      <button
+                        type="button"
+                        className="tp-cancel"
+                        disabled={cancellingId === o.id}
+                        onClick={() => void cancelOrder(o.id)}
+                      >
+                        {cancellingId === o.id ? "…" : "Cancel"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {bottomTab === "assets" && (
+              <div className="tp-orders">
+                {wallets.length === 0 && (
+                  <div className="tp-empty">
+                    <div className="tp-empty-icon">📄</div>
+                    <div>No Available Data</div>
+                  </div>
+                )}
+                {wallets
+                  .filter((w) => Number(w.balance) > 0)
+                  .map((w) => (
+                    <div
+                      key={`${w.asset}-${w.wallet_type}`}
+                      className="tp-order-row"
+                    >
+                      <div>
+                        <b>{w.asset}</b> · {w.account_type || w.wallet_type}
+                      </div>
+                      <div className="tp-order-meta">
+                        {fmt(w.balance, 6)} (avail{" "}
+                        {fmt(
+                          Math.max(
+                            0,
+                            Number(w.balance) -
+                              Number(w.locked_balance || 0) -
+                              Number(w.escrow_balance || 0)
+                          ),
+                          6
+                        )}
+                        )
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {(bottomTab === "positions" ||
+              bottomTab === "borrowings" ||
+              bottomTab === "tx") && (
+              <div className="tp-empty">
+                <div className="tp-empty-icon">📄</div>
+                <div>No Available Data</div>
+                <div className="tp-na-sub">
+                  {bottomTab === "positions"
+                    ? "User positions are not available for this market type."
+                    : bottomTab === "borrowings"
+                    ? "Margin borrowing is not supported yet."
+                    : "Transaction history panel is not connected yet."}
+                </div>
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Markets picker */}
+        {showMarkets && (
+          <div className="tp-sheet" onClick={() => setShowMarkets(false)}>
+            <div
+              className="tp-sheet-panel"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="tp-sheet-head">
+                <b>Select Market</b>
+                <button type="button" onClick={() => setShowMarkets(false)}>
+                  ✕
+                </button>
+              </div>
+              <input
+                className="tp-sheet-search"
+                placeholder="Search pairs…"
+                value={marketsFilter}
+                onChange={(e) => setMarketsFilter(e.target.value)}
+              />
+              <div className="tp-sheet-list">
+                {filteredPairs.map((x) => {
+                  const hot = hotMarkets.find((h) => h.symbol === x.symbol);
+                  return (
+                    <button
+                      key={x.id}
+                      type="button"
+                      className={x.symbol === pair.symbol ? "on" : ""}
+                      onClick={() => {
+                        setSymbol(x.symbol);
+                        setShowMarkets(false);
+                        setPriceTouched(false);
+                        setP("");
+                        setAmount("");
+                        setOrderValue("");
+                      }}
+                    >
+                      <span>{x.symbol}</span>
+                      {hot?.change != null && (
+                        <span
+                          className={
+                            hot.change >= 0 ? "tp-hot-up" : "tp-hot-down"
+                          }
+                        >
+                          {hot.change >= 0 ? "+" : ""}
+                          {Number(hot.change).toFixed(2)}%
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Custom numeric keypad */}
+        {keypadField && (
+          <div className="tp-keypad">
+            <div className="tp-keypad-grid">
+              {[
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                ".",
+                "0",
+                "back",
+              ].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="tp-key"
+                  onClick={() => keypadPress(k)}
+                >
+                  {k === "back" ? "⌫" : k}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="tp-key ok"
+                onClick={() => keypadPress("ok")}
+              >
+                ✓
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+const CSS = `
+.tp{min-height:100vh;background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}
+.tp-shell{max-width:520px;margin:0 auto;padding-bottom:calc(72px + env(safe-area-inset-bottom));position:relative}
+.tp-center{display:flex;align-items:center;justify-content:center;min-height:60vh;color:#666}
+.tp-head{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 12px;border-bottom:1px solid #181818;position:sticky;top:0;background:rgba(10,10,10,.97);z-index:30;backdrop-filter:blur(8px)}
+.tp-back,.tp-icon{background:none;border:none;color:#ccc;font-size:18px;padding:6px 8px;cursor:pointer}
+.tp-title{font-size:16px;font-weight:600;color:#fff}
+.tp-pair-strip{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;gap:8px}
+.tp-pair-left{display:flex;flex-direction:column;gap:2px}
+.tp-pair-btn{background:none;border:none;color:#fff;font-size:16px;font-weight:700;display:flex;align-items:center;gap:4px;padding:0;cursor:pointer}
+.tp-chev{font-size:11px;color:#888}
+.tp-chg{font-size:12px;font-weight:600}
+.tp-chg.up,.up{color:#16c784}
+.tp-chg.down,.down{color:#ea3943}
+.tp-pair-right{display:flex;align-items:center;gap:8px}
+.tp-live-pill{font-size:10px;padding:2px 8px;border-radius:10px;background:#1a1a1a;color:#666;border:1px solid #222}
+.tp-live-pill.ok{color:#16c784;border-color:#1a3a2a}
+.tp-view-toggle{display:flex;background:#141414;border-radius:8px;padding:2px;border:1px solid #222}
+.tp-view-btn{background:none;border:none;color:#666;font-size:14px;padding:6px 10px;border-radius:6px;cursor:pointer}
+.tp-view-btn.on{background:#222;color:#fff}
+.tp-content-tabs{display:flex;align-items:center;padding:0 8px;border-bottom:1px solid #161616;gap:2px;overflow-x:auto}
+.tp-ctab{background:none;border:none;color:#666;font-size:13px;padding:10px 12px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent}
+.tp-ctab.on{color:#fff;border-bottom-color:#f0b90b}
+.tp-ctab-icons{margin-left:auto;display:flex;align-items:center;gap:8px;padding-right:4px}
+.tp-dot{width:6px;height:6px;border-radius:50%;background:#444;display:inline-block}
+.tp-dot.ok{background:#16c784}
+.tp-star{background:none;border:none;color:#555;font-size:16px;cursor:pointer;padding:2px}
+.tp-star.on{color:#f0b90b}
+.tp-mini{background:none;border:none;color:#666;font-size:14px;cursor:pointer;padding:2px}
+.tp-stats{display:flex;justify-content:space-between;padding:10px 12px 6px;gap:12px}
+.tp-last{display:flex;flex-direction:column}
+.tp-last span:first-child{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+.tp-usd{font-size:11px;color:#666;margin-top:2px}
+.tp-stats-grid{display:flex;flex-direction:column;gap:4px;text-align:right;font-size:11px}
+.tp-stats-grid span{color:#666;margin-right:6px}
+.tp-stats-grid b{font-weight:600;color:#ccc;font-variant-numeric:tabular-nums}
+.tp-sec-tabs{display:flex;padding:0 12px;gap:16px;border-bottom:1px solid #161616}
+.tp-sec{background:none;border:none;color:#666;font-size:13px;padding:8px 0;cursor:pointer;border-bottom:2px solid transparent}
+.tp-sec.on{color:#fff;border-bottom-color:#fff}
+.tp-chart-block{padding:4px 0 8px}
+.tp-tf-row{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:11px;overflow-x:auto}
+.tp-tf-label{color:#666}
+.tp-tf{background:none;border:none;color:#888;font-size:12px;padding:4px 8px;border-radius:4px;cursor:pointer}
+.tp-tf.on{color:#f0b90b;background:#1a1608}
+.tp-tf-more{color:#666;margin-left:4px}
+.tp-tf-tools{margin-left:auto;display:flex;gap:10px;color:#666}
+.tp-ma-legend{display:flex;gap:12px;padding:2px 12px 6px;font-size:10px;font-variant-numeric:tabular-nums}
+.tp-ma-legend .ma7{color:#f0b90b}
+.tp-ma-legend .ma14{color:#3861fb}
+.tp-ma-legend .ma28{color:#e91e8c}
+.tp-ind-bar{display:flex;gap:2px;padding:6px 8px;overflow-x:auto;border-top:1px solid #141414}
+.tp-ind{background:none;border:none;color:#555;font-size:11px;padding:4px 8px;cursor:pointer}
+.tp-ind.on{color:#ccc}
+.tp-ind.off{opacity:.4;cursor:not-allowed}
+.tp-book{padding:6px 8px 80px}
+.tp-book-head-row{display:flex;align-items:center;gap:8px;padding:4px 4px}
+.tp-book-head-row .buy-lbl{color:#16c784;font-weight:600;font-size:12px}
+.tp-book-head-row .sell-lbl{color:#ea3943;font-weight:600;font-size:12px;margin-left:auto}
+.tp-prec{background:#141414;border:1px solid #222;color:#aaa;font-size:11px;border-radius:4px;padding:2px 6px}
+.tp-book-ratio{display:flex;height:3px;border-radius:2px;overflow:hidden;background:#1a1a1a;margin:4px 0}
+.tp-book-ratio .bid{background:#16c784}
+.tp-book-ratio .ask{background:#ea3943}
+.tp-book-ratio-lbl{display:flex;justify-content:space-between;font-size:10px;font-weight:600;margin-bottom:4px}
+.tp-book-cols{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;font-size:10px;color:#555;padding:2px 4px}
+.tp-book-body-paired{display:flex;flex-direction:column}
+.tp-pair-row-book{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;height:22px;align-items:center}
+.tp-pair-row-book .cell{position:relative;background:none;border:none;color:inherit;font:inherit;font-size:11px;font-variant-numeric:tabular-nums;cursor:pointer;padding:0 4px;height:100%;text-align:left;overflow:hidden}
+.tp-pair-row-book .cell.bid{color:#16c784;font-weight:600;text-align:right}
+.tp-pair-row-book .cell.ask{color:#ea3943;font-weight:600}
+.tp-pair-row-book .cell.qty{color:#aaa}
+.tp-pair-row-book .bar{position:absolute;top:0;bottom:0;opacity:.18;pointer-events:none}
+.tp-pair-row-book .bar.bid{right:0;background:#16c784}
+.tp-pair-row-book .bar.ask{left:0;background:#ea3943}
+.tp-trades{padding:6px 12px 80px}
+.tp-trades-head{display:grid;grid-template-columns:1fr 1fr 1fr;font-size:10px;color:#555;padding:4px 0}
+.tp-trade-row{display:grid;grid-template-columns:1fr 1fr 1fr;font-size:12px;font-variant-numeric:tabular-nums;padding:3px 0;color:#ccc}
+.tp-sticky{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;gap:8px;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:linear-gradient(transparent,rgba(10,10,10,.98) 28%);max-width:520px;margin:0 auto}
+.tp-sticky-buy,.tp-sticky-sell,.tp-sticky-qty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border:none;border-radius:8px;padding:10px 6px;cursor:pointer;font-weight:700;font-size:14px}
+.tp-sticky-buy{background:#16c784;color:#041}
+.tp-sticky-sell{background:#ea3943;color:#fff}
+.tp-sticky-qty{background:#1a1a1a;color:#aaa;border:1px solid #2a2a2a}
+.tp-sticky-buy small,.tp-sticky-sell small,.tp-sticky-qty small{font-size:11px;font-weight:600;opacity:.9;margin-top:2px;font-variant-numeric:tabular-nums}
+.tp-na{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 16px;color:#666;gap:8px}
+.tp-na-icon{font-size:32px;opacity:.5}
+.tp-na-sub{font-size:12px;color:#444}
+.tp-ok,.tp-err{margin:6px 12px;padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer}
+.tp-ok{background:#0d2818;color:#16c784;border:1px solid #1a3a2a}
+.tp-err{background:#2a1010;color:#ea3943;border:1px solid #3a1a1a}
+.tp-empty-sm{padding:24px;text-align:center;color:#555;font-size:12px}
+.tp-terminal{padding-bottom:16px}
+.tp-term-main{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 10px}
+@media(max-width:380px){.tp-term-main{grid-template-columns:1fr}}
+.tp-form{display:flex;flex-direction:column;gap:8px}
+.tp-side-seg{display:flex;background:#141414;border-radius:8px;overflow:hidden;border:1px solid #222}
+.tp-side-seg button{flex:1;border:none;padding:10px;font-weight:700;font-size:14px;cursor:pointer;background:transparent;color:#666}
+.tp-side-seg button.buy.on{background:#16c784;color:#041}
+.tp-side-seg button.sell.on{background:#ea3943;color:#fff}
+.tp-form-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#aaa}
+.tp-form-row.muted{color:#666}
+.tp-switch{display:flex;align-items:center;gap:4px;font-size:11px}
+.tp-switch.disabled{opacity:.5}
+.tp-add{background:#222;border:none;color:#f0b90b;border-radius:4px;width:18px;height:18px;margin-left:6px;cursor:pointer;font-size:12px}
+.tp-select{width:100%;background:#141414;border:1px solid #222;color:#ccc;border-radius:6px;padding:8px;font-size:12px}
+.tp-field{display:flex;flex-direction:column;gap:4px}
+.tp-field label{font-size:11px;color:#666}
+.tp-input-wrap{display:flex;align-items:center;background:#141414;border:1px solid #222;border-radius:6px;overflow:hidden}
+.tp-input-wrap input{flex:1;background:transparent;border:none;color:#fff;padding:10px;font-size:14px;font-variant-numeric:tabular-nums;outline:none;min-width:0}
+.tp-input-wrap span{padding:0 10px;color:#666;font-size:12px;white-space:nowrap}
+.tp-pct{display:flex;gap:4px}
+.tp-pct button{flex:1;background:#141414;border:1px solid #222;color:#888;border-radius:4px;padding:6px 0;font-size:11px;cursor:pointer}
+.tp-pct button.on{border-color:#f0b90b;color:#f0b90b}
+.tp-checks{display:flex;align-items:center;gap:12px;font-size:11px;color:#666}
+.tp-checks input{margin-right:4px}
+.tp-tif{margin-left:auto;color:#888}
+.tp-submit{border:none;border-radius:8px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px}
+.tp-submit.buy{background:#16c784;color:#041}
+.tp-submit.sell{background:#ea3943;color:#fff}
+.tp-submit:disabled{opacity:.45;cursor:not-allowed}
+.tp-term-book{display:flex;flex-direction:column;font-size:11px}
+.tp-term-book-head{display:grid;grid-template-columns:1fr 1fr;color:#555;padding:2px 4px;font-size:10px}
+.tp-term-row{display:grid;grid-template-columns:1fr 1fr;background:none;border:none;color:#ccc;font:inherit;font-variant-numeric:tabular-nums;padding:2px 4px;cursor:pointer;text-align:left}
+.tp-term-mid{padding:6px 4px;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.tp-term-usd{display:block;font-size:10px;color:#666;font-weight:400}
+.tp-bottom-tabs{display:flex;gap:2px;padding:8px 8px 0;overflow-x:auto;border-top:1px solid #161616;margin-top:8px}
+.tp-btab{background:none;border:none;color:#666;font-size:12px;padding:8px 10px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent}
+.tp-btab.on{color:#fff;border-bottom-color:#f0b90b}
+.tp-btab.disabled{opacity:.45}
+.tp-orders{padding:8px 12px}
+.tp-order-sub{display:flex;gap:12px;margin-bottom:8px}
+.tp-all-markets{display:flex;align-items:center;gap:6px;padding:0 0 8px;font-size:11px;color:#888}
+.tp-order-sub button{background:none;border:none;color:#666;font-size:12px;cursor:pointer;padding:4px 0;border-bottom:2px solid transparent}
+.tp-order-sub button.on{color:#fff;border-bottom-color:#f0b90b}
+.tp-order-row{padding:10px 0;border-bottom:1px solid #141414}
+.tp-order-meta{font-size:11px;color:#888;margin-top:2px}
+.tp-cancel{margin-top:6px;background:#1a1a1a;border:1px solid #333;color:#ea3943;border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer}
+.tp-empty{display:flex;flex-direction:column;align-items:center;padding:40px 16px;color:#555;gap:8px}
+.tp-empty-icon{font-size:40px;opacity:.35}
+.tp-sheet{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:50;display:flex;align-items:flex-end;justify-content:center}
+.tp-sheet-panel{background:#121212;border-radius:16px 16px 0 0;width:100%;max-width:520px;max-height:70vh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
+.tp-sheet-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #1a1a1a}
+.tp-sheet-head button{background:none;border:none;color:#888;font-size:16px;cursor:pointer}
+.tp-sheet-search{margin:10px 12px;padding:10px 12px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#fff;font-size:14px;outline:none}
+.tp-sheet-list{overflow-y:auto;padding:0 8px 16px}
+.tp-sheet-list button{display:block;width:100%;text-align:left;background:none;border:none;color:#ccc;padding:12px;font-size:14px;cursor:pointer;border-radius:6px}
+.tp-sheet-list button.on{background:#1a1a1a;color:#f0b90b}
+.tp-sheet-list button{display:flex;justify-content:space-between;align-items:center}
+.tp-hot-up{color:#16c784;font-size:12px}
+.tp-hot-down{color:#ea3943;font-size:12px}
+.tp-keypad{position:fixed;left:0;right:0;bottom:0;z-index:60;background:#161616;border-top:1px solid #2a2a2a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));max-width:520px;margin:0 auto}
+.tp-keypad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.tp-key{background:#222;border:none;color:#fff;font-size:20px;padding:14px;border-radius:8px;cursor:pointer}
+.tp-key.ok{grid-column:span 3;background:#f0b90b;color:#111;font-weight:700}
+@media(min-width:768px){
+  .tp-shell{max-width:960px;padding-bottom:24px}
+  .tp-sticky{position:static;max-width:none;padding:12px 0;background:none}
+  .tp-term-main{grid-template-columns:1fr 1fr}
+}
+
+.tp-account-tabs{display:flex;border-bottom:1px solid #161616;background:#0c0c0c}
+.tp-account-tab{flex:1;background:none;border:none;color:#666;padding:10px 6px;font-size:12px;font-weight:700;cursor:pointer;position:relative}
+.tp-account-tab.on{color:#f0b90b}
+.tp-account-tab.on::after{content:"";position:absolute;bottom:0;left:25%;right:25%;height:2px;background:#f0b90b;border-radius:2px 2px 0 0}
+.tp-account-panel{padding:16px 12px}
+.tp-coming-soon{background:#141414;border:1px solid #222;border-radius:8px;padding:16px;margin-bottom:12px}
+.tp-coming-soon h3{margin:0 0 8px;font-size:14px;color:#f0b90b}
+.tp-coming-soon p{margin:0;font-size:12px;color:#888;line-height:1.5}
+.tp-funding-note{font-size:12px;color:#888;margin:0 0 12px;line-height:1.4}
+.tp-balance-card{background:#141414;border:1px solid #222;border-radius:8px;padding:12px;margin-bottom:8px}
+.tp-balance-card .asset{font-weight:700;font-size:13px;margin-bottom:6px}
+.tp-balance-card .row{display:flex;justify-content:space-between;font-size:12px;color:#888;padding:2px 0}
+.tp-balance-card .row b{color:#ccc;font-variant-numeric:tabular-nums}
+.tp-transfer-btn{width:100%;margin-top:12px;padding:12px;border:1px solid #f0b90b;background:#1a1608;color:#f0b90b;border-radius:8px;font-weight:700;cursor:pointer}
+.tp-transfer-form{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+.tp-transfer-form label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888}
+.tp-transfer-form select,.tp-transfer-form input{background:#141414;border:1px solid #222;color:#eee;border-radius:6px;padding:10px;font-size:13px}
+.tp-transfer-actions{display:flex;gap:8px}
+.tp-transfer-actions button{flex:1;padding:10px;border-radius:6px;border:1px solid #333;background:#1a1a1a;color:#ccc;cursor:pointer}
+.tp-transfer-actions button.confirm{background:#f0b90b;color:#111;border-color:#f0b90b;font-weight:700}
+`;
