@@ -369,7 +369,11 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
                 {m.isFavorite ? "★" : "☆"}
               </button>
 
-              <MarketIcon symbol={m.base_asset} size={32} />
+              <MarketIcon
+                symbol={m.base_asset}
+                size={32}
+                iconUrlProp={m.icon_url}
+              />
 
               <div style={styles.pairInfo}>
                 <span style={styles.pairSym}>
@@ -685,3 +689,4 @@ const styles: Record<string, CSSProperties> = {
     backgroundSize: "200% 100%",
   },
 };
+            
