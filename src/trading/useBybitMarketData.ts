@@ -720,5 +720,4 @@ export function useBybitMarketData(
     trades,
     status,
   };
-    }
-          
+}
