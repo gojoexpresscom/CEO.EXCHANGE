@@ -24,12 +24,15 @@ export type TradingPairRow = {
   is_active?: boolean | null;
   listed_at?: string | null;
   base_name?: string | null;
+  market_type?: string | null;
+  market_category?: string | null;
 };
 
 export type AssetMeta = {
   symbol: string;
   name: string | null;
   is_active?: boolean | null;
+  icon_url?: string | null;
 };
 
 export type MarketFavorite = {
