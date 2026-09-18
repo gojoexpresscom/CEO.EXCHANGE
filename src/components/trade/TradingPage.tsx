@@ -137,14 +137,7 @@ const css = `
 .account-tab.active::after{content:"";position:absolute;bottom:0;left:26%;right:26%;height:2px;background:var(--ceo-gold-bright);border-radius:2px 2px 0 0}
 
 /* ===== Main grid ===== */
-.main-grid{display:flex;flex-direction:column;gap:0}
-@media(min-width:901px){
-  .main-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:0;align-items:start}
-  .mobile-only{display:none!important}
-  .desktop-only{display:block!important}
-}
-.desktop-only{display:none}
-.mobile-only{display:block}
+.main-grid{display:block}
 
 /* ===== Terminal (combo) layout ===== */
 .terminal-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid var(--ceo-border)}
@@ -382,6 +375,21 @@ function fmtPrice(v: number | null | undefined) {
   if (v == null || !Number.isFinite(v)) return "—";
   const a = Math.abs(v);
   return v.toLocaleString(undefined, { maximumFractionDigits: a >= 1000 ? 2 : a >= 1 ? 4 : 8 });
+}
+// Fixed-decimal formatters for the order book specifically. Bybit's book
+// never reflows column widths as ticks stream in — every row holds the same
+// number of decimal places. toLocaleString's default maximumFractionDigits
+// (used elsewhere) drops trailing zeros, which is exactly what made the
+// book "jump" as prices/quantities updated. These lock both min and max.
+function fmtFixed(v: number | null | undefined, d: number) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function decimalsForTick(tick: number) {
+  if (!Number.isFinite(tick) || tick <= 0) return 2;
+  const s = tick.toString();
+  const dot = s.indexOf(".");
+  return dot === -1 ? 0 : s.length - dot - 1;
 }
 function fmtTime(iso: string) {
   const d = new Date(iso);
@@ -731,7 +739,6 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   const np = Number(p),
     na = Number(amount),
     total = Number.isFinite(np) && Number.isFinite(na) ? np * na : 0;
-  const insufficient = !!wallet && (wallet.available <= 0 || total > wallet.available);
 
   const handleAmountChange = (v: string) => {
     setAmount(v);
@@ -803,7 +810,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       return;
     }
     if (!wallet || !wallet.exists || wallet.available <= 0) {
-      setNotice(`You don't have enough ${wallet?.asset || pair.quote_asset} to place this order. Add funds to continue.`);
+      setNotice("Insufficient balance.");
       setNoticeOk(false);
       return;
     }
@@ -813,7 +820,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       return;
     }
     if (total > wallet.available) {
-      setNotice(`You don't have enough ${wallet.asset} to place this order. Add funds to continue.`);
+      setNotice("Insufficient balance.");
       setNoticeOk(false);
       return;
     }
@@ -836,11 +843,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
       return;
     }
     if (data?.error) {
-      setNotice(
-        /balance|insufficient|fund/i.test(data.error)
-          ? `You don't have enough ${wallet.asset} to place this order. Add funds to continue.`
-          : data.error
-      );
+      setNotice(/balance|insufficient|fund/i.test(data.error) ? "Insufficient balance." : data.error);
       setNoticeOk(false);
       return;
     }
@@ -951,6 +954,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
   const baseTick = baseTickFor(ticker?.last_price ?? null);
   const precisionOptions = [baseTick, baseTick * 10, baseTick * 100];
   const tick = precisionOptions[precisionIdx] ?? baseTick;
+  // Fixed decimal counts for the book so rows never reflow as ticks stream
+  // in — same idea as real Bybit: every row in a given precision holds the
+  // same number of decimals on both price and quantity.
+  const bookPriceDecimals = decimalsForTick(tick);
+  const bookQtyDecimals = 4;
   const bookLevelCap = layoutMode === "terminal" ? 12 : 28;
   const groupedAsks = groupLevels(
     rawAsks.map((a) => ({ price: a.price, amt: a.amount - a.filled_amount })),
@@ -1089,7 +1097,19 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
           )}
         </div>
 
-        {notice && <div className={noticeOk ? "notice-ok" : "error"}>{notice}</div>}
+        {notice && (
+          <div className={noticeOk ? "notice-ok" : "error"}>
+            {notice}
+            {!noticeOk && notice === "Insufficient balance." && onAddFunds && (
+              <button
+                onClick={onAddFunds}
+                style={{ marginLeft: 8, background: "none", border: 0, color: "inherit", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: "inherit" }}
+              >
+                Add funds
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Account type tabs */}
         <div className="account-tabs">
@@ -1300,17 +1320,17 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                                 <div className="book-row" key={i}>
                                   <div className="book-cell bidq">
                                     {bid && <div className="book-bar bid" style={{ width: `${bidW}%` }} />}
-                                    {bid && <span className="qty">{fmt(bid.amt, 6)}</span>}
+                                    {bid && <span className="qty">{fmtFixed(bid.amt, bookQtyDecimals)}</span>}
                                   </div>
                                   <div className="book-cell bidp" onClick={() => bid && pickPrice(bid.price, "sell")}>
-                                    {bid && <span className="price bid">{fmtPrice(bid.price)}</span>}
+                                    {bid && <span className="price bid">{fmtFixed(bid.price, bookPriceDecimals)}</span>}
                                   </div>
                                   <div className="book-cell askp" onClick={() => ask && pickPrice(ask.price, "buy")}>
-                                    {ask && <span className="price ask">{fmtPrice(ask.price)}</span>}
+                                    {ask && <span className="price ask">{fmtFixed(ask.price, bookPriceDecimals)}</span>}
                                   </div>
                                   <div className="book-cell askq">
                                     {ask && <div className="book-bar ask" style={{ width: `${askW}%` }} />}
-                                    {ask && <span className="qty">{fmt(ask.amt, 6)}</span>}
+                                    {ask && <span className="qty">{fmtFixed(ask.amt, bookQtyDecimals)}</span>}
                                   </div>
                                 </div>
                               );
@@ -1330,13 +1350,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                               <div key={`a-${a.price}`} className="book-row classic-row" onClick={() => pickPrice(a.price, "buy")}>
                                 <div className="book-bar ask" style={{ right: "auto", left: 0, width: `${w}%` }} />
                                 <span />
-                                <span className="price ask">{fmtPrice(a.price)}</span>
-                                <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmt(a.amt, 6)}</span>
+                                <span className="price ask">{fmtFixed(a.price, bookPriceDecimals)}</span>
+                                <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmtFixed(a.amt, bookQtyDecimals)}</span>
                               </div>
                             );
                           })}
                           <div className="book-mid">
-                            {fmtPrice(last)}
+                            {fmtFixed(last, bookPriceDecimals)}
                             {last != null && (
                               <span className={`chg ${change >= 0 ? "up" : "down"}`}>
                                 {change >= 0 ? "+" : ""}
@@ -1349,8 +1369,8 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                             return (
                               <div key={`b-${b.price}`} className="book-row classic-row" onClick={() => pickPrice(b.price, "sell")}>
                                 <div className="book-bar bid" style={{ width: `${w}%` }} />
-                                <span style={{ position: "relative", zIndex: 1 }}>{fmt(b.amt, 6)}</span>
-                                <span className="price bid">{fmtPrice(b.price)}</span>
+                                <span style={{ position: "relative", zIndex: 1 }}>{fmtFixed(b.amt, bookQtyDecimals)}</span>
+                                <span className="price bid">{fmtFixed(b.price, bookPriceDecimals)}</span>
                                 <span />
                               </div>
                             );
@@ -1402,182 +1422,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                 </div>
               </div>
 
-              {/* Right / form column */}
-              <div>
-                <div className="form-card">
-                  <div className="side-pill">
-                    <div className={`side-pill-thumb ${side === "sell" ? "sell" : ""}`} />
-                    <button
-                      className={`buy ${side === "buy" ? "active" : ""}`}
-                      onClick={() => {
-                        setSide("buy");
-                        setActivePct(null);
-                      }}
-                    >
-                      Buy
-                    </button>
-                    <button
-                      className={`sell ${side === "sell" ? "active" : ""}`}
-                      onClick={() => {
-                        setSide("sell");
-                        setActivePct(null);
-                      }}
-                    >
-                      Sell
-                    </button>
-                  </div>
-                  <div className="form-body">
-                    <div className="type-row">
-                      <div className="type-select-wrap">
-                        <button className="type-select" type="button" onClick={() => setShowTypeMenu((v) => !v)}>
-                          {orderType === "limit" ? "Limit" : "Market"} <span style={{ fontSize: 9 }}>▾</span>
-                        </button>
-                        {showTypeMenu && (
-                          <div className="type-menu">
-                            <button
-                              className={orderType === "limit" ? "active" : ""}
-                              onClick={() => {
-                                setOrderType("limit");
-                                setShowTypeMenu(false);
-                              }}
-                            >
-                              Limit
-                            </button>
-                            <button
-                              className={orderType === "market" ? "active" : ""}
-                              onClick={() => {
-                                setOrderType("market");
-                                setShowTypeMenu(false);
-                              }}
-                            >
-                              Market
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <span>GTC</span>
-                    </div>
-                    {orderType === "market" && (
-                      <div className="market-note">Market orders aren't supported by the current order router yet — this will place as Limit.</div>
-                    )}
-
-                    <div className="label">
-                      <span>Price</span>
-                      <span>{pair.quote_asset}</span>
-                    </div>
-                    <div className={`input-wrap ${activeField === "price" ? "focused" : ""}`}>
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        value={p}
-                        onFocus={() => setActiveField("price")}
-                        onChange={(e) => {
-                          setP(e.target.value);
-                          const n = Number(amount);
-                          if (Number.isFinite(n) && n > 0 && Number(e.target.value) > 0)
-                            setOrderValueStr(String(Number((n * Number(e.target.value)).toFixed(8))));
-                        }}
-                        placeholder="Price"
-                        disabled={orderType === "market"}
-                      />
-                      <span className="suffix">{pair.quote_asset}</span>
-                    </div>
-
-                    <div className="label">
-                      <span>Quantity</span>
-                      <span>{pair.base_asset}</span>
-                    </div>
-                    <div className={`input-wrap ${activeField === "amount" ? "focused" : ""}`}>
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        value={amount}
-                        onFocus={() => setActiveField("amount")}
-                        onChange={(e) => handleAmountChange(e.target.value)}
-                        placeholder="Quantity"
-                      />
-                      <span className="suffix">{pair.base_asset}</span>
-                    </div>
-
-                    <div className="label">
-                      <span>Order Value</span>
-                      <span>{pair.quote_asset}</span>
-                    </div>
-                    <div className={`input-wrap ${activeField === "orderValue" ? "focused" : ""}`}>
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        value={orderValueStr}
-                        onFocus={() => setActiveField("orderValue")}
-                        onChange={(e) => handleOrderValueChange(e.target.value)}
-                        placeholder="Order value"
-                      />
-                      <span className="suffix">{pair.quote_asset}</span>
-                    </div>
-
-                    <div className="pct-track">
-                      {PCT_STOPS.map((x) => (
-                        <button
-                          key={x}
-                          className={`pct-dot ${activePct === x ? "active" : ""}`}
-                          onClick={() => setPercent(x)}
-                          aria-label={`${x * 100}%`}
-                          type="button"
-                        />
-                      ))}
-                    </div>
-                    <div className="pct-labels">
-                      {PCT_STOPS.map((x) => (
-                        <span key={x}>{x * 100}%</span>
-                      ))}
-                    </div>
-
-                    <div className="available">
-                      <span>Available</span>
-                      <span>
-                        {fmt(wallet?.available ?? 0, 8)} {wallet?.asset || (side === "buy" ? pair.quote_asset : pair.base_asset)}
-                      </span>
-                    </div>
-                    <div className="total">
-                      <span>{side === "buy" ? "Max. Buy" : "Max. Sell"}</span>
-                      <span>
-                        {side === "buy" && np > 0 ? fmt((wallet?.available ?? 0) / np, 6) : fmt(wallet?.available ?? 0, 6)} {pair.base_asset}
-                      </span>
-                    </div>
-                    <div className="check-row">
-                      <label title="Take-profit / stop-loss is not supported by the current order router" style={{ opacity: 0.45 }}>
-                        <input type="checkbox" checked={false} disabled /> TP/SL
-                      </label>
-                      <label title="Post-Only is not supported by the current order router" style={{ opacity: 0.45 }}>
-                        <input type="checkbox" checked={false} disabled /> Post-Only
-                      </label>
-                    </div>
-                    {insufficient && (
-                      <div className="warning">
-                        You don't have enough {wallet?.asset || pair.quote_asset} to place this order. Add funds to continue.
-                        <button className="add" onClick={onAddFunds || (() => window.history.back())}>
-                          Add funds
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      className={`order-btn ${side}`}
-                      disabled={
-                        submitting ||
-                        insufficient ||
-                        orderType === "market" ||
-                        !Number.isFinite(np) ||
-                        np <= 0 ||
-                        !Number.isFinite(na) ||
-                        na <= 0
-                      }
-                      onClick={submit}
-                    >
-                      {submitting ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${pair.base_asset}`}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              {/* Standard view has no inline order form — matches the
+                  reference recording, which only shows the sticky 3-pill
+                  bar here and reserves the full form for Terminal view. */}
             </div>
             )}
 
@@ -1724,25 +1571,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                       </label>
                       <span style={{ marginLeft: "auto", color: "#666" }}>GTC</span>
                     </div>
-                    {insufficient && (
-                      <div className="warning">
-                        You don't have enough {wallet?.asset || pair.quote_asset} to place this order. Add funds to continue.
-                        <button className="add" onClick={onAddFunds || (() => window.history.back())}>
-                          Add funds
-                        </button>
-                      </div>
-                    )}
                     <button
                       className={`order-btn ${side}`}
-                      disabled={
-                        submitting ||
-                        insufficient ||
-                        orderType === "market" ||
-                        !Number.isFinite(np) ||
-                        np <= 0 ||
-                        !Number.isFinite(na) ||
-                        na <= 0
-                      }
+                      disabled={submitting || orderType === "market" || !Number.isFinite(np) || np <= 0 || !Number.isFinite(na) || na <= 0}
                       onClick={submit}
                     >
                       {submitting ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${pair.base_asset}`}
@@ -1769,13 +1600,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                             onClick={() => pickPrice(a.price, "buy")}
                           >
                             <div className="book-bar ask" style={{ right: "auto", left: 0, width: `${w}%` }} />
-                            <span className="price ask">{fmtPrice(a.price)}</span>
-                            <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmt(a.amt, 4)}</span>
+                            <span className="price ask">{fmtFixed(a.price, bookPriceDecimals)}</span>
+                            <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmtFixed(a.amt, bookQtyDecimals)}</span>
                           </div>
                         );
                       })}
                     <div className="book-mid" style={{ fontSize: 15 }}>
-                      {fmtPrice(last)}
+                      {fmtFixed(last, bookPriceDecimals)}
                       <span aria-hidden style={{ opacity: 0 }}>→</span>
                     </div>
                     {classicBids.slice(0, 6).map((b) => {
@@ -1788,8 +1619,8 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
                           onClick={() => pickPrice(b.price, "sell")}
                         >
                           <div className="book-bar bid" style={{ width: `${w}%` }} />
-                          <span className="price bid">{fmtPrice(b.price)}</span>
-                          <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmt(b.amt, 4)}</span>
+                          <span className="price bid">{fmtFixed(b.price, bookPriceDecimals)}</span>
+                          <span style={{ textAlign: "right", position: "relative", zIndex: 1 }}>{fmtFixed(b.amt, bookQtyDecimals)}</span>
                         </div>
                       );
                     })}
@@ -2079,11 +1910,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
               setSide("buy");
               if (ticker?.ask_price != null) setP(String(ticker.ask_price));
               setActivePct(null);
-              document.querySelector(".form-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+              setLayoutMode("terminal");
             }}
           >
             Buy
-            <span className="stb-price">{fmtPrice(ticker?.ask_price ?? last)}</span>
+            <span className="stb-price">{fmtFixed(ticker?.ask_price ?? last, bookPriceDecimals)}</span>
           </button>
           <div className="stb-qty">
             Quantity
@@ -2095,11 +1926,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onAddFunds }: 
               setSide("sell");
               if (ticker?.bid_price != null) setP(String(ticker.bid_price));
               setActivePct(null);
-              document.querySelector(".form-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+              setLayoutMode("terminal");
             }}
           >
             Sell
-            <span className="stb-price">{fmtPrice(ticker?.bid_price ?? last)}</span>
+            <span className="stb-price">{fmtFixed(ticker?.bid_price ?? last, bookPriceDecimals)}</span>
           </button>
         </div>
       )}
