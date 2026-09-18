@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "../../lib/supabase";
-import { useMarketsData } from "../../hooks/useMarketsData";
+import { useMarketsData, type MarketRow } from "../../hooks/useMarketsData";
 import BottomNav from "../nav/BottomNav";
 import MarketIcon from "./MarketIcon";
 import { formatPct, formatPrice, formatVolume } from "../../lib/format";
@@ -11,54 +11,57 @@ type Props = {
   onNavigate: (page: NavPage) => void;
 };
 
-type Category =
-  | "Overview"
-  | "Favorites"
+/** Primary top-level categories (video structure) */
+type Primary = "Watchlist" | "Crypto" | "TradFi" | "Alpha";
+
+/** Market type row */
+type MarketType =
   | "Spot"
+  | "Perpetual"
+  | "Expiry"
+  | "Options"
+  | "Arbitrage";
+
+/** Sort / activity filters */
+type SortFilter =
+  | "Hot"
   | "New"
-  | "Gainers"
-  | "Losers"
-  | "Volume"
-  | "All";
+  | "Gainer"
+  | "Loser"
+  | "Sol Eco"
+  | "Volume";
 
-const CATEGORIES: Category[] = [
-  "Overview",
-  "Favorites",
+const PRIMARIES: Primary[] = ["Watchlist", "Crypto", "TradFi", "Alpha"];
+const MARKET_TYPES: MarketType[] = [
   "Spot",
-  "New",
-  "Gainers",
-  "Losers",
-  "Volume",
-  "All",
+  "Perpetual",
+  "Expiry",
+  "Options",
+  "Arbitrage",
 ];
-
+const SORT_FILTERS: SortFilter[] = [
+  "Hot",
+  "New",
+  "Gainer",
+  "Loser",
+  "Sol Eco",
+  "Volume",
+];
 const QUOTES = ["USDT", "USDC", "BTC", "ETH"] as const;
 
 export default function MarketsPage({ onTrade, onNavigate }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [nickname, setNickname] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState<Category>("Spot");
+  const [primary, setPrimary] = useState<Primary>("Crypto");
+  const [marketType, setMarketType] = useState<MarketType>("Spot");
+  const [sortFilter, setSortFilter] = useState<SortFilter>("Hot");
   const [quote, setQuote] = useState<(typeof QUOTES)[number] | "All">("USDT");
-  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    void supabase.auth.getSession().then(async ({ data }) => {
+    void supabase.auth.getSession().then(({ data }) => {
       if (!alive) return;
-      const uid = data.session?.user?.id ?? null;
-      setUserId(uid);
-      if (uid) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("nickname,profile_picture_url")
-          .eq("id", uid)
-          .maybeSingle();
-        if (!alive) return;
-        setNickname(profile?.nickname ?? null);
-        setAvatarUrl(profile?.profile_picture_url ?? null);
-      }
+      setUserId(data.session?.user?.id ?? null);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUserId(session?.user?.id ?? null);
@@ -69,117 +72,128 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
     };
   }, []);
 
-  const { markets, loading, error, bybitStatus, toggleFavorite, refresh } =
-    useMarketsData(userId);
+  const {
+    spotMarkets,
+    perpetualMarkets,
+    loading,
+    error,
+    toggleFavorite,
+    refresh,
+  } = useMarketsData(userId);
+
+  const emptyReason = useMemo((): string | null => {
+    if (primary === "TradFi") return "No TradFi markets available yet";
+    if (primary === "Alpha") return "No Alpha markets available yet";
+    if (primary === "Crypto") {
+      if (marketType === "Expiry") return "Expiry markets coming soon";
+      if (marketType === "Options") return "Options markets coming soon";
+      if (marketType === "Arbitrage") return "Arbitrage markets coming soon";
+    }
+    return null;
+  }, [primary, marketType]);
 
   const filtered = useMemo(() => {
-    let list = [...markets];
+    if (emptyReason) return [] as MarketRow[];
 
-    // Quote filter
+    let list: MarketRow[] = [];
+
+    if (primary === "Watchlist") {
+      const all = [...spotMarkets, ...perpetualMarkets];
+      list = all.filter((m) => m.isFavorite);
+    } else if (primary === "Crypto") {
+      if (marketType === "Spot") {
+        list = spotMarkets.filter(
+          (m) => m.market_type === "spot" || m.kind === "spot"
+        );
+      } else if (marketType === "Perpetual") {
+        list = perpetualMarkets.length
+          ? perpetualMarkets
+          : spotMarkets.filter((m) => m.market_type === "perpetual");
+      } else {
+        list = [];
+      }
+    }
+
     if (quote !== "All") {
       list = list.filter(
         (m) => m.quote_asset.toUpperCase() === quote.toUpperCase()
       );
     }
 
-    // Category
-    if (category === "Favorites") {
-      list = list.filter((m) => m.isFavorite);
-    } else if (category === "New") {
+    const q = search.trim().toUpperCase().replace(/\s+/g, "");
+    if (q) {
+      list = list.filter((m) => {
+        const sym = `${m.base_asset}/${m.quote_asset}`.toUpperCase();
+        const compact = `${m.base_asset}${m.quote_asset}`.toUpperCase();
+        return (
+          m.base_asset.toUpperCase().includes(q) ||
+          m.quote_asset.toUpperCase().includes(q) ||
+          m.symbol.toUpperCase().includes(q) ||
+          sym.includes(q) ||
+          compact.includes(q)
+        );
+      });
+    }
+
+    if (sortFilter === "Gainer") {
       list = list
-        .filter((m) => m.listed_at)
-        .sort(
+        .filter((m) => m.change_24h != null && m.change_24h > 0)
+        .sort((a, b) => (b.change_24h ?? 0) - (a.change_24h ?? 0));
+    } else if (sortFilter === "Loser") {
+      list = list
+        .filter((m) => m.change_24h != null && m.change_24h < 0)
+        .sort((a, b) => (a.change_24h ?? 0) - (b.change_24h ?? 0));
+    } else if (sortFilter === "Volume") {
+      list = [...list].sort(
+        (a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0)
+      );
+    } else if (sortFilter === "Hot") {
+      list = [...list].sort((a, b) => {
+        const score = (m: MarketRow) =>
+          (m.volume_24h ?? 0) * Math.abs(m.change_24h ?? 0);
+        return score(b) - score(a);
+      });
+    } else if (sortFilter === "New") {
+      const withDate = list.filter((m) => m.listed_at);
+      if (withDate.length) {
+        list = withDate.sort(
           (a, b) =>
             new Date(b.listed_at || 0).getTime() -
             new Date(a.listed_at || 0).getTime()
         );
-    } else if (category === "Gainers") {
-      list = list
-        .filter((m) => m.change_24h != null && m.change_24h > 0)
-        .sort((a, b) => (b.change_24h ?? 0) - (a.change_24h ?? 0));
-    } else if (category === "Losers") {
-      list = list
-        .filter((m) => m.change_24h != null && m.change_24h < 0)
-        .sort((a, b) => (a.change_24h ?? 0) - (b.change_24h ?? 0));
-    } else if (category === "Volume" || category === "Overview") {
-      list = list
-        .filter((m) => m.volume_24h != null)
-        .sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
-    } else if (category === "Spot" || category === "All") {
-      // spot = all active pairs in trading_pairs (this list is already spot)
-      list = list.sort((a, b) =>
-        a.symbol.localeCompare(b.symbol)
-      );
-    }
-
-    // Search across base, quote, full pair
-    const q = search.trim().toLowerCase().replace(/\s+/g, "");
-    if (q) {
+      }
+    } else if (sortFilter === "Sol Eco") {
       list = list.filter((m) => {
-        const base = m.base_asset.toLowerCase();
-        const quoteA = m.quote_asset.toLowerCase();
-        const pair = `${base}/${quoteA}`;
-        const compact = `${base}${quoteA}`;
-        const sym = m.symbol.toLowerCase().replace(/\s+/g, "");
+        const cat = (m.market_category || "").toLowerCase();
+        const base = m.base_asset.toUpperCase();
+        const quoteA = m.quote_asset.toUpperCase();
+        const sym = m.symbol.toUpperCase();
         return (
-          base.includes(q) ||
-          quoteA.includes(q) ||
-          pair.includes(q) ||
-          compact.includes(q) ||
-          sym.includes(q)
+          base === "SOL" ||
+          quoteA === "SOL" ||
+          sym.includes("SOL") ||
+          cat.includes("sol")
         );
       });
     }
 
     return list;
-  }, [markets, category, quote, search]);
+  }, [
+    emptyReason,
+    primary,
+    marketType,
+    quote,
+    search,
+    sortFilter,
+    spotMarkets,
+    perpetualMarkets,
+  ]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refresh();
-    setRefreshing(false);
-  };
-
-  const initial =
-    (nickname || "U").trim().charAt(0).toUpperCase() || "U";
+  const showTypeRow = primary === "Crypto";
+  const showSortRow = primary === "Crypto" || primary === "Watchlist";
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt=""
-              style={styles.avatar}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
-            />
-          ) : (
-            <div style={styles.avatarFallback}>{initial}</div>
-          )}
-          <h1 style={styles.title}>Markets</h1>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{
-            fontSize: 10,
-            color: bybitStatus === "connected" ? "#16c784" : "#666",
-            fontWeight: 600,
-          }}>
-            {bybitStatus === "connected" ? "● Live" : bybitStatus === "connecting" ? "○ Connecting" : "○ Offline"}
-          </span>
-          <button
-            type="button"
-            style={styles.refreshBtn}
-            onClick={() => void onRefresh()}
-            disabled={refreshing || loading}
-          >
-            {refreshing ? "…" : "Refresh"}
-          </button>
-        </div>
-      </header>
-
       <div style={styles.searchWrap}>
         <span style={styles.searchIcon}>⌕</span>
         <input
@@ -203,54 +217,97 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
       </div>
 
       <div style={styles.tabs}>
-        {CATEGORIES.map((c) => (
+        {PRIMARIES.map((c) => (
           <button
             key={c}
             type="button"
             style={{
               ...styles.tab,
-              ...(category === c ? styles.tabActive : {}),
+              ...(primary === c ? styles.tabActive : {}),
             }}
-            onClick={() => setCategory(c)}
+            onClick={() => setPrimary(c)}
           >
             {c}
           </button>
         ))}
       </div>
 
-      <div style={styles.quotes}>
-        {(["All", ...QUOTES] as const).map((q) => (
-          <button
-            key={q}
-            type="button"
-            style={{
-              ...styles.quoteChip,
-              ...(quote === q ? styles.quoteActive : {}),
-            }}
-            onClick={() => setQuote(q)}
-          >
-            {q}
-          </button>
-        ))}
-      </div>
+      {showTypeRow && (
+        <div style={styles.typeRow}>
+          {MARKET_TYPES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              style={{
+                ...styles.typeChip,
+                ...(marketType === t ? styles.typeActive : {}),
+              }}
+              onClick={() => setMarketType(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div style={styles.colHead}>
-        <span style={styles.colPair}>Pair</span>
-        <span style={styles.colPrice}>Price</span>
-        <span style={styles.colChg}>24h</span>
-      </div>
+      {showSortRow && (
+        <div style={styles.filterRow}>
+          <div style={styles.sortRow}>
+            {SORT_FILTERS.map((f) => (
+              <button
+                key={f}
+                type="button"
+                style={{
+                  ...styles.sortChip,
+                  ...(sortFilter === f ? styles.sortActive : {}),
+                }}
+                onClick={() => setSortFilter(f)}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          <div style={styles.quotes}>
+            {(["All", ...QUOTES] as const).map((q) => (
+              <button
+                key={q}
+                type="button"
+                style={{
+                  ...styles.quoteChip,
+                  ...(quote === q ? styles.quoteActive : {}),
+                }}
+                onClick={() => setQuote(q)}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!emptyReason && (
+        <div style={styles.colHead}>
+          <span style={styles.colPair}>Pair</span>
+          <span style={styles.colPrice}>Price</span>
+          <span style={styles.colChg}>24h</span>
+        </div>
+      )}
 
       {error && (
         <div style={styles.errorBox}>
           <div>Unable to load market data</div>
           <div style={styles.errorDetail}>{error}</div>
-          <button type="button" style={styles.retry} onClick={() => void onRefresh()}>
+          <button
+            type="button"
+            style={styles.retry}
+            onClick={() => void refresh()}
+          >
             Retry
           </button>
         </div>
       )}
 
-      {loading && !markets.length && (
+      {loading && !spotMarkets.length && !perpetualMarkets.length && (
         <div style={styles.skeletonWrap}>
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} style={styles.skeletonRow} />
@@ -258,9 +315,27 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
         </div>
       )}
 
-      {!loading && !error && !filtered.length && (
+      {!loading && !error && emptyReason && (
         <div style={styles.empty}>
-          {search ? "No markets found" : "No markets match this filter"}
+          <div style={styles.emptyTitle}>{emptyReason}</div>
+          <div style={styles.emptyHint}>
+            Categories stay available for the planned CEO EXCHANGE market
+            structure. No placeholder data is shown.
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && !emptyReason && !filtered.length && (
+        <div style={styles.empty}>
+          {primary === "Watchlist"
+            ? userId
+              ? "No favorites yet — tap ★ on a pair to add it"
+              : "Sign in to use Watchlist"
+            : search
+              ? "No markets found"
+              : marketType === "Perpetual" && !perpetualMarkets.length
+                ? "No perpetual market data available yet"
+                : "No markets match this filter"}
         </div>
       )}
 
@@ -270,7 +345,7 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
           const hasPrice = m.last_price != null;
           return (
             <div
-              key={m.symbol}
+              key={`${m.kind}-${m.symbol}`}
               role="button"
               tabIndex={0}
               style={styles.row}
@@ -300,6 +375,9 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
                 <span style={styles.pairSym}>
                   {m.base_asset}
                   <span style={styles.pairQuote}>/{m.quote_asset}</span>
+                  {m.kind === "perpetual" ? (
+                    <span style={styles.perpTag}>PERP</span>
+                  ) : null}
                 </span>
                 <span style={styles.pairVol}>
                   {m.volume_24h != null
@@ -352,51 +430,8 @@ const styles: Record<string, CSSProperties> = {
       "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
     paddingBottom: 8,
   },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "14px 16px 8px",
-  },
-  headerLeft: { display: "flex", alignItems: "center", gap: 10 },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: "50%",
-    objectFit: "cover",
-    border: "1px solid #2a2110",
-  },
-  avatarFallback: {
-    width: 32,
-    height: 32,
-    borderRadius: "50%",
-    background: "#1a1a1a",
-    border: "1px solid #2a2110",
-    color: "#c9a227",
-    fontWeight: 800,
-    fontSize: 13,
-    display: "grid",
-    placeItems: "center",
-  },
-  title: {
-    margin: 0,
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#fff",
-    letterSpacing: "-0.02em",
-  },
-  refreshBtn: {
-    border: "1px solid #2a2110",
-    background: "transparent",
-    color: "#c9a227",
-    borderRadius: 8,
-    padding: "6px 12px",
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
   searchWrap: {
-    margin: "4px 16px 10px",
+    margin: "12px 16px 10px",
     display: "flex",
     alignItems: "center",
     gap: 8,
@@ -426,8 +461,8 @@ const styles: Record<string, CSSProperties> = {
   },
   tabs: {
     display: "flex",
-    gap: 4,
-    padding: "0 12px 8px",
+    gap: 2,
+    padding: "0 12px 6px",
     overflowX: "auto",
     WebkitOverflowScrolling: "touch",
   },
@@ -436,20 +471,68 @@ const styles: Record<string, CSSProperties> = {
     background: "transparent",
     border: "none",
     color: "#777",
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: 600,
-    padding: "8px 10px",
+    padding: "8px 12px",
     borderRadius: 8,
     cursor: "pointer",
   },
   tabActive: {
     color: "#f5b51b",
-    background: "rgba(245,181,27,0.1)",
+    background: "rgba(245,181,27,0.12)",
+  },
+  typeRow: {
+    display: "flex",
+    gap: 4,
+    padding: "0 12px 8px",
+    overflowX: "auto",
+    WebkitOverflowScrolling: "touch",
+  },
+  typeChip: {
+    flexShrink: 0,
+    background: "transparent",
+    border: "none",
+    color: "#666",
+    fontSize: 12,
+    fontWeight: 700,
+    padding: "6px 10px",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  typeActive: {
+    color: "#fff",
+    background: "#1a1a1a",
+    borderBottom: "2px solid #f5b51b",
+  },
+  filterRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    padding: "0 12px 8px",
+  },
+  sortRow: {
+    display: "flex",
+    gap: 4,
+    overflowX: "auto",
+    WebkitOverflowScrolling: "touch",
+  },
+  sortChip: {
+    flexShrink: 0,
+    background: "transparent",
+    border: "none",
+    color: "#777",
+    fontSize: 12,
+    fontWeight: 600,
+    padding: "5px 8px",
+    borderRadius: 6,
+    cursor: "pointer",
+  },
+  sortActive: {
+    color: "#f5b51b",
   },
   quotes: {
     display: "flex",
     gap: 6,
-    padding: "0 16px 10px",
     overflowX: "auto",
   },
   quoteChip: {
@@ -459,7 +542,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#999",
     fontSize: 12,
     fontWeight: 700,
-    padding: "6px 12px",
+    padding: "5px 11px",
     borderRadius: 20,
     cursor: "pointer",
   },
@@ -512,8 +595,20 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
   },
   pairQuote: { color: "#888", fontWeight: 600 },
+  perpTag: {
+    fontSize: 9,
+    fontWeight: 800,
+    color: "#f5b51b",
+    background: "rgba(245,181,27,0.12)",
+    padding: "1px 4px",
+    borderRadius: 4,
+    letterSpacing: "0.02em",
+  },
   pairVol: {
     fontSize: 11,
     color: "#666",
@@ -541,10 +636,23 @@ const styles: Record<string, CSSProperties> = {
     fontVariantNumeric: "tabular-nums",
   },
   empty: {
-    padding: 32,
+    padding: "40px 24px",
     textAlign: "center",
     color: "#666",
     fontSize: 13,
+  },
+  emptyTitle: {
+    color: "#aaa",
+    fontSize: 14,
+    fontWeight: 600,
+    marginBottom: 8,
+  },
+  emptyHint: {
+    color: "#555",
+    fontSize: 12,
+    lineHeight: 1.45,
+    maxWidth: 280,
+    margin: "0 auto",
   },
   errorBox: {
     margin: "8px 16px",
@@ -577,4 +685,3 @@ const styles: Record<string, CSSProperties> = {
     backgroundSize: "200% 100%",
   },
 };
-          

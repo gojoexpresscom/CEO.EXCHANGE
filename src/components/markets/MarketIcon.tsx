@@ -4,19 +4,26 @@ import { iconUrl } from "../../lib/format";
 type Props = {
   symbol: string;
   size?: number;
+  /** Prefer assets.icon_url from backend when available */
+  iconUrlProp?: string | null;
 };
 
 /**
- * Token icon with CDN cryptocurrency-icons + initials fallback.
+ * Token icon: assets.icon_url → CDN cryptocurrency-icons → initials fallback.
  * Does not use exchange brand logos.
  */
-export default function MarketIcon({ symbol, size = 32 }: Props) {
+export default function MarketIcon({
+  symbol,
+  size = 32,
+  iconUrlProp,
+}: Props) {
   const [failed, setFailed] = useState(false);
   const base = (symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   const initials = base.slice(0, 2) || "?";
-  const src = iconUrl(base);
+  const backend = (iconUrlProp || "").trim();
+  const src = backend || (base ? iconUrl(base) : "");
 
-  if (failed || !base) {
+  if (failed || !src || !base) {
     return (
       <div
         style={{
