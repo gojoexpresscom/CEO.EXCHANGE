@@ -316,6 +316,27 @@ export function useMarketsData(userId: string | null) {
     };
   }, [loadDbTickers]);
 
+  // Perpetual prices previously only loaded once on mount (inside
+  // loadPairs -> loadPerpetuals) with no subscription and no polling,
+  // so they went stale after first load while spot prices kept moving.
+  // Mirror the market_tickers realtime pattern above so derivative
+  // prices update live too.
+  useEffect(() => {
+    const channel = supabase
+      .channel("markets-derivative-tickers-v1")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "derivative_market_tickers" },
+        () => {
+          void loadPerpetuals();
+        }
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [loadPerpetuals]);
+
   const nameByBase = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of assets) {
