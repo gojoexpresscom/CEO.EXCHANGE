@@ -19,6 +19,11 @@ export type MarketRow = {
   provider_symbol: string | null;
   hasTicker: boolean;
   isFavorite: boolean;
+  /** spot | perpetual | … */
+  market_type: string;
+  market_category?: string | null;
+  icon_url?: string | null;
+  kind: "spot" | "perpetual";
 };
 
 type TickerRow = Record<string, unknown>;
@@ -95,9 +100,8 @@ async function fetchAllPages<T>(
 }
 
 /**
- * Canonical pairs from trading_pairs.
- * Prices: market_tickers (backend sync) preferred, else public Bybit tickers
- * keyed by base+quote (never by "ADA/USDT" form).
+ * Canonical pairs from trading_pairs + optional derivative_market_tickers.
+ * Prices: market_tickers preferred, else public Bybit tickers.
  */
 export function useMarketsData(userId: string | null) {
   const [pairs, setPairs] = useState<TradingPairRow[]>([]);
@@ -105,6 +109,7 @@ export function useMarketsData(userId: string | null) {
   const [dbTickers, setDbTickers] = useState<Map<string, TickerRow>>(
     () => new Map()
   );
+  const [perpRows, setPerpRows] = useState<MarketRow[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +146,7 @@ export function useMarketsData(userId: string | null) {
         str(t.symbol),
         str(t.provider_symbol),
         str(t.bybit_symbol),
+        str(t.trading_pair),
       ].filter(Boolean) as string[];
       for (const k of keys) {
         map.set(k.toUpperCase(), t);
@@ -150,12 +156,79 @@ export function useMarketsData(userId: string | null) {
     return { map, error: null as string | null };
   }, []);
 
+  const loadPerpetuals = useCallback(async () => {
+    // Real derivative market data only — never invent prices.
+    try {
+      const { rows, error: e } = await fetchAllPages<TickerRow>(
+        async (from, to) => {
+          const res = await supabase
+            .from("derivative_market_tickers")
+            .select(
+              "symbol,base_asset,quote_asset,provider_symbol,last_price,change_24h,volume_24h,high_24h,low_24h,market_type"
+            )
+            .range(from, to);
+          return { data: res.data as TickerRow[] | null, error: res.error };
+        }
+      );
+      if (e) {
+        setPerpRows([]);
+        return;
+      }
+      const mapped: MarketRow[] = rows.map((t) => {
+        const base = str(t.base_asset)?.toUpperCase() || "";
+        const quote = str(t.quote_asset)?.toUpperCase() || "USDT";
+        const symbol =
+          str(t.symbol)?.toUpperCase() ||
+          str(t.provider_symbol)?.toUpperCase() ||
+          `${base}${quote}`;
+        const last_price = pickPrice(t);
+        const change_24h = pickChange(t);
+        const volume_24h = pickVolume(t);
+        const hasTicker = last_price != null && Number.isFinite(last_price);
+        return {
+          symbol,
+          base_asset: base || symbol.replace(/USDT|USDC|BTC|ETH$/i, ""),
+          quote_asset: quote,
+          last_price: hasTicker ? last_price : null,
+          change_24h: hasTicker ? change_24h : null,
+          volume_24h: hasTicker ? volume_24h : null,
+          high_24h: pickHigh(t),
+          low_24h: pickLow(t),
+          provider_symbol: str(t.provider_symbol),
+          hasTicker,
+          isFavorite: false,
+          market_type: "perpetual",
+          market_category: null,
+          kind: "perpetual" as const,
+        };
+      });
+      setPerpRows(mapped);
+    } catch {
+      setPerpRows([]);
+    }
+  }, []);
+
   const loadPairs = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    const pairsResult = await fetchAllPages<TradingPairRow>(
-      async (from, to) => {
+    let pairsResult = await fetchAllPages<TradingPairRow>(async (from, to) => {
+      const res = await supabase
+        .from("trading_pairs")
+        .select(
+          "id,symbol,base_asset,quote_asset,is_active,listed_at,market_type,market_category"
+        )
+        .eq("is_active", true)
+        .order("symbol", { ascending: true })
+        .range(from, to);
+      return {
+        data: res.data as TradingPairRow[] | null,
+        error: res.error,
+      };
+    });
+
+    if (pairsResult.error) {
+      pairsResult = await fetchAllPages<TradingPairRow>(async (from, to) => {
         const res = await supabase
           .from("trading_pairs")
           .select("id,symbol,base_asset,quote_asset,is_active,listed_at")
@@ -166,8 +239,8 @@ export function useMarketsData(userId: string | null) {
           data: res.data as TradingPairRow[] | null,
           error: res.error,
         };
-      }
-    );
+      });
+    }
 
     if (pairsResult.error) {
       setError(pairsResult.error);
@@ -176,21 +249,32 @@ export function useMarketsData(userId: string | null) {
     }
     setPairs(pairsResult.rows);
 
-    const assetsResult = await fetchAllPages<AssetMeta>(async (from, to) => {
+    let assetsResult = await fetchAllPages<AssetMeta>(async (from, to) => {
       const res = await supabase
         .from("assets")
-        .select("symbol,name,is_active")
+        .select("symbol,name,is_active,icon_url")
         .order("symbol", { ascending: true })
         .range(from, to);
       return { data: res.data as AssetMeta[] | null, error: res.error };
     });
+    if (assetsResult.error) {
+      assetsResult = await fetchAllPages<AssetMeta>(async (from, to) => {
+        const res = await supabase
+          .from("assets")
+          .select("symbol,name,is_active")
+          .order("symbol", { ascending: true })
+          .range(from, to);
+        return { data: res.data as AssetMeta[] | null, error: res.error };
+      });
+    }
     if (!assetsResult.error) setAssets(assetsResult.rows);
 
     const tickerPack = await loadDbTickers();
     setDbTickers(tickerPack.map);
-    // Don't block UI if market_tickers fails — Bybit public feed still works
+
+    await loadPerpetuals();
     setLoading(false);
-  }, [loadDbTickers]);
+  }, [loadDbTickers, loadPerpetuals]);
 
   const loadFavorites = useCallback(async () => {
     if (!userId) {
@@ -240,27 +324,32 @@ export function useMarketsData(userId: string | null) {
     return m;
   }, [assets]);
 
-  const markets: MarketRow[] = useMemo(() => {
+  const iconByBase = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of assets) {
+      if (a.symbol && a.icon_url) {
+        m.set(a.symbol.toUpperCase(), a.icon_url);
+      }
+    }
+    return m;
+  }, [assets]);
+
+  const spotMarkets: MarketRow[] = useMemo(() => {
     return pairs.map((p) => {
-      const base = (p.base_asset || "").trim().toUpperCase();
-      const quote = (p.quote_asset || "").trim().toUpperCase();
+      const base = (p.base_asset || "").toUpperCase();
+      const quote = (p.quote_asset || "").toUpperCase();
       const pairSym = (p.symbol || "").toUpperCase();
       const provider = toProviderSymbol(base, quote);
 
-      // 1) Backend market_tickers
       let db: TickerRow | undefined;
       if (provider) {
         db =
-          dbTickers.get(provider) ||
-          dbTickers.get(compactSymbol(provider));
+          dbTickers.get(provider) || dbTickers.get(compactSymbol(provider));
       }
       if (!db) {
-        db =
-          dbTickers.get(pairSym) ||
-          dbTickers.get(compactSymbol(pairSym));
+        db = dbTickers.get(pairSym) || dbTickers.get(compactSymbol(pairSym));
       }
 
-      // 2) Live Bybit public ticker (same as Home)
       const bybit = provider ? bybitTickers.get(provider) : undefined;
 
       const last_price =
@@ -271,9 +360,15 @@ export function useMarketsData(userId: string | null) {
         (db ? pickVolume(db) : null) ?? bybit?.volume_24h ?? null;
       const high_24h = db ? pickHigh(db) : null;
       const low_24h = db ? pickLow(db) : null;
-
-      // Treat literal 0 as missing only when both sources empty — keep real 0 if rare
       const hasTicker = last_price != null && Number.isFinite(last_price);
+
+      const mt = (p.market_type || "spot").toLowerCase();
+      const market_type =
+        mt.includes("perp") || mt.includes("future")
+          ? "perpetual"
+          : mt.includes("spot") || !p.market_type
+            ? "spot"
+            : mt;
 
       return {
         symbol: p.symbol,
@@ -289,9 +384,26 @@ export function useMarketsData(userId: string | null) {
         provider_symbol: provider,
         hasTicker,
         isFavorite: favorites.has(p.symbol) || favorites.has(pairSym),
+        market_type,
+        market_category: p.market_category ?? null,
+        icon_url: iconByBase.get(base) || null,
+        kind: "spot" as const,
       };
     });
-  }, [pairs, dbTickers, bybitTickers, nameByBase, favorites]);
+  }, [pairs, dbTickers, bybitTickers, nameByBase, iconByBase, favorites]);
+
+  const perpetualMarkets: MarketRow[] = useMemo(() => {
+    return perpRows.map((row) => ({
+      ...row,
+      isFavorite:
+        favorites.has(row.symbol) ||
+        favorites.has(compactSymbol(row.symbol)),
+      icon_url: iconByBase.get(row.base_asset.toUpperCase()) || null,
+      base_name: nameByBase.get(row.base_asset.toUpperCase()) || undefined,
+    }));
+  }, [perpRows, favorites, iconByBase, nameByBase]);
+
+  const markets = spotMarkets;
 
   const toggleFavorite = useCallback(
     async (symbol: string) => {
@@ -327,6 +439,8 @@ export function useMarketsData(userId: string | null) {
 
   return {
     markets,
+    spotMarkets,
+    perpetualMarkets,
     loading,
     error,
     bybitStatus,
@@ -334,5 +448,4 @@ export function useMarketsData(userId: string | null) {
     toggleFavorite,
     refresh,
   };
-        }
-                             
+}
