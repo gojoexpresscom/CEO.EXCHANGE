@@ -898,24 +898,20 @@ function Home({
     }
   }, [loadProfileAndWallets, loadTradingPairs, loadFavorites, loadAssetsMeta, loadMarketTickers]);
 
-  /** Secondary: feed, support, modals — after shell is usable. */
+  /** Secondary visible content only — modal-only datasets load on open. */
   const loadSecondary = useCallback(async (id: string) => {
     try {
       await Promise.all([
         loadPosts(id, feedTab),
         loadNotifications(id),
         loadPlatformAnnouncements(),
-        loadSupport(id),
         loadReferrals(),
         loadGiveaways(),
-        loadNetworks(),
-        loadWalletAddresses(id),
-        loadTransactions(id),
       ]);
     } catch (e: any) {
       console.warn("[Home] secondary load:", e?.message ?? e);
     }
-  }, [feedTab, loadPosts, loadNotifications, loadPlatformAnnouncements, loadSupport, loadReferrals, loadGiveaways, loadNetworks, loadWalletAddresses, loadTransactions]);
+  }, [feedTab, loadPosts, loadNotifications, loadPlatformAnnouncements, loadReferrals, loadGiveaways]);
 
   const loadAll = useCallback(async (id: string) => {
     await loadCritical(id);
@@ -1539,7 +1535,7 @@ function Home({
           {search && <button type="button" style={styles.iconButton} onClick={() => setSearch("")} aria-label="Clear search"><Icon name="close" size={14} /></button>}
         </div>
         <div style={styles.headerActions}>
-          <button type="button" style={styles.headerIconBtn} onClick={() => setModal("support")} aria-label="Support">
+          <button type="button" style={styles.headerIconBtn} onClick={() => { if (userId) void loadSupport(userId); setModal("support"); }} aria-label="Support">
             <Icon name="headset" size={22} />
           </button>
           <button type="button" style={{ ...styles.headerIconBtn, position: "relative" as const }} onClick={() => setModal("notifications")} aria-label="Notifications">
@@ -1605,7 +1601,7 @@ function Home({
                 <span style={styles.balanceUnit}> USD</span>
               </div>
             </div>
-            <button type="button" style={styles.depositPill} onClick={() => setModal("deposit")}>Deposit</button>
+            <button type="button" style={styles.depositPill} onClick={() => { void loadNetworks(); if (userId) { void loadWalletAddresses(userId); void loadTransactions(userId); } setModal("deposit"); }}>Deposit</button>
           </div>
         </section>
 
@@ -1620,7 +1616,7 @@ function Home({
           <QuickAction icon="userPlus" label="Invite Friends" onClick={() => setModal("invite")} />
           <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
-          <QuickAction icon="wallet" label="Deposit" onClick={() => setModal("deposit")} />
+          <QuickAction icon="wallet" label="Deposit" onClick={() => { void loadNetworks(); if (userId) { void loadWalletAddresses(userId); void loadTransactions(userId); } setModal("deposit"); }} />
           <QuickAction icon="more" label="More" onClick={() => setModal("services")} />
         </section>
 
@@ -1802,14 +1798,14 @@ function Home({
         <ServicesModal
           onClose={closeModal}
           onOpen={(key) => {
-            if (key === "deposit") setModal("deposit");
+            if (key === "deposit") { void loadNetworks(); if (userId) { void loadWalletAddresses(userId); void loadTransactions(userId); } setModal("deposit"); }
             else if (key === "invite") setModal("invite");
             else if (key === "rewards") setModal("rewards");
             else if (key === "giveaway") setModal("giveaway");
             else if (key === "p2p") { closeModal(); onP2P?.(); }
-            else if (key === "support") setModal("support");
+            else if (key === "support") { if (userId) void loadSupport(userId); setModal("support"); }
             else if (key === "menu") setModal("menu");
-            else if (key === "buy" || key === "fiat") setModal("deposit");
+            else if (key === "buy" || key === "fiat") { void loadNetworks(); if (userId) { void loadWalletAddresses(userId); void loadTransactions(userId); } setModal("deposit"); }
             else if (key === "convert") {
               closeModal();
               if (onNavigate) onNavigate("trade");
