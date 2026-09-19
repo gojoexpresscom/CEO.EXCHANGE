@@ -481,6 +481,8 @@ function Home({
   // Bybit's public ticker feed via useBybitTickers, the same architecture
   // TradingPage already uses for the Trading page.
   const [marketPairs, setMarketPairs] = useState<Market[]>([]);
+  const [marketsLoading, setMarketsLoading] = useState(true);
+  const [marketsError, setMarketsError] = useState<string | null>(null);
   /** Real prices from market_tickers (bybit-spot-ticker-sync). Bybit WS/REST overlays live values when available. */
   const [dbTickerMap, setDbTickerMap] = useState<Map<string, { last_price: number | null; change_24h: number | null; volume_24h: number | null; updated_at: string | null }>>(() => new Map());
   const [posts, setPosts] = useState<Post[]>([]);
@@ -560,120 +562,189 @@ function Home({
   // hardcoded subset), regardless of whether Bybit ends up having live
   // data for it; unsupported pairs are handled below once Bybit's ticker
   // snapshot comes back.
-  const loadMarketPairs = useCallback(async () => {
-    // Page through all active pairs — do not cap at 200 when the catalog is larger.
-    const allPairs: any[] = [];
-    const allAssets: any[] = [];
-    const pageSize = 1000;
-    for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabase
-        .from("trading_pairs")
-        .select("id,symbol,base_asset,quote_asset,is_active,listed_at")
-        .eq("is_active", true)
-        .order("symbol")
-        .range(from, from + pageSize - 1);
-      if (error) {
-        console.error("[Home] trading_pairs load failed:", error);
-        if (!allPairs.length) {
-          setMarketPairs([]);
+  /** Catalog only — never waits on tickers/assets. */
+  const loadTradingPairs = useCallback(async () => {
+    const started = performance.now();
+    console.log("[Home] trading_pairs started");
+    setMarketsLoading(true);
+    setMarketsError(null);
+    try {
+      const allPairs: any[] = [];
+      const pageSize = 1000;
+      // Try simple select first (fast path under typical PostgREST limits)
+      {
+        const { data, error } = await supabase
+          .from("trading_pairs")
+          .select("id,symbol,base_asset,quote_asset,is_active,listed_at")
+          .eq("is_active", true)
+          .order("symbol");
+        if (error) {
+          console.log("[Home] trading_pairs", {
+            rows: 0,
+            error: error.message,
+            ms: Math.round(performance.now() - started),
+          });
+          setMarketsError(error.message);
+          setMarketsLoading(false);
           return;
         }
-        break;
+        if (data) allPairs.push(...data);
       }
-      const batch = data ?? [];
-      allPairs.push(...batch);
-      if (batch.length < pageSize) break;
+      // Page if we hit the default 1000-row cap
+      if (allPairs.length >= 1000) {
+        allPairs.length = 0;
+        for (let from = 0; ; from += pageSize) {
+          const { data, error } = await supabase
+            .from("trading_pairs")
+            .select("id,symbol,base_asset,quote_asset,is_active,listed_at")
+            .eq("is_active", true)
+            .order("symbol")
+            .range(from, from + pageSize - 1);
+          if (error) {
+            console.log("[Home] trading_pairs page", {
+              error: error.message,
+              ms: Math.round(performance.now() - started),
+            });
+            if (!allPairs.length) {
+              setMarketsError(error.message);
+              setMarketsLoading(false);
+              return;
+            }
+            break;
+          }
+          const batch = data ?? [];
+          allPairs.push(...batch);
+          if (batch.length < pageSize) break;
+        }
+      }
+
+      const rows = allPairs.map((pair: any) => {
+        const symbol = String(
+          pair.symbol ?? `${pair.base_asset}/${pair.quote_asset}`
+        );
+        return {
+          symbol,
+          base_asset: String(pair.base_asset ?? ""),
+          quote_asset: String(pair.quote_asset ?? ""),
+          base_name: undefined,
+          last_price: null,
+          change_24h: null,
+          volume_24h: null,
+          updated_at: null,
+          hasTicker: false,
+          listed_at: pair.listed_at ?? null,
+        } as Market;
+      });
+      setMarketPairs(rows);
+      setMarketsLoading(false);
+      console.log("[Home] trading_pairs finished", {
+        rows: rows.length,
+        error: null,
+        ms: Math.round(performance.now() - started),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.log("[Home] trading_pairs exception", { error: msg });
+      setMarketsError(msg);
+      setMarketsLoading(false);
     }
-    for (let from = 0; ; from += pageSize) {
+  }, []);
+
+  const loadAssetsMeta = useCallback(async () => {
+    const started = performance.now();
+    try {
       const { data, error } = await supabase
         .from("assets")
         .select("symbol,name,is_active")
         .eq("is_active", true)
-        .order("symbol")
-        .range(from, from + pageSize - 1);
-      if (error) {
-        console.error("[Home] assets load failed:", error);
-        break;
-      }
-      const batch = data ?? [];
-      allAssets.push(...batch);
-      if (batch.length < pageSize) break;
-    }
-
-    // Real Bybit-synced tickers from market_tickers (written by bybit-spot-ticker-sync).
-    // Not mock data — same pipeline as Markets. Live Bybit WS still preferred when present.
-    const tickerMap = new Map<
-      string,
-      {
-        last_price: number | null;
-        change_24h: number | null;
-        volume_24h: number | null;
-        updated_at: string | null;
-      }
-    >();
-    for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabase
-        .from("market_tickers")
-        .select(
-          "symbol,provider_symbol,last_price,change_24h,volume_24h,updated_at,source"
-        )
-        .range(from, from + pageSize - 1);
-      if (error) {
-        console.error("[Home] market_tickers load failed:", error);
-        break;
-      }
-      const batch = data ?? [];
-      for (const t of batch) {
-        const last =
-          t.last_price == null ? null : Number(t.last_price);
-        const ch =
-          t.change_24h == null ? null : Number(t.change_24h);
-        const vol =
-          t.volume_24h == null ? null : Number(t.volume_24h);
-        const payload = {
-          last_price: last != null && Number.isFinite(last) ? last : null,
-          change_24h: ch != null && Number.isFinite(ch) ? ch : null,
-          volume_24h: vol != null && Number.isFinite(vol) ? vol : null,
-          updated_at: t.updated_at ? String(t.updated_at) : null,
-        };
-        for (const key of [t.symbol, t.provider_symbol]) {
-          if (!key) continue;
-          const u = String(key).toUpperCase();
-          tickerMap.set(u, payload);
-          tickerMap.set(u.replace(/[^A-Z0-9]/g, ""), payload);
-        }
-      }
-      if (batch.length < pageSize) break;
-    }
-    setDbTickerMap(tickerMap);
-
-    const assetMap = new Map(
-      allAssets.map((asset: any) => [
-        String(asset.symbol ?? "").toUpperCase(),
-        asset,
-      ])
-    );
-    const rows = allPairs.map((pair: any) => {
-      const symbol = String(
-        pair.symbol ?? `${pair.base_asset}/${pair.quote_asset}`
+        .order("symbol");
+      console.log("[Home] assets", {
+        rows: data?.length ?? 0,
+        error: error?.message ?? null,
+        ms: Math.round(performance.now() - started),
+      });
+      if (error || !data?.length) return;
+      const nameBy = new Map(
+        data.map((a: any) => [String(a.symbol ?? "").toUpperCase(), a.name])
       );
-      return {
-        symbol,
-        base_asset: String(pair.base_asset ?? ""),
-        quote_asset: String(pair.quote_asset ?? ""),
-        base_name:
-          assetMap.get(String(pair.base_asset ?? "").toUpperCase())
-            ?.name ?? undefined,
-        last_price: null,
-        change_24h: null,
-        volume_24h: null,
-        updated_at: null,
-        hasTicker: false,
-        listed_at: pair.listed_at ?? null,
-      } as Market;
-    });
-    setMarketPairs(rows);
+      setMarketPairs((prev) =>
+        prev.map((p) => ({
+          ...p,
+          base_name: nameBy.get(p.base_asset.toUpperCase()) ?? p.base_name,
+        }))
+      );
+    } catch (e) {
+      console.error("[Home] assets failed:", e);
+    }
   }, []);
+
+  /** Ticker map only — does not touch trading_pairs catalog. */
+  const loadMarketTickers = useCallback(async () => {
+    const started = performance.now();
+    console.log("[Home] market_tickers started");
+    try {
+      const tickerMap = new Map<
+        string,
+        {
+          last_price: number | null;
+          change_24h: number | null;
+          volume_24h: number | null;
+          updated_at: string | null;
+        }
+      >();
+      const pageSize = 1000;
+      for (let from = 0; ; from += pageSize) {
+        const { data, error } = await supabase
+          .from("market_tickers")
+          .select(
+            "symbol,provider_symbol,last_price,change_24h,volume_24h,updated_at,source"
+          )
+          .range(from, from + pageSize - 1);
+        if (error) {
+          console.log("[Home] market_tickers", {
+            rows: tickerMap.size,
+            error: error.message,
+            ms: Math.round(performance.now() - started),
+          });
+          break;
+        }
+        const batch = data ?? [];
+        for (const t of batch) {
+          const last = t.last_price == null ? null : Number(t.last_price);
+          const ch = t.change_24h == null ? null : Number(t.change_24h);
+          const vol = t.volume_24h == null ? null : Number(t.volume_24h);
+          const payload = {
+            last_price: last != null && Number.isFinite(last) ? last : null,
+            change_24h: ch != null && Number.isFinite(ch) ? ch : null,
+            volume_24h: vol != null && Number.isFinite(vol) ? vol : null,
+            updated_at: t.updated_at ? String(t.updated_at) : null,
+          };
+          for (const key of [t.symbol, t.provider_symbol]) {
+            if (!key) continue;
+            const u = String(key).toUpperCase();
+            tickerMap.set(u, payload);
+            tickerMap.set(u.replace(/[^A-Z0-9]/g, ""), payload);
+          }
+        }
+        if (batch.length < pageSize) break;
+      }
+      setDbTickerMap(tickerMap);
+      console.log("[Home] market_tickers finished", {
+        rows: tickerMap.size,
+        error: null,
+        ms: Math.round(performance.now() - started),
+      });
+    } catch (e) {
+      console.error("[Home] market_tickers exception:", e);
+    }
+  }, []);
+
+  /** Convenience: catalog + independent tickers/assets (no waterfall on setMarketPairs). */
+  const loadMarketPairs = useCallback(async () => {
+    await loadTradingPairs();
+    void loadAssetsMeta();
+    void loadMarketTickers();
+  }, [loadTradingPairs, loadAssetsMeta, loadMarketTickers]);
 
   const loadPosts = useCallback(async (id: string, tab: FeedTab) => {
     let query = supabase.from("posts").select("id,user_id,content,image_url,likes,likes_count,comments_count,reposts_count,shares_count,views_count,created_at").order("created_at", { ascending: false }).limit(50);
@@ -807,27 +878,58 @@ function Home({
     setWithdrawals((w ?? []) as Withdrawal[]);
   }, []);
 
-  const loadAll = useCallback(async (id: string) => {
+  /** Critical path: profile/wallets, markets, favorites — shell-visible data. */
+  const loadCritical = useCallback(async (id: string) => {
     setLoading(true);
     setError("");
     try {
       await Promise.all([
-        loadProfileAndWallets(id), loadMarketPairs(), loadPosts(id, feedTab), loadNotifications(id), loadPlatformAnnouncements(),
-        loadSupport(id), loadReferrals(), loadGiveaways(), loadNetworks(), loadWalletAddresses(id), loadTransactions(id), loadFavorites(id),
+        loadProfileAndWallets(id),
+        loadTradingPairs(),
+        loadFavorites(id),
       ]);
+      // Tickers/assets independent — do not block critical
+      void loadAssetsMeta();
+      void loadMarketTickers();
     } catch (e: any) {
       setError(e?.message ?? "Unable to load the Home Page.");
     } finally {
       setLoading(false);
     }
-  }, [feedTab, loadWalletAddresses, loadGiveaways, loadMarketPairs, loadNotifications, loadPosts, loadProfileAndWallets, loadReferrals, loadSupport, loadTransactions, loadNetworks, loadPlatformAnnouncements, loadFavorites]);
+  }, [loadProfileAndWallets, loadTradingPairs, loadFavorites, loadAssetsMeta, loadMarketTickers]);
+
+  /** Secondary: feed, support, modals — after shell is usable. */
+  const loadSecondary = useCallback(async (id: string) => {
+    try {
+      await Promise.all([
+        loadPosts(id, feedTab),
+        loadNotifications(id),
+        loadPlatformAnnouncements(),
+        loadSupport(id),
+        loadReferrals(),
+        loadGiveaways(),
+        loadNetworks(),
+        loadWalletAddresses(id),
+        loadTransactions(id),
+      ]);
+    } catch (e: any) {
+      console.warn("[Home] secondary load:", e?.message ?? e);
+    }
+  }, [feedTab, loadPosts, loadNotifications, loadPlatformAnnouncements, loadSupport, loadReferrals, loadGiveaways, loadNetworks, loadWalletAddresses, loadTransactions]);
+
+  const loadAll = useCallback(async (id: string) => {
+    await loadCritical(id);
+    void loadSecondary(id);
+  }, [loadCritical, loadSecondary]);
 
 
   // Market pairs are public catalog data — fetch immediately so the list is
   // not blocked behind auth + the rest of loadAll (posts, wallets, …).
   useEffect(() => {
-    void loadMarketPairs();
-  }, [loadMarketPairs]);
+    void loadTradingPairs();
+    void loadAssetsMeta();
+    void loadMarketTickers();
+  }, [loadTradingPairs, loadAssetsMeta, loadMarketTickers]);
 
   // Local clock for relative timestamps (posts, notifications, etc.) — no extra DB calls.
   useEffect(() => {
@@ -838,21 +940,35 @@ function Home({
 
   useEffect(() => {
     let alive = true;
+    let bootstrapped = false;
+
     void supabase.auth.getSession().then(({ data, error: e }) => {
       if (!alive) return;
       if (e) setError(e.message);
       const id = data.session?.user.id ?? null;
       setUserId(id);
-      if (id) void loadAll(id);
+      if (id) {
+        bootstrapped = true;
+        void loadAll(id);
+      }
     });
+
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!alive) return;
       const id = session?.user.id ?? null;
       setUserId(id);
       if (event === "SIGNED_OUT") {
         setProfile(null);
         setWallets([]);
         onLogout?.();
-      } else if (id) {
+        return;
+      }
+      // Skip INITIAL_SESSION if getSession already started loadAll
+      if (event === "INITIAL_SESSION" && bootstrapped) return;
+      if (id && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED")) {
+        void loadAll(id);
+      } else if (id && event === "INITIAL_SESSION" && !bootstrapped) {
+        bootstrapped = true;
         void loadAll(id);
       }
     });
@@ -864,9 +980,9 @@ function Home({
 
   useEffect(() => {
     if (!userId) return;
-    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "trading_pairs" }, () => { void loadMarketPairs(); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarketPairs(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => { void loadPlatformAnnouncements(); void loadNotifications(userId); }).subscribe();
+    const channel = supabase.channel("home-live").on("postgres_changes", { event: "*", schema: "public", table: "wallets", filter: `user_id=eq.${userId}` }, () => { void loadProfileAndWallets(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${userId}` }, () => { void loadNotifications(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "trading_pairs" }, () => { void loadTradingPairs(); }).on("postgres_changes", { event: "*", schema: "public", table: "market_tickers" }, () => { void loadMarketTickers(); }).on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => { void loadPosts(userId, feedTab); }).on("postgres_changes", { event: "*", schema: "public", table: "market_favorites", filter: `user_id=eq.${userId}` }, () => { void loadFavorites(userId); }).on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => { void loadPlatformAnnouncements(); void loadNotifications(userId); }).subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [feedTab, loadMarketPairs, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, loadPlatformAnnouncements, userId]);
+  }, [feedTab, loadTradingPairs, loadMarketTickers, loadNotifications, loadPosts, loadProfileAndWallets, loadFavorites, loadPlatformAnnouncements, userId]);
 
   // Backup poll for the trading-pair LIST only (new/delisted pairs) in case
   // the realtime event above is ever missed — pairs change rarely, so this
@@ -876,9 +992,9 @@ function Home({
   // reconnect/backoff handling independent of this component.
   useEffect(() => {
     if (!userId) return;
-    const id = window.setInterval(() => { void loadMarketPairs(); }, 60000);
+    const id = window.setInterval(() => { void loadTradingPairs(); }, 120000);
     return () => window.clearInterval(id);
-  }, [userId, loadMarketPairs]);
+  }, [userId, loadTradingPairs]);
 
   // ---- Live Bybit market data for the Home market list ----
   // base+quote → Bybit spot symbol (e.g. BTC + USDT → BTCUSDT). Pure/local
@@ -1562,9 +1678,13 @@ function Home({
                   ? "No gainers right now."
                   : marketTab === "Losers"
                   ? "No losers right now."
-                  : marketPairs.length === 0
+                  : marketsError
+                  ? `Market data error: ${marketsError}`
+                  : marketsLoading
                   ? "Loading markets…"
-                  : "Waiting for live prices (Bybit) or synced tickers…"
+                  : marketPairs.length === 0
+                  ? "No active trading pairs found."
+                  : "Waiting for live prices…"
               }
             />
           )}
