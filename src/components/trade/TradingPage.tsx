@@ -103,7 +103,6 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
   const [pairQ, setPairQ] = useState("");
   const [showReview, setShowReview] = useState(false);
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
-  const prevLast = useRef<number | null>(null);
 
   const {
     ticker,
@@ -117,25 +116,85 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
     tf,
   );
 
-  const last = ticker?.last_price != null ? Number(ticker.last_price) : null;
-  const bid = ticker?.bid_price != null ? Number(ticker.bid1Price) : null;
-  const ask = ticker?.ask_price != null ? Number(ticker.ask1Price) : null;
+  // Live feed values (may update at high frequency — not rendered directly)
+  const liveLast = ticker?.last_price != null ? Number(ticker.last_price) : null;
+  const liveBid = ticker?.bid_price != null ? Number(ticker.bid_price) : null;
+  const liveAsk = ticker?.ask_price != null ? Number(ticker.ask_price) : null;
   const change24 = ticker?.change_24h != null ? Number(ticker.change_24h) : null;
   const high24 = ticker?.high_24h != null ? Number(ticker.high_24h) : null;
   const low24 = ticker?.low_24h != null ? Number(ticker.low_24h) : null;
   const vol24 = ticker?.volume_24h != null ? Number(ticker.volume_24h) : null;
 
-  // Price flash from real ticks only
+  /**
+   * Display-layer throttle: keep the latest real book/ticker in refs, publish
+   * to React state on a calm interval so the UI does not rebuild every WS tick.
+   * Feed stays real and high-frequency; only presentation is batched.
+   */
+  const bookRef = useRef(book);
+  const lastRef = useRef(liveLast);
+  const bidRef = useRef(liveBid);
+  const askRef = useRef(liveAsk);
+  bookRef.current = book;
+  lastRef.current = liveLast;
+  bidRef.current = liveBid;
+  askRef.current = liveAsk;
+
+  const [displayBook, setDisplayBook] = useState(book);
+  const [last, setLast] = useState(liveLast);
+  const [bid, setBid] = useState(liveBid);
+  const [ask, setAsk] = useState(liveAsk);
+
+  const BOOK_UI_MS = 280; // professional terminal refresh cadence
+  const PRICE_UI_MS = 200;
+
   useEffect(() => {
-    if (last == null || !Number.isFinite(last)) return;
-    if (prevLast.current != null && last !== prevLast.current) {
-      setFlash(last > prevLast.current ? "up" : "down");
-      const t = window.setTimeout(() => setFlash(null), 420);
-      prevLast.current = last;
-      return () => window.clearTimeout(t);
-    }
-    prevLast.current = last;
-  }, [last]);
+    let bookRaf = 0;
+    let priceRaf = 0;
+    let lastBookPaint = 0;
+    let lastPricePaint = 0;
+    let alive = true;
+
+    const paintBook = (ts: number) => {
+      if (!alive) return;
+      if (ts - lastBookPaint >= BOOK_UI_MS) {
+        lastBookPaint = ts;
+        setDisplayBook(bookRef.current);
+      }
+      bookRaf = requestAnimationFrame(paintBook);
+    };
+    const paintPrice = (ts: number) => {
+      if (!alive) return;
+      if (ts - lastPricePaint >= PRICE_UI_MS) {
+        lastPricePaint = ts;
+        const next = lastRef.current;
+        setLast((prev) => {
+          if (prev != null && next != null && prev !== next) {
+            setFlash(next > prev ? "up" : "down");
+            window.setTimeout(() => setFlash(null), 320);
+          }
+          return next;
+        });
+        setBid(bidRef.current);
+        setAsk(askRef.current);
+      }
+      priceRaf = requestAnimationFrame(paintPrice);
+    };
+
+    bookRaf = requestAnimationFrame(paintBook);
+    priceRaf = requestAnimationFrame(paintPrice);
+    // Immediate first paint
+    setDisplayBook(bookRef.current);
+    setLast(lastRef.current);
+    setBid(bidRef.current);
+    setAsk(askRef.current);
+
+    return () => {
+      alive = false;
+      cancelAnimationFrame(bookRaf);
+      cancelAnimationFrame(priceRaf);
+    };
+  }, [pair?.symbol]); // restart cadence when instrument changes; refs always hold latest
+
 
   // Seed price from market when pair loads / side changes — never overwrite user edits
   useEffect(() => {
@@ -478,26 +537,30 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
     [orders],
   );
 
-  // Order book levels
+  // Order book levels — derived from throttled displayBook (stable keys by price)
   const asks = useMemo(() => {
-    const rows = (book || []).filter((r: any) => r.side === "ask" || r.side === "sell");
-    const sorted = [...rows].sort(
-      (a: any, b: any) => Number(a.price) - Number(b.price),
+    const rows = (displayBook || []).filter(
+      (r: any) => r.side === "sell" || r.side === "ask",
     );
-    return sorted.slice(0, 12).reverse();
-  }, [book]);
+    return [...rows]
+      .sort((a: any, b: any) => Number(a.price) - Number(b.price))
+      .slice(0, 12)
+      .reverse();
+  }, [displayBook]);
 
   const bids = useMemo(() => {
-    const rows = (book || []).filter((r: any) => r.side === "bid" || r.side === "buy");
+    const rows = (displayBook || []).filter(
+      (r: any) => r.side === "buy" || r.side === "bid",
+    );
     return [...rows]
       .sort((a: any, b: any) => Number(b.price) - Number(a.price))
       .slice(0, 12);
-  }, [book]);
+  }, [displayBook]);
 
   const maxBookQty = useMemo(() => {
     let m = 0;
     for (const r of [...asks, ...bids] as any[]) {
-      m = Math.max(m, Number(r.amount || r.size || 0));
+      m = Math.max(m, Number(r.amount || 0));
     }
     return m || 1;
   }, [asks, bids]);
@@ -668,7 +731,7 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
                 const pct = Math.min(100, (qty / maxBookQty) * 100);
                 return (
                   <button
-                    key={`a-${i}-${r.price}`}
+                    key={`ask-${Number(r.price)}`}
                     type="button"
                     style={S.bookRow}
                     onClick={() => {
@@ -692,7 +755,7 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
                 const pct = Math.min(100, (qty / maxBookQty) * 100);
                 return (
                   <button
-                    key={`b-${i}-${r.price}`}
+                    key={`bid-${Number(r.price)}`}
                     type="button"
                     style={S.bookRow}
                     onClick={() => {
@@ -1224,6 +1287,7 @@ const S: Record<string, CSSProperties> = {
     top: 0,
     bottom: 0,
     zIndex: 0,
+    transition: "width 0.25s ease-out",
   },
   spreadRow: {
     textAlign: "center",
