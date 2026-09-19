@@ -9,7 +9,6 @@ import { PromotionsPage } from "./components/promotion";
 import MarketsPage from "./components/markets/MarketsPage";
 import AssetsPage from "./components/assets/AssetsPage";
 import EarnPage from "./components/earn/EarnPage";
-import ConvertPage from "./components/convert/ConvertPage";
 import { supabase } from "./lib/supabase";
 import type { NavPage } from "./lib/types";
 
@@ -50,53 +49,90 @@ function getRoute(): AppRoute {
   return { page: "home" };
 }
 
+/**
+ * Auth bootstrap:
+ * - ready = true as soon as session presence is known (do NOT wait on profiles)
+ * - profile/role/ban load asynchronously after the shell can render
+ * - isAdmin stays false until role is verified (AdminPortal never shows optimistically)
+ */
 export default function App() {
   const [ready, setReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [route, setRoute] = useState<AppRoute>(() => getRoute());
 
   useEffect(() => {
     let alive = true;
+    let profileSeq = 0;
 
-    async function checkSession() {
-      const { data } = await supabase.auth.getSession();
-      if (!alive) return;
-
-      const session = data.session;
-      setAuthenticated(Boolean(session));
-
-      if (session?.user?.id) {
-        const { data: profile } = await supabase
+    async function loadProfileFlags(userId: string) {
+      const seq = ++profileSeq;
+      setProfileError(null);
+      try {
+        const { data: profile, error } = await supabase
           .from("profiles")
           .select("role, is_banned")
-          .eq("id", session.user.id)
+          .eq("id", userId)
           .maybeSingle();
 
-        if (!alive) return;
+        if (!alive || seq !== profileSeq) return;
+
+        if (error) {
+          console.error("[App] profiles lookup failed:", error.message);
+          setProfileError(error.message);
+          // Fail safe: not admin; do not block the app
+          setIsAdmin(false);
+          return;
+        }
 
         const banned = Boolean(profile?.is_banned);
         setIsBanned(banned);
 
         if (banned) {
           await supabase.auth.signOut();
+          if (!alive || seq !== profileSeq) return;
           setAuthenticated(false);
           setIsAdmin(false);
-        } else {
-          const role = profile?.role;
-          setIsAdmin(role === "admin" || role === "owner");
+          return;
         }
-      }
 
-      setReady(true);
+        const role = profile?.role;
+        setIsAdmin(role === "admin" || role === "owner");
+      } catch (e) {
+        if (!alive || seq !== profileSeq) return;
+        console.error("[App] profiles lookup exception:", e);
+        setProfileError(e instanceof Error ? e.message : "Profile lookup failed");
+        setIsAdmin(false);
+      }
     }
 
-    void checkSession();
+    // Initial session — mark ready immediately after getSession (no profile wait)
+    void (async () => {
+      const started = performance.now();
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+
+      const session = data.session;
+      setAuthenticated(Boolean(session));
+      setReady(true);
+      console.log("[App] session resolved", {
+        authenticated: Boolean(session),
+        ms: Math.round(performance.now() - started),
+      });
+
+      if (session?.user?.id) {
+        void loadProfileFlags(session.user.id);
+      } else {
+        setIsAdmin(false);
+        setIsBanned(false);
+      }
+    })();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       if (!alive) return;
 
       if (event === "PASSWORD_RECOVERY") {
@@ -104,34 +140,25 @@ export default function App() {
         return;
       }
 
+      // SIGNED_OUT / TOKEN_REFRESHED / SIGNED_IN — update auth without blocking UI
       setAuthenticated(Boolean(session));
+      setReady(true);
 
       if (session?.user?.id) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role, is_banned")
-          .eq("id", session.user.id)
-          .maybeSingle();
-
-        if (!alive) return;
-
-        const banned = Boolean(profile?.is_banned);
-        setIsBanned(banned);
-
-        if (banned) {
-          await supabase.auth.signOut();
-          setAuthenticated(false);
-          setIsAdmin(false);
-        } else {
-          const role = profile?.role;
-          setIsAdmin(role === "admin" || role === "owner");
+        // Avoid treating INITIAL_SESSION as a second full bootstrap if getSession already ran;
+        // still refresh profile flags on real sign-in / token events.
+        if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+          void loadProfileFlags(session.user.id);
+        } else if (event === "INITIAL_SESSION") {
+          // Profile already requested by getSession path; skip duplicate if possible.
+          // Still safe to load once — loadProfileFlags is sequenced.
+          void loadProfileFlags(session.user.id);
         }
       } else {
         setIsAdmin(false);
         setIsBanned(false);
+        setProfileError(null);
       }
-
-      setReady(true);
     });
 
     return () => {
@@ -151,25 +178,9 @@ export default function App() {
   }, []);
 
   function openTrade(symbol: string) {
-    const normalizedSymbol = symbol.toUpperCase();
-    window.history.pushState(
-      {},
-      "",
-      `/trade/${encodeURIComponent(normalizedSymbol)}`
-    );
-    setRoute({ page: "trade", symbol: normalizedSymbol });
-    window.scrollTo({ top: 0, behavior: "instant" });
-  }
-
-  function openP2P() {
-    window.history.pushState({}, "", "/p2p");
-    setRoute({ page: "p2p" });
-    window.scrollTo({ top: 0, behavior: "instant" });
-  }
-
-  function openExperience() {
-    window.history.pushState({}, "", "/experience");
-    setRoute({ page: "experience" });
+    const sym = (symbol || "BTCUSDT").toUpperCase();
+    window.history.pushState({}, "", `/trade/${encodeURIComponent(sym)}`);
+    setRoute({ page: "trade", symbol: sym });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
@@ -203,9 +214,15 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
-  function goConvert() {
-    window.history.pushState({}, "", "/trade-hub");
-    setRoute({ page: "trade-hub" });
+  function openP2P() {
+    window.history.pushState({}, "", "/p2p");
+    setRoute({ page: "p2p" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  function openExperience() {
+    window.history.pushState({}, "", "/experience");
+    setRoute({ page: "experience" });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
 
@@ -260,29 +277,15 @@ export default function App() {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: 18,
-          padding: 24,
+          gap: 16,
           background: "#050505",
           color: "#eee",
           fontFamily:
             "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+          padding: 24,
           textAlign: "center",
         }}
       >
-        <div
-          style={{
-            width: 64,
-            height: 64,
-            borderRadius: "50%",
-            background: "rgba(239,68,68,0.12)",
-            border: "1.5px solid rgba(239,68,68,0.35)",
-            display: "grid",
-            placeItems: "center",
-            fontSize: 28,
-          }}
-        >
-          ⛔
-        </div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff" }}>
           Account suspended
         </h1>
@@ -333,6 +336,7 @@ export default function App() {
     );
   }
 
+  // AdminPortal only after role is verified — never optimistic
   if (isAdmin) {
     return <AdminPortal />;
   }
@@ -375,7 +379,7 @@ export default function App() {
       <AssetsPage
         onNavigate={onNav}
         onOpenEarn={goEarn}
-        onOpenConvert={goConvert}
+        onOpenConvert={goTradeHub}
       />
     );
   }
@@ -389,16 +393,51 @@ export default function App() {
   }
 
   return (
-    <Home
-      onLogout={() => {
-        setAuthenticated(false);
-        goHome();
-      }}
-      onTrade={openTrade}
-      onP2P={openP2P}
-      onExperience={openExperience}
-      onNavigate={onNav}
-    />
+    <>
+      {profileError ? (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: "rgba(120,40,0,0.92)",
+            color: "#fff",
+            fontSize: 12,
+            padding: "6px 12px",
+            textAlign: "center",
+          }}
+        >
+          Profile lookup failed ({profileError}). Running as non-admin.{" "}
+          <button
+            type="button"
+            style={{
+              marginLeft: 8,
+              border: "1px solid #fff",
+              background: "transparent",
+              color: "#fff",
+              borderRadius: 6,
+              padding: "2px 8px",
+              cursor: "pointer",
+            }}
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      <Home
+        onLogout={() => {
+          setAuthenticated(false);
+          setIsAdmin(false);
+          goHome();
+        }}
+        onTrade={openTrade}
+        onP2P={openP2P}
+        onExperience={openExperience}
+        onNavigate={onNav}
+      />
+    </>
   );
-  }
-
+}
