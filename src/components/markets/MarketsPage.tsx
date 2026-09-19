@@ -4,6 +4,7 @@ import { useMarketsData, type MarketRow } from "../../hooks/useMarketsData";
 import BottomNav from "../nav/BottomNav";
 import MarketIcon from "./MarketIcon";
 import { formatPct, formatPrice, formatVolume } from "../../lib/format";
+import { sessionBadgeLabel, sessionStatusLabel } from "../../lib/marketSession";
 import type { NavPage } from "../../lib/types";
 
 type Props = {
@@ -82,9 +83,11 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
   } = useMarketsData(userId);
 
   const emptyReason = useMemo((): string | null => {
+    // TradFi catalog not connected yet — not the same as "Market Closed"
     if (primary === "TradFi") return "No TradFi markets available yet";
     if (primary === "Alpha") return "No Alpha markets available yet";
     if (primary === "Crypto") {
+      // Crypto/Bybit is 24/7 — never show a weekend freeze message here
       if (marketType === "Expiry") return "Expiry markets coming soon";
       if (marketType === "Options") return "Options markets coming soon";
       if (marketType === "Arbitrage") return "Arbitrage markets coming soon";
@@ -382,13 +385,26 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
                   {m.kind === "perpetual" ? (
                     <span style={styles.perpTag}>PERP</span>
                   ) : null}
+                  {m.session_status === "closed" ? (
+                    <span style={styles.closedTag}>Closed</span>
+                  ) : null}
                 </span>
                 <span style={styles.pairVol}>
-                  {m.volume_24h != null
-                    ? `${formatVolume(m.volume_24h)} ${m.quote_asset}`
-                    : hasPrice
-                      ? " "
-                      : "No live data"}
+                  {(() => {
+                    const badge = sessionBadgeLabel(m.session_status);
+                    if (badge === "Closed") return "Market Closed";
+                    if (badge === "Unavailable")
+                      return "Market data temporarily unavailable";
+                    if (m.volume_24h != null)
+                      return `${formatVolume(m.volume_24h)} ${m.quote_asset}`;
+                    if (hasPrice) return " ";
+                    return "Waiting for price…";
+                  })()}
+                  {m.kind === "perpetual" &&
+                  m.funding_rate != null &&
+                  Number.isFinite(m.funding_rate)
+                    ? ` · Fund ${m.funding_rate >= 0 ? "+" : ""}${(m.funding_rate * 100).toFixed(4)}%`
+                    : ""}
                 </span>
               </div>
 
@@ -689,4 +705,3 @@ const styles: Record<string, CSSProperties> = {
     backgroundSize: "200% 100%",
   },
 };
-            
