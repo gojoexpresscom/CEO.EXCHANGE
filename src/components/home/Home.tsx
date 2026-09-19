@@ -1058,59 +1058,32 @@ function Home({
   }, 0), [marketMap, wallets]);
 
   const filteredMarkets = useMemo(() => {
-    // Spot = crypto/Bybit 24/7 live prices (never weekend-frozen).
-    // Futures/Funding are not connected yet — honest empty, not a "Market Closed".
+    // Spot = crypto/Bybit 24/7. Futures/Funding are not connected yet.
     if (marketCategory !== "Spot") return [];
 
-    // Prefer live-priced rows; if Bybit snapshot has not arrived yet, still
-    // show the catalog so Home is not blank for several seconds on open.
-    let list = markets.filter((m) => m.last_price != null && Number(m.last_price) > 0);
-    const pricesReady = list.length > 0;
-    if (!pricesReady && markets.length > 0) {
-      list = markets.filter((m) => (m.quote_asset || "").toUpperCase() === "USDT");
-      if (!list.length) list = markets.slice();
-    }
+    // Only pairs with a real last_price (DB market_tickers and/or live Bybit).
+    // NEVER fall back to arbitrary catalog rows (0G, 1INCH, A, …) as "Hot".
+    let list = markets.filter(
+      (m) => m.last_price != null && Number(m.last_price) > 0,
+    );
 
-    if (marketTab === "Favorites") {
-      list = list.filter((m) => favoriteSymbols.includes(m.symbol));
-    } else if (marketTab === "Gainers") {
-      list = list.filter((m) => Number(m.change_24h ?? 0) > 0);
-      list.sort((a, b) => Number(b.change_24h ?? -Infinity) - Number(a.change_24h ?? -Infinity));
-    } else if (marketTab === "Losers") {
-      list = list.filter((m) => Number(m.change_24h ?? 0) < 0);
-      list.sort((a, b) => Number(a.change_24h ?? Infinity) - Number(b.change_24h ?? Infinity));
-    } else if (marketTab === "New") {
-      // "New" = most recently listed on CEO Exchange (trading_pairs.listed_at), not Kraken
-      // listing age — Kraken's public AssetPairs endpoint has no listing-date field to source
-      // that from, so this is the only honest definition of "new" available to us.
-      list.sort((a, b) => new Date(b.listed_at ?? 0).getTime() - new Date(a.listed_at ?? 0).getTime());
-    } else {
-      // Hot: distinct base assets (not every BTC/TRY, BTC/BRL…). Prefer USDT
-      // quote, then rank by last price so majors surface first. Collapsed = 6.
-      const quoteRank = (q: string) => {
-        const u = (q || "").toUpperCase();
-        if (u === "USDT") return 0;
-        if (u === "USDC") return 1;
-        if (u === "USD") return 2;
-        return 9;
-      };
-      // Prefer USDT (etc.) per base, then highest price within that preference.
-      list.sort((a, b) => {
-        const baseA = (a.base_asset || "").toUpperCase();
-        const baseB = (b.base_asset || "").toUpperCase();
-        if (baseA !== baseB) {
-          // When comparing different bases, rank by price (high first).
-          return Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity);
-        }
-        const qr = quoteRank(a.quote_asset) - quoteRank(b.quote_asset);
-        if (qr !== 0) return qr;
-        return Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity);
-      });
-      // One row per base asset (first wins = best quote + price from sort above
-      // is not enough alone — pick best quote per base first).
+    const quoteRank = (q: string) => {
+      const u = (q || "").toUpperCase();
+      if (u === "USDT") return 0;
+      if (u === "USDC") return 1;
+      if (u === "USD") return 2;
+      return 9;
+    };
+
+    /** Prefer USDT → USDC → USD per base asset. */
+    const collapseByBase = (rows: Market[]) => {
       const bestByBase = new Map<string, Market>();
-      for (const m of list) {
-        const base = (m.base_asset || m.symbol.split(/[\/\-]/)[0] || "").toUpperCase();
+      for (const m of rows) {
+        const base = (
+          m.base_asset ||
+          m.symbol.split(/[\/\-]/)[0] ||
+          ""
+        ).toUpperCase();
         if (!base) continue;
         const existing = bestByBase.get(base);
         if (!existing) {
@@ -1121,29 +1094,82 @@ function Home({
         const qOld = quoteRank(existing.quote_asset);
         if (qNew < qOld) {
           bestByBase.set(base, m);
-        } else if (qNew === qOld && Number(m.last_price ?? 0) > Number(existing.last_price ?? 0)) {
+        } else if (
+          qNew === qOld &&
+          Number(m.volume_24h ?? 0) > Number(existing.volume_24h ?? 0)
+        ) {
           bestByBase.set(base, m);
         }
       }
-      list = Array.from(bestByBase.values()).sort(
-        (a, b) => Number(b.last_price ?? -Infinity) - Number(a.last_price ?? -Infinity),
-      );
-      if (!showAllMarkets) {
-        list = list.slice(0, 6);
-      }
-    }
+      return Array.from(bestByBase.values());
+    };
 
-    // Collapsed list: max 6 rows; expand via View more
-    if (!showAllMarkets && marketTab !== "Hot") {
-      list = list.slice(0, 6);
+    /** Real Hot score: volume_24h × |change_24h|. Missing metrics → score 0 (not invented). */
+    const hotScore = (m: Market) => {
+      const vol = m.volume_24h == null ? null : Number(m.volume_24h);
+      const ch = m.change_24h == null ? null : Number(m.change_24h);
+      if (vol == null || !Number.isFinite(vol) || vol < 0) return 0;
+      if (ch == null || !Number.isFinite(ch)) return 0;
+      return vol * Math.abs(ch);
+    };
+
+    if (marketTab === "Favorites") {
+      // Favorites may still show without price (user-chosen symbols).
+      list = markets.filter((m) => favoriteSymbols.includes(m.symbol));
+    } else if (marketTab === "Gainers") {
+      list = list.filter((m) => Number(m.change_24h ?? 0) > 0);
+      list.sort(
+        (a, b) =>
+          Number(b.change_24h ?? -Infinity) - Number(a.change_24h ?? -Infinity),
+      );
+    } else if (marketTab === "Losers") {
+      list = list.filter((m) => Number(m.change_24h ?? 0) < 0);
+      list.sort(
+        (a, b) =>
+          Number(a.change_24h ?? Infinity) - Number(b.change_24h ?? Infinity),
+      );
+    } else if (marketTab === "New") {
+      // Newest listings among pairs that already have a real price.
+      list.sort(
+        (a, b) =>
+          new Date(b.listed_at ?? 0).getTime() -
+          new Date(a.listed_at ?? 0).getTime(),
+      );
+    } else {
+      // Hot: require real ticker metrics. No catalog-order fallback.
+      list = collapseByBase(list);
+      list.sort((a, b) => {
+        const scoreDiff = hotScore(b) - hotScore(a);
+        if (scoreDiff !== 0) return scoreDiff;
+        // Tie-break: higher volume, then higher absolute change
+        const volDiff =
+          Number(b.volume_24h ?? 0) - Number(a.volume_24h ?? 0);
+        if (volDiff !== 0) return volDiff;
+        return (
+          Math.abs(Number(b.change_24h ?? 0)) -
+          Math.abs(Number(a.change_24h ?? 0))
+        );
+      });
+      // Drop rows with zero score when any real activity exists
+      const anyHot = list.some((m) => hotScore(m) > 0);
+      if (anyHot) {
+        list = list.filter((m) => hotScore(m) > 0);
+      }
     }
 
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      list = list.filter((m) => `${m.symbol} ${m.base_asset} ${m.quote_asset}`.toLowerCase().includes(q));
+      list = list.filter((m) =>
+        `${m.symbol} ${m.base_asset} ${m.quote_asset}`.toLowerCase().includes(q),
+      );
     }
 
-    return showAllMarkets ? list : list.slice(0, 8);
+    // Collapsed: top 6; View more expands
+    if (!showAllMarkets) {
+      list = list.slice(0, 6);
+    }
+
+    return list;
   }, [favoriteSymbols, marketCategory, marketTab, markets, search, showAllMarkets]);
 
   const filteredPosts = useMemo(() => {
@@ -1680,7 +1706,9 @@ function Home({
                   ? "Loading markets…"
                   : marketPairs.length === 0
                   ? "No active trading pairs found."
-                  : "Waiting for live prices…"
+                  : marketTab === "Hot" || marketTab === "Gainers" || marketTab === "Losers" || marketTab === "New"
+                  ? "Waiting for live market data…"
+                  : "Waiting for live market data…"
               }
             />
           )}
