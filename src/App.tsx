@@ -70,12 +70,30 @@ export default function App() {
     async function loadProfileFlags(userId: string) {
       const seq = ++profileSeq;
       setProfileError(null);
+      const PROFILE_TIMEOUT_MS = 8000;
       try {
-        const { data: profile, error } = await supabase
+        const profilePromise = supabase
           .from("profiles")
           .select("role, is_banned")
           .eq("id", userId)
           .maybeSingle();
+
+        const timeoutPromise = new Promise<{ data: null; error: { message: string } }>(
+          (resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  data: null,
+                  error: { message: `profiles timed out after ${PROFILE_TIMEOUT_MS}ms` },
+                }),
+              PROFILE_TIMEOUT_MS,
+            ),
+        );
+
+        const { data: profile, error } = await Promise.race([
+          profilePromise,
+          timeoutPromise,
+        ]);
 
         if (!alive || seq !== profileSeq) return;
 
@@ -84,6 +102,10 @@ export default function App() {
           setProfileError(error.message);
           // Fail safe: not admin; do not block the app
           setIsAdmin(false);
+          // Retry once in background after a short delay
+          window.setTimeout(() => {
+            if (alive) void loadProfileFlags(userId);
+          }, 5000);
           return;
         }
 
