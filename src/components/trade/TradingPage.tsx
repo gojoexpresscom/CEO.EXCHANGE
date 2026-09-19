@@ -144,8 +144,9 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
   const [bid, setBid] = useState(liveBid);
   const [ask, setAsk] = useState(liveAsk);
 
-  const BOOK_UI_MS = 280; // professional terminal refresh cadence
-  const PRICE_UI_MS = 200;
+  // Visual cadence only — feed remains real-time in refs
+  const BOOK_UI_MS = 450;
+  const PRICE_UI_MS = 250;
 
   useEffect(() => {
     let bookRaf = 0;
@@ -153,12 +154,27 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
     let lastBookPaint = 0;
     let lastPricePaint = 0;
     let alive = true;
+    let lastBookSig = "";
+
+    const bookSignature = (rows: typeof book) => {
+      // Cheap stable signature so identical levels do not re-render
+      let s = "";
+      for (const r of rows || []) {
+        s += `${r.side}:${r.price}:${r.amount}|`;
+      }
+      return s;
+    };
 
     const paintBook = (ts: number) => {
       if (!alive) return;
       if (ts - lastBookPaint >= BOOK_UI_MS) {
         lastBookPaint = ts;
-        setDisplayBook(bookRef.current);
+        const next = bookRef.current || [];
+        const sig = bookSignature(next);
+        if (sig !== lastBookSig) {
+          lastBookSig = sig;
+          setDisplayBook(next);
+        }
       }
       bookRaf = requestAnimationFrame(paintBook);
     };
@@ -170,7 +186,7 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
         setLast((prev) => {
           if (prev != null && next != null && prev !== next) {
             setFlash(next > prev ? "up" : "down");
-            window.setTimeout(() => setFlash(null), 320);
+            window.setTimeout(() => setFlash(null), 280);
           }
           return next;
         });
@@ -182,8 +198,8 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
 
     bookRaf = requestAnimationFrame(paintBook);
     priceRaf = requestAnimationFrame(paintPrice);
-    // Immediate first paint
     setDisplayBook(bookRef.current);
+    lastBookSig = bookSignature(bookRef.current || []);
     setLast(lastRef.current);
     setBid(bidRef.current);
     setAsk(askRef.current);
@@ -193,7 +209,7 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
       cancelAnimationFrame(bookRaf);
       cancelAnimationFrame(priceRaf);
     };
-  }, [pair?.symbol]); // restart cadence when instrument changes; refs always hold latest
+  }, [pair?.symbol]);
 
 
   // Seed price from market when pair loads / side changes — never overwrite user edits
@@ -542,9 +558,10 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
     const rows = (displayBook || []).filter(
       (r: any) => r.side === "sell" || r.side === "ask",
     );
+    // Nearest asks above mid (ascending price, show closest-to-mid at bottom)
     return [...rows]
       .sort((a: any, b: any) => Number(a.price) - Number(b.price))
-      .slice(0, 12)
+      .slice(0, 8)
       .reverse();
   }, [displayBook]);
 
@@ -554,7 +571,7 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
     );
     return [...rows]
       .sort((a: any, b: any) => Number(b.price) - Number(a.price))
-      .slice(0, 12);
+      .slice(0, 8);
   }, [displayBook]);
 
   const maxBookQty = useMemo(() => {
@@ -723,54 +740,73 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
                 <span>Price</span>
                 <span>Size</span>
               </div>
-              {asks.length === 0 && (
+              {/* Both sides always rendered — never hide asks when only bids update */}
+              {asks.length === 0 && bids.length === 0 ? (
                 <div style={S.emptyMini}>Waiting for book…</div>
+              ) : (
+                <>
+                  {asks.map((r: any) => {
+                    const qty = Number(r.amount || 0);
+                    const pct = Math.min(100, (qty / maxBookQty) * 100);
+                    return (
+                      <button
+                        key={`ask-${Number(r.price)}`}
+                        type="button"
+                        style={S.bookRow}
+                        onClick={() => {
+                          setPriceTouched(true);
+                          setPrice(String(r.price));
+                        }}
+                      >
+                        <span
+                          style={{
+                            ...S.depthBar,
+                            width: `${pct}%`,
+                            background: "rgba(239,68,68,0.12)",
+                          }}
+                        />
+                        <span style={{ color: "#ef4444", position: "relative", zIndex: 1 }}>
+                          {formatPrice(Number(r.price))}
+                        </span>
+                        <span style={{ position: "relative", zIndex: 1 }}>{qty || "—"}</span>
+                      </button>
+                    );
+                  })}
+                  <div style={S.spreadRow}>
+                    {last != null ? formatPrice(last) : "—"}
+                    <span style={{ color: "#666", fontWeight: 500, marginLeft: 8 }}>
+                      · spread {spread != null ? formatPrice(spread) : "—"}
+                    </span>
+                  </div>
+                  {bids.map((r: any) => {
+                    const qty = Number(r.amount || 0);
+                    const pct = Math.min(100, (qty / maxBookQty) * 100);
+                    return (
+                      <button
+                        key={`bid-${Number(r.price)}`}
+                        type="button"
+                        style={S.bookRow}
+                        onClick={() => {
+                          setPriceTouched(true);
+                          setPrice(String(r.price));
+                        }}
+                      >
+                        <span
+                          style={{
+                            ...S.depthBar,
+                            width: `${pct}%`,
+                            background: "rgba(34,197,94,0.12)",
+                          }}
+                        />
+                        <span style={{ color: "#22c55e", position: "relative", zIndex: 1 }}>
+                          {formatPrice(Number(r.price))}
+                        </span>
+                        <span style={{ position: "relative", zIndex: 1 }}>{qty || "—"}</span>
+                      </button>
+                    );
+                  })}
+                </>
               )}
-              {asks.map((r: any, i: number) => {
-                const qty = Number(r.amount || r.size || 0);
-                const pct = Math.min(100, (qty / maxBookQty) * 100);
-                return (
-                  <button
-                    key={`ask-${Number(r.price)}`}
-                    type="button"
-                    style={S.bookRow}
-                    onClick={() => {
-                      setPriceTouched(true);
-                      setPrice(String(r.price));
-                    }}
-                  >
-                    <span
-                      style={{ ...S.depthBar, width: `${pct}%`, background: "rgba(239,68,68,0.12)" }}
-                    />
-                    <span style={{ color: "#ef4444" }}>{formatPrice(Number(r.price))}</span>
-                    <span>{qty || "—"}</span>
-                  </button>
-                );
-              })}
-              <div style={S.spreadRow}>
-                Spread {spread != null ? formatPrice(spread) : "—"}
-              </div>
-              {bids.map((r: any, i: number) => {
-                const qty = Number(r.amount || r.size || 0);
-                const pct = Math.min(100, (qty / maxBookQty) * 100);
-                return (
-                  <button
-                    key={`bid-${Number(r.price)}`}
-                    type="button"
-                    style={S.bookRow}
-                    onClick={() => {
-                      setPriceTouched(true);
-                      setPrice(String(r.price));
-                    }}
-                  >
-                    <span
-                      style={{ ...S.depthBar, width: `${pct}%`, background: "rgba(34,197,94,0.12)" }}
-                    />
-                    <span style={{ color: "#22c55e" }}>{formatPrice(Number(r.price))}</span>
-                    <span>{qty || "—"}</span>
-                  </button>
-                );
-              })}
             </div>
           </div>
         ) : (

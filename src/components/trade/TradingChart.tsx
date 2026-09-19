@@ -129,16 +129,23 @@ export default function TradingChart({
       rightPriceScale: {
         borderColor: "#1a1a1a",
         scaleMargins: { top: 0.08, bottom: 0.18 },
+        // Auto-scale price axis to VISIBLE candles (TradingView-style zoom)
+        autoScale: true,
+        entireTextOnly: false,
+        visible: true,
       },
       timeScale: {
         borderColor: "#1a1a1a",
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 4,
-        barSpacing: 8,
-        minBarSpacing: 3,
+        rightOffset: 6,
+        // Default spacing; zoom changes logical range → more/fewer bars visible
+        barSpacing: 7,
+        minBarSpacing: 1.5,
         fixLeftEdge: false,
         fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: false, // avoid fighting mobile resize/keyboard; manual zoom still preserved via no fitContent on ticks
+        shiftVisibleRangeOnNewBar: false,
       },
       handleScroll: {
         mouseWheel: true,
@@ -147,6 +154,7 @@ export default function TradingChart({
         vertTouchDrag: false,
       },
       handleScale: {
+        // Wheel/pinch adjusts TIME range; price scale auto-fits visible data
         axisPressedMouseMove: { time: true, price: true },
         axisDoubleClickReset: { time: true, price: true },
         mouseWheel: true,
@@ -162,6 +170,12 @@ export default function TradingChart({
       wickDownColor: "#ea3943",
       priceLineVisible: true,
       lastValueVisible: true,
+      // Price scale tracks visible range when user zooms the time axis
+      autoscaleInfoProvider: undefined,
+    });
+    chart.priceScale("right").applyOptions({
+      autoScale: true,
+      scaleMargins: { top: 0.08, bottom: 0.18 },
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -368,7 +382,8 @@ export default function TradingChart({
         height,
         position: "relative",
         // Pinch/drag belong to the chart; page can still scroll outside
-        touchAction: "pan-y",
+        // none = allow pinch-zoom on the chart (pan-y blocks multi-touch scale)
+        touchAction: "none",
         userSelect: "none",
         WebkitUserSelect: "none",
       }}
