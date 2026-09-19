@@ -71,6 +71,8 @@ type BybitOrderbook = {
   s?: string;
   b?: unknown;
   a?: unknown;
+  /** Bybit WS: "snapshot" | "delta" — deltas must merge, not replace. */
+  u?: number;
 };
 
 type BybitTrade = {
@@ -281,6 +283,43 @@ function parseBook(data: unknown): BookRow[] {
   return [...asks, ...bids];
 }
 
+/** Apply Bybit levels into a price→amount map. qty 0 removes the level. */
+function applyBookSide(
+  map: Map<number, number>,
+  rows: BookRow[],
+  replace: boolean,
+): void {
+  if (replace) map.clear();
+  for (const row of rows) {
+    if (row.amount <= 0) {
+      map.delete(row.price);
+    } else {
+      map.set(row.price, row.amount);
+    }
+  }
+}
+
+function mapsToBookRows(
+  bidMap: Map<number, number>,
+  askMap: Map<number, number>,
+): BookRow[] {
+  const asks: BookRow[] = [];
+  for (const [price, amount] of askMap) {
+    asks.push({ side: "sell", price, amount, filled_amount: 0 });
+  }
+  asks.sort((a, b) => a.price - b.price);
+
+  const bids: BookRow[] = [];
+  for (const [price, amount] of bidMap) {
+    bids.push({ side: "buy", price, amount, filled_amount: 0 });
+  }
+  bids.sort((a, b) => b.price - a.price);
+
+  // Cap depth for UI (level-50 can be large)
+  return [...asks.slice(0, 50), ...bids.slice(0, 50)];
+}
+
+
 function parseTrades(
   data: unknown,
   fallbackSymbol: string,
@@ -447,11 +486,19 @@ export function useBybitMarketData(
     }
   };
 
+  /** Local order-book maps — required so Bybit deltas merge instead of wiping a side. */
+  const bidMapRef = useRef<Map<number, number>>(new Map());
+  const askMapRef = useRef<Map<number, number>>(new Map());
+
   const scheduleBook = (next: BookRow[]) => {
     pendingBookRef.current = next;
     if (bookRafRef.current == null) {
       bookRafRef.current = requestAnimationFrame(flushBook);
     }
+  };
+
+  const publishBookFromMaps = () => {
+    scheduleBook(mapsToBookRows(bidMapRef.current, askMapRef.current));
   };
 
   useEffect(() => {
@@ -469,6 +516,8 @@ export function useBybitMarketData(
     setTicker(null);
     setCandles([]);
     setBook([]);
+    bidMapRef.current = new Map();
+    askMapRef.current = new Map();
     setTrades([]);
 
     if (!hasPairInfo) {
@@ -547,13 +596,30 @@ export function useBybitMarketData(
       // Order book
       // -------------------------
       if (message.topic === `orderbook.50.${symbol}`) {
-        const nextBook = parseBook(message.data);
+        // Bybit v5: type "snapshot" = full book; "delta" = changed levels only.
+        // Replacing the whole book on every delta is what made one side vanish
+        // and caused aggressive visual rebuilds.
+        const msgType = String(message.type || "").toLowerCase();
+        const raw = (message.data && typeof message.data === "object"
+          ? message.data
+          : {}) as BybitOrderbook;
+        // Only an explicit snapshot may clear maps. Unknown/delta always merge
+        // so a bid-only delta cannot erase asks (and vice versa).
+        const isSnapshot = msgType === "snapshot";
+        const bidRows = parseBookRows(raw.b, "buy");
+        const askRows = parseBookRows(raw.a, "sell");
 
-        if (nextBook.length > 0) {
-          // Spot level-50 sends snapshots for this stream.
-          // If Bybit later sends a delta, parseBook safely ignores
-          // malformed messages instead of fabricating data.
-          scheduleBook(nextBook);
+        if (isSnapshot) {
+          applyBookSide(bidMapRef.current, bidRows, true);
+          applyBookSide(askMapRef.current, askRows, true);
+        } else {
+          // delta or missing type — merge; amount 0 deletes that price only
+          applyBookSide(bidMapRef.current, bidRows, false);
+          applyBookSide(askMapRef.current, askRows, false);
+        }
+
+        if (bidMapRef.current.size > 0 || askMapRef.current.size > 0) {
+          publishBookFromMaps();
         }
 
         return;
@@ -697,7 +763,19 @@ export function useBybitMarketData(
           a: orderbookResult.a,
         });
 
-        setBook(initialBook);
+        bidMapRef.current = new Map();
+        askMapRef.current = new Map();
+        applyBookSide(
+          bidMapRef.current,
+          initialBook.filter((r) => r.side === "buy"),
+          true,
+        );
+        applyBookSide(
+          askMapRef.current,
+          initialBook.filter((r) => r.side === "sell"),
+          true,
+        );
+        setBook(mapsToBookRows(bidMapRef.current, askMapRef.current));
 
         if (!cancelled) {
           // Connect only after the REST snapshot has loaded.
