@@ -161,7 +161,25 @@ export default function SupportChat({ onClose }: Props) {
         },
         (payload) => {
           const row = payload.new as Msg;
-          setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === row.id)) return prev;
+            // Replace optimistic local user bubble with the persisted row (same text).
+            const st = (row.sender_type || "").toLowerCase();
+            if (st === "user" && row.message) {
+              const idx = prev.findIndex(
+                (m) =>
+                  String(m.id).startsWith("local-user-") &&
+                  m.message === row.message &&
+                  (m.sender_type || "").toLowerCase() === "user",
+              );
+              if (idx >= 0) {
+                const next = prev.slice();
+                next[idx] = row;
+                return next;
+              }
+            }
+            return [...prev, row];
+          });
           const st = (row.sender_type || "").toLowerCase();
           if (st === "admin") setAgentTyping(false);
           if (st === "ai") setAiTyping(false);
@@ -257,7 +275,7 @@ export default function SupportChat({ onClose }: Props) {
       setScreen("chat");
       setClosedLocal(false);
 
-      const welcomeMsg = `Hi ${name}! I'm CEO AI — your 24/7 assistant for CEO Exchange. Ask me about KYC, deposits, withdrawals, security, or your account.`;
+      const welcomeMsg = `How can I assist you today?\n\nI'm here to help with your questions, trading information, and CEO Exchange.`;
       const welcome: Msg = {
         id: `local-welcome-${Date.now()}`,
         ticket_id: data.id,
@@ -308,29 +326,82 @@ export default function SupportChat({ onClose }: Props) {
       });
       if (e) throw e;
       if (data?.error) {
+        setAiTyping(false);
         setError("CEO AI is temporarily unavailable. You can keep messaging or ask for an agent.");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `local-err-${Date.now()}`,
+            ticket_id: ticketId,
+            sender_id: null,
+            sender_type: "ai",
+            message:
+              "Sorry, I couldn't process that message. Please try again.",
+            created_at: new Date().toISOString(),
+          },
+        ]);
         return;
       }
-      // Product rule: do NOT auto-transfer on handoff unless user asked (handled in sendMessage).
+      // AI reply is inserted by the edge function and arrives via realtime;
+      // typing indicator clears when the AI message INSERT is received.
+      // Fallback: clear typing if no message within 45s (network hang).
+      window.setTimeout(() => setAiTyping(false), 45000);
     } catch {
-      setError("CEO AI is temporarily unavailable.");
-    } finally {
       setAiTyping(false);
+      setError("CEO AI is temporarily unavailable.");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `local-err-${Date.now()}`,
+          ticket_id: ticketId,
+          sender_id: null,
+          sender_type: "ai",
+          message:
+            "Sorry, I couldn't process that message. Please try again.",
+          created_at: new Date().toISOString(),
+        },
+      ]);
     }
   }
 
   async function sendMessage() {
     if (!userId || !ticket?.id || !draft.trim() || sending || isClosed) return;
     const text = draft.trim();
+    const ticketId = ticket.id;
+    const localId = `local-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Optimistic UI: show the user's message immediately — do not wait for DB/API.
+    const optimistic: Msg = {
+      id: localId,
+      ticket_id: ticketId,
+      sender_id: userId,
+      sender_type: "user",
+      message: text,
+      created_at: new Date().toISOString(),
+    };
     setDraft("");
-    setSending(true);
     setError("");
+    setMessages((prev) => [...prev, optimistic]);
+    // Scroll after paint
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+
+    setSending(true);
+    const wantsHuman = HUMAN_KEYWORDS.test(text);
+
+    // Show typing only after the user bubble is on screen (AI mode).
+    if (wantsHuman && mode === "ai") {
+      // handoff path below
+    } else if (mode === "ai") {
+      setAiTyping(true);
+    } else {
+      setAgentTyping(true);
+    }
 
     try {
-      const wantsHuman = HUMAN_KEYWORDS.test(text);
-
       const { error: e } = await supabase.from("ticket_messages").insert({
-        ticket_id: ticket.id,
+        ticket_id: ticketId,
         sender_id: userId,
         sender_type: "user",
         message: text,
@@ -338,18 +409,36 @@ export default function SupportChat({ onClose }: Props) {
       if (e) throw e;
 
       if (wantsHuman && mode === "ai") {
-        await requestHuman(ticket.id);
+        setAiTyping(false);
+        await requestHuman(ticketId);
       } else if (mode === "ai") {
-        void callAi(ticket.id);
+        // callAi manages aiTyping true→false; ensure typing stays on until reply
+        void callAi(ticketId);
       } else {
-        setAgentTyping(true);
-        setTimeout(() => setAgentTyping(false), 12000);
+        // Agent mode: soft timeout for typing indicator (not an artificial send delay)
+        window.setTimeout(() => setAgentTyping(false), 12000);
       }
     } catch (err: any) {
+      setAiTyping(false);
+      setAgentTyping(false);
+      // Keep the optimistic user message visible; append a professional error bubble
+      const errMsg: Msg = {
+        id: `local-err-${Date.now()}`,
+        ticket_id: ticketId,
+        sender_id: null,
+        sender_type: "ai",
+        message:
+          "Sorry, I couldn't process that message. Please try again.",
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errMsg]);
       setError(err?.message || "Failed to send.");
-      setDraft(text);
+      // Do not restore draft — message already visible; user can retype if needed
     } finally {
       setSending(false);
+      requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      });
     }
   }
 
