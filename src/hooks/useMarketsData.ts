@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useBybitTickers } from "../trading/useBybitTickers";
+import {
+  classifyMarketSession,
+  resolveSessionStatus,
+  type SessionStatus,
+} from "../lib/marketSession";
 import type { AssetMeta, TradingPairRow } from "../lib/types";
 
 const PAGE_SIZE = 1000;
@@ -24,6 +29,16 @@ export type MarketRow = {
   market_category?: string | null;
   icon_url?: string | null;
   kind: "spot" | "perpetual";
+  /** Real funding rate from derivative_market_tickers when present */
+  funding_rate?: number | null;
+  /**
+   * Honest session state:
+   * - live: crypto 24/7 or TradFi open
+   * - closed: TradFi session closed (last real price still shown)
+   * - unavailable: provider/data failure (not the same as closed)
+   * Crypto is never artificially frozen on weekends.
+   */
+  session_status: SessionStatus;
 };
 
 type TickerRow = Record<string, unknown>;
@@ -164,7 +179,7 @@ export function useMarketsData(userId: string | null) {
           const res = await supabase
             .from("derivative_market_tickers")
             .select(
-              "symbol,base_asset,quote_asset,provider_symbol,last_price,change_24h,volume_24h,high_24h,low_24h,market_type"
+              "symbol,base_asset,quote_asset,provider_symbol,last_price,change_24h,volume_24h,high_24h,low_24h,market_type,funding_rate"
             )
             .range(from, to);
           return { data: res.data as TickerRow[] | null, error: res.error };
@@ -198,8 +213,10 @@ export function useMarketsData(userId: string | null) {
           hasTicker,
           isFavorite: false,
           market_type: "perpetual",
+          session_status: "live" as SessionStatus,
           market_category: null,
           kind: "perpetual" as const,
+          funding_rate: num(t.funding_rate),
         };
       });
       setPerpRows(mapped);
@@ -316,27 +333,6 @@ export function useMarketsData(userId: string | null) {
     };
   }, [loadDbTickers]);
 
-  // Perpetual prices previously only loaded once on mount (inside
-  // loadPairs -> loadPerpetuals) with no subscription and no polling,
-  // so they went stale after first load while spot prices kept moving.
-  // Mirror the market_tickers realtime pattern above so derivative
-  // prices update live too.
-  useEffect(() => {
-    const channel = supabase
-      .channel("markets-derivative-tickers-v1")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "derivative_market_tickers" },
-        () => {
-          void loadPerpetuals();
-        }
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [loadPerpetuals]);
-
   const nameByBase = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of assets) {
@@ -391,12 +387,39 @@ export function useMarketsData(userId: string | null) {
             ? "spot"
             : mt;
 
+      const sessionClass = classifyMarketSession({
+        market_category: p.market_category,
+        market_type,
+        kind: "spot",
+      });
+      // Optional backend session fields when present on pair or ticker
+      const pairAny = p as Record<string, unknown>;
+      const dbAny = db as Record<string, unknown> | undefined;
+      const is_session_open =
+        typeof pairAny.is_session_open === "boolean"
+          ? pairAny.is_session_open
+          : typeof dbAny?.is_session_open === "boolean"
+            ? (dbAny.is_session_open as boolean)
+            : null;
+      const market_status =
+        (str(pairAny.market_status) ||
+          str(dbAny?.market_status) ||
+          str(dbAny?.session_status)) ?? null;
+      const session_status = resolveSessionStatus({
+        sessionClass,
+        hasRealPrice: hasTicker,
+        is_session_open,
+        market_status,
+        providerUnavailable: bybitStatus === "disconnected",
+      });
+
       return {
         symbol: p.symbol,
         base_asset: base || p.base_asset,
         quote_asset: quote || p.quote_asset,
         base_name: nameByBase.get(base) || undefined,
         listed_at: p.listed_at ?? null,
+        // Keep last real price even when closed; never force 0
         last_price: hasTicker ? last_price : null,
         change_24h: hasTicker ? change_24h : null,
         volume_24h: hasTicker ? volume_24h : null,
@@ -409,19 +432,30 @@ export function useMarketsData(userId: string | null) {
         market_category: p.market_category ?? null,
         icon_url: iconByBase.get(base) || null,
         kind: "spot" as const,
+        session_status,
       };
     });
-  }, [pairs, dbTickers, bybitTickers, nameByBase, iconByBase, favorites]);
+  }, [pairs, dbTickers, bybitTickers, bybitStatus, nameByBase, iconByBase, favorites]);
 
   const perpetualMarkets: MarketRow[] = useMemo(() => {
-    return perpRows.map((row) => ({
-      ...row,
-      isFavorite:
-        favorites.has(row.symbol) ||
-        favorites.has(compactSymbol(row.symbol)),
-      icon_url: iconByBase.get(row.base_asset.toUpperCase()) || null,
-      base_name: nameByBase.get(row.base_asset.toUpperCase()) || undefined,
-    }));
+    return perpRows.map((row) => {
+      const session_status =
+        row.session_status ??
+        resolveSessionStatus({
+          sessionClass: "crypto",
+          hasRealPrice: row.hasTicker,
+          providerUnavailable: false,
+        });
+      return {
+        ...row,
+        isFavorite:
+          favorites.has(row.symbol) ||
+          favorites.has(compactSymbol(row.symbol)),
+        icon_url: iconByBase.get(row.base_asset.toUpperCase()) || null,
+        base_name: nameByBase.get(row.base_asset.toUpperCase()) || undefined,
+        session_status,
+      };
+    });
   }, [perpRows, favorites, iconByBase, nameByBase]);
 
   const markets = spotMarkets;
