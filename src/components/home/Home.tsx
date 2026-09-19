@@ -483,6 +483,9 @@ function Home({
   const [marketPairs, setMarketPairs] = useState<Market[]>([]);
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [marketsError, setMarketsError] = useState<string | null>(null);
+  /** CoinGecko market_cap_desc rank by base asset (same source as TradingPage hot markets). */
+  const [hotCapRank, setHotCapRank] = useState<Map<string, number>>(() => new Map());
+  const [hotRankLoading, setHotRankLoading] = useState(true);
   /** Real prices from market_tickers (bybit-spot-ticker-sync). Bybit WS/REST overlays live values when available. */
   const [dbTickerMap, setDbTickerMap] = useState<Map<string, { last_price: number | null; change_24h: number | null; volume_24h: number | null; updated_at: string | null }>>(() => new Map());
   const [posts, setPosts] = useState<Post[]>([]);
@@ -746,6 +749,50 @@ function Home({
     void loadMarketTickers();
   }, [loadTradingPairs, loadAssetsMeta, loadMarketTickers]);
 
+  /**
+   * Home "Hot" ranking source — same approach as TradingPage.loadHot:
+   * CoinGecko /coins/markets?order=market_cap_desc, matched to CEO trading_pairs
+   * by base asset (prefer USDT). Prices still come from market_tickers + Bybit.
+   * This is NOT volume×change (that surfaces meme coins) and is NOT hard-coded symbols.
+   */
+  const loadHotCapRank = useCallback(async () => {
+    setHotRankLoading(true);
+    const started = performance.now();
+    try {
+      const res = await fetch(
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=false",
+      );
+      if (!res.ok) {
+        console.warn("[Home] CoinGecko hot rank HTTP", res.status);
+        setHotRankLoading(false);
+        return;
+      }
+      const cg = (await res.json()) as Array<{
+        symbol?: string;
+        market_cap_rank?: number;
+      }>;
+      const map = new Map<string, number>();
+      for (const coin of cg) {
+        const sym = String(coin.symbol || "").toUpperCase();
+        const rank = Number(coin.market_cap_rank);
+        if (!sym || !Number.isFinite(rank)) continue;
+        // Keep best (lowest) rank if duplicates
+        const prev = map.get(sym);
+        if (prev == null || rank < prev) map.set(sym, rank);
+      }
+      setHotCapRank(map);
+      console.log("[Home] hot cap rank", {
+        bases: map.size,
+        ms: Math.round(performance.now() - started),
+      });
+    } catch (e) {
+      console.warn("[Home] CoinGecko hot rank failed:", e);
+    } finally {
+      setHotRankLoading(false);
+    }
+  }, []);
+
+
   const loadPosts = useCallback(async (id: string, tab: FeedTab) => {
     let query = supabase.from("posts").select("id,user_id,content,image_url,likes,likes_count,comments_count,reposts_count,shares_count,views_count,created_at").order("created_at", { ascending: false }).limit(50);
     if (tab === "Following") {
@@ -925,7 +972,8 @@ function Home({
     void loadTradingPairs();
     void loadAssetsMeta();
     void loadMarketTickers();
-  }, [loadTradingPairs, loadAssetsMeta, loadMarketTickers]);
+    void loadHotCapRank();
+  }, [loadTradingPairs, loadAssetsMeta, loadMarketTickers, loadHotCapRank]);
 
   // Local clock for relative timestamps (posts, notifications, etc.) — no extra DB calls.
   useEffect(() => {
@@ -1104,15 +1152,6 @@ function Home({
       return Array.from(bestByBase.values());
     };
 
-    /** Real Hot score: volume_24h × |change_24h|. Missing metrics → score 0 (not invented). */
-    const hotScore = (m: Market) => {
-      const vol = m.volume_24h == null ? null : Number(m.volume_24h);
-      const ch = m.change_24h == null ? null : Number(m.change_24h);
-      if (vol == null || !Number.isFinite(vol) || vol < 0) return 0;
-      if (ch == null || !Number.isFinite(ch)) return 0;
-      return vol * Math.abs(ch);
-    };
-
     if (marketTab === "Favorites") {
       // Favorites may still show without price (user-chosen symbols).
       list = markets.filter((m) => favoriteSymbols.includes(m.symbol));
@@ -1136,24 +1175,25 @@ function Home({
           new Date(a.listed_at ?? 0).getTime(),
       );
     } else {
-      // Hot: require real ticker metrics. No catalog-order fallback.
+      // Hot = CoinGecko market_cap_desc order among listed pairs with real prices
+      // (same source as TradingPage.loadHot). Not volume×change, not catalog order.
       list = collapseByBase(list);
-      list.sort((a, b) => {
-        const scoreDiff = hotScore(b) - hotScore(a);
-        if (scoreDiff !== 0) return scoreDiff;
-        // Tie-break: higher volume, then higher absolute change
-        const volDiff =
-          Number(b.volume_24h ?? 0) - Number(a.volume_24h ?? 0);
-        if (volDiff !== 0) return volDiff;
-        return (
-          Math.abs(Number(b.change_24h ?? 0)) -
-          Math.abs(Number(a.change_24h ?? 0))
-        );
-      });
-      // Drop rows with zero score when any real activity exists
-      const anyHot = list.some((m) => hotScore(m) > 0);
-      if (anyHot) {
-        list = list.filter((m) => hotScore(m) > 0);
+      if (hotCapRank.size > 0) {
+        list = list.filter((m) => {
+          const base = (m.base_asset || "").toUpperCase();
+          return hotCapRank.has(base);
+        });
+        list.sort((a, b) => {
+          const ra =
+            hotCapRank.get((a.base_asset || "").toUpperCase()) ?? 99999;
+          const rb =
+            hotCapRank.get((b.base_asset || "").toUpperCase()) ?? 99999;
+          if (ra !== rb) return ra - rb;
+          return quoteRank(a.quote_asset) - quoteRank(b.quote_asset);
+        });
+      } else {
+        // Ranking not ready — show nothing rather than arbitrary/meme lists
+        list = [];
       }
     }
 
@@ -1170,7 +1210,7 @@ function Home({
     }
 
     return list;
-  }, [favoriteSymbols, marketCategory, marketTab, markets, search, showAllMarkets]);
+  }, [favoriteSymbols, marketCategory, marketTab, markets, search, showAllMarkets, hotCapRank]);
 
   const filteredPosts = useMemo(() => {
     if (!search.trim()) return posts;
@@ -1706,7 +1746,7 @@ function Home({
                   ? "Loading markets…"
                   : marketPairs.length === 0
                   ? "No active trading pairs found."
-                  : marketTab === "Hot" || marketTab === "Gainers" || marketTab === "Losers" || marketTab === "New"
+                  : marketTab === "Hot" && (hotRankLoading || hotCapRank.size === 0)
                   ? "Waiting for live market data…"
                   : "Waiting for live market data…"
               }
