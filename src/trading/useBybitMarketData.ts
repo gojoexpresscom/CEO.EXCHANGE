@@ -412,6 +412,48 @@ export function useBybitMarketData(
 
   const websocketRef = useRef<BybitWebSocket | null>(null);
 
+  // Presentation coalescing: keep receiving every WS message, but flush
+  // ticker/book to React at most once per animation frame so the UI does
+  // not flicker through intermediate snapshots.
+  const pendingTickerRef = useRef<Ticker | null>(null);
+  const pendingBookRef = useRef<BookRow[] | null>(null);
+  const tickerRafRef = useRef<number | null>(null);
+  const bookRafRef = useRef<number | null>(null);
+
+  const flushTicker = () => {
+    tickerRafRef.current = null;
+    const next = pendingTickerRef.current;
+    if (next) {
+      pendingTickerRef.current = null;
+      setTicker((previous) => mergeTicker(previous, next));
+    }
+  };
+
+  const flushBook = () => {
+    bookRafRef.current = null;
+    const next = pendingBookRef.current;
+    if (next) {
+      pendingBookRef.current = null;
+      setBook(next);
+    }
+  };
+
+  const scheduleTicker = (next: Ticker) => {
+    pendingTickerRef.current = pendingTickerRef.current
+      ? mergeTicker(pendingTickerRef.current, next)
+      : next;
+    if (tickerRafRef.current == null) {
+      tickerRafRef.current = requestAnimationFrame(flushTicker);
+    }
+  };
+
+  const scheduleBook = (next: BookRow[]) => {
+    pendingBookRef.current = next;
+    if (bookRafRef.current == null) {
+      bookRafRef.current = requestAnimationFrame(flushBook);
+    }
+  };
+
   useEffect(() => {
     // The pair/timeframe this hook is fed can arrive later than the
     // component mount (e.g. the pair is still being fetched from
@@ -468,9 +510,7 @@ export function useBybitMarketData(
         const nextTicker = parseTicker(message.data);
 
         if (nextTicker) {
-          setTicker((previous) =>
-            mergeTicker(previous, nextTicker),
-          );
+          scheduleTicker(nextTicker);
         }
 
         return;
@@ -513,7 +553,7 @@ export function useBybitMarketData(
           // Spot level-50 sends snapshots for this stream.
           // If Bybit later sends a delta, parseBook safely ignores
           // malformed messages instead of fabricating data.
-          setBook(nextBook);
+          scheduleBook(nextBook);
         }
 
         return;
@@ -702,6 +742,17 @@ export function useBybitMarketData(
 
     return () => {
       cancelled = true;
+
+      if (tickerRafRef.current != null) {
+        cancelAnimationFrame(tickerRafRef.current);
+        tickerRafRef.current = null;
+      }
+      if (bookRafRef.current != null) {
+        cancelAnimationFrame(bookRafRef.current);
+        bookRafRef.current = null;
+      }
+      pendingTickerRef.current = null;
+      pendingBookRef.current = null;
 
       abortController.abort();
 
