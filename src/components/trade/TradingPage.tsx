@@ -51,9 +51,41 @@ type MicroTab = "book" | "trades";
 type BottomTab = "orders" | "positions" | "assets" | "borrowings";
 type OrderSide = "buy" | "sell";
 type Tf = "15m" | "1h" | "4h" | "1d";
-type OrderType = "limit" | "market";
+/** Supported by current backend: limit (and market UI only). Others are UI-only / coming soon. */
+type OrderType =
+  | "limit"
+  | "market"
+  | "tp_sl"
+  | "conditional"
+  | "oco"
+  | "trailing_stop"
+  | "chase_limit"
+  | "scaled"
+  | "twap"
+  | "iceberg";
+
+type ViewMode = "terminal" | "chart";
 
 const TFS: Tf[] = ["15m", "1h", "4h", "1d"];
+
+const ORDER_TYPE_OPTIONS: {
+  id: OrderType;
+  label: string;
+  supported: boolean;
+}[] = [
+  { id: "limit", label: "Limit", supported: true },
+  { id: "market", label: "Market", supported: true },
+  { id: "tp_sl", label: "TP/SL", supported: false },
+  { id: "conditional", label: "Conditional", supported: false },
+  { id: "oco", label: "OCO", supported: false },
+  { id: "trailing_stop", label: "Trailing Stop", supported: false },
+  { id: "chase_limit", label: "Chase Limit Order", supported: false },
+  { id: "scaled", label: "Scaled Order", supported: false },
+  { id: "twap", label: "TWAP", supported: false },
+  { id: "iceberg", label: "Iceberg", supported: false },
+];
+
+const PCT_STEPS = [0, 25, 50, 75, 100] as const;
 
 function routeSymbol(fallback: string) {
   try {
@@ -107,10 +139,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
   const [showPairs, setShowPairs] = useState(false);
   const [pairQ, setPairQ] = useState("");
   const [showReview, setShowReview] = useState(false);
-  const [showChart, setShowChart] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("terminal");
   const [orderType, setOrderType] = useState<OrderType>("limit");
+  const [showOrderTypeMenu, setShowOrderTypeMenu] = useState(false);
   const [postOnly, setPostOnly] = useState(true);
   const [tpSl, setTpSl] = useState(false);
+  const [tabAnim, setTabAnim] = useState(false);
+  const pctTrackRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -439,27 +474,88 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
 
   const applyPct = (pct: number) => {
     setActivePct(pct);
-    if (!wallet.exists || wallet.available <= 0) return;
+    if (!wallet.exists || wallet.available <= 0) {
+      if (pct === 0) {
+        setAmount("");
+        setOrderValue("");
+      }
+      return;
+    }
+    // For market orders use last/ask/bid as reference price for sizing
+    const refPrice =
+      orderType === "market"
+        ? side === "buy"
+          ? ask ?? last ?? Number(price)
+          : bid ?? last ?? Number(price)
+        : Number(price);
     if (side === "buy") {
-      const p = Number(price);
-      if (!Number.isFinite(p) || p <= 0) return;
+      if (!Number.isFinite(refPrice) || refPrice <= 0) return;
       const spend = (wallet.available * pct) / 100;
       setOrderValue(String(Number(spend.toFixed(8))));
-      setAmount(String(Number((spend / p).toFixed(8))));
+      setAmount(String(Number((spend / refPrice).toFixed(8))));
     } else {
       const qty = (wallet.available * pct) / 100;
       setAmount(String(Number(qty.toFixed(8))));
-      const p = Number(price);
-      if (Number.isFinite(p) && p > 0) {
-        setOrderValue(String(Number((qty * p).toFixed(8))));
+      if (Number.isFinite(refPrice) && refPrice > 0) {
+        setOrderValue(String(Number((qty * refPrice).toFixed(8))));
       }
     }
   };
 
+  /** Drag / click on percentage track */
+  const onPctTrackPointer = (clientX: number) => {
+    const el = pctTrackRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const pct = Math.round(ratio * 4) * 25; // snap to 0/25/50/75/100
+    applyPct(pct);
+  };
+
+  const selectOrderType = (id: OrderType) => {
+    const opt = ORDER_TYPE_OPTIONS.find((o) => o.id === id);
+    if (!opt) return;
+    if (!opt.supported) {
+      setNotice(`${opt.label} is coming soon.`);
+      setNoticeOk(false);
+      setShowOrderTypeMenu(false);
+      return;
+    }
+    setOrderType(id);
+    setShowOrderTypeMenu(false);
+    if (id === "market") {
+      // Market: clear price seed sensitivity; size still uses ref price
+      setPriceTouched(true);
+    } else if (id === "limit") {
+      setPriceTouched(false);
+    }
+  };
+
+  const switchBottomTab = (t: BottomTab) => {
+    if (t === bottom) return;
+    setTabAnim(true);
+    setBottom(t);
+    window.setTimeout(() => setTabAnim(false), 220);
+  };
+
+  const orderTypeLabel =
+    ORDER_TYPE_OPTIONS.find((o) => o.id === orderType)?.label ?? "Limit";
+
   const placeOrder = async () => {
     if (!pair) return;
-    if (!Number.isFinite(np) || np <= 0) {
+    const isMarket = orderType === "market";
+    const execPrice = isMarket
+      ? side === "buy"
+        ? ask ?? last
+        : bid ?? last
+      : np;
+    if (!isMarket && (!Number.isFinite(np) || np <= 0)) {
       setNotice("Enter a valid limit price.");
+      setNoticeOk(false);
+      return;
+    }
+    if (isMarket && (execPrice == null || !Number.isFinite(execPrice) || execPrice <= 0)) {
+      setNotice("Market price unavailable. Try again.");
       setNoticeOk(false);
       return;
     }
@@ -468,7 +564,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       setNoticeOk(false);
       return;
     }
-    if (!wallet.exists || wallet.available <= 0 || total > wallet.available + 1e-12) {
+    const checkTotal =
+      isMarket && execPrice != null ? execPrice * na : total;
+    if (
+      !wallet.exists ||
+      wallet.available <= 0 ||
+      checkTotal > wallet.available + 1e-12
+    ) {
       setNotice("Insufficient balance.");
       setNoticeOk(false);
       return;
@@ -483,14 +585,15 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
     }
     setSubmitting(true);
     setShowReview(false);
-    // Current verified execution path: Supabase Edge Function kraken-spot
+    // Backend currently routes via kraken-spot; market is sent as market when selected.
+    // Unsupported advanced types never reach here.
     const { data, error } = await supabase.functions.invoke("kraken-spot", {
       body: {
         action: "place_order",
         trading_pair: pair.symbol,
         side,
-        order_type: "limit",
-        price: np,
+        order_type: isMarket ? "market" : "limit",
+        price: isMarket ? undefined : np,
         amount: na,
       },
     });
@@ -520,7 +623,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       return;
     }
     setNotice(
-      `Limit ${side.toUpperCase()} submitted${
+      `${isMarket ? "Market" : "Limit"} ${side.toUpperCase()} submitted${
         data?.kraken_order_id ? ` · ref ${data.kraken_order_id}` : ""
       }.`,
     );
@@ -665,11 +768,11 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         <button
           type="button"
           style={S.iconBtn}
-          onClick={() => setShowChart((v) => !v)}
-          aria-label="Chart"
-          title="Toggle chart"
+          onClick={() => setViewMode((v) => (v === "chart" ? "terminal" : "chart"))}
+          aria-label="Fullscreen chart"
+          title="Toggle fullscreen chart"
         >
-          {showChart ? "✕" : "⛶"}
+          ⛶
         </button>
       </header>
 
@@ -696,17 +799,33 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         <div style={S.pairControls}>
           <span style={S.mmBadge}>MM</span>
           <span style={S.mmPct}>0.00%</span>
-          <span
-            style={{
-              ...S.liveDot,
-              background:
-                feedStatus === "connected"
-                  ? "#22c55e"
-                  : feedStatus === "connecting"
-                    ? "#f5b51b"
-                    : "#666",
-            }}
-          />
+          {/* Top-right segmented control: chart | terminal (matches reference icons) */}
+          <div style={S.segControl} role="group" aria-label="View mode">
+            <button
+              type="button"
+              style={{
+                ...S.segBtn,
+                ...(viewMode === "chart" ? S.segBtnOn : {}),
+              }}
+              onClick={() => setViewMode("chart")}
+              aria-label="Chart view"
+              aria-pressed={viewMode === "chart"}
+            >
+              <span style={S.segIcon}>▮▮</span>
+            </button>
+            <button
+              type="button"
+              style={{
+                ...S.segBtn,
+                ...(viewMode === "terminal" ? S.segBtnOn : {}),
+              }}
+              onClick={() => setViewMode("terminal")}
+              aria-label="Order book view"
+              aria-pressed={viewMode === "terminal"}
+            >
+              <span style={S.segIcon}>☰</span>
+            </button>
+          </div>
           <button
             type="button"
             style={S.favBtn}
@@ -718,9 +837,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         </div>
       </div>
 
-      {/* ── Optional collapsible chart (preserved, not primary) ── */}
-      {showChart && (
-        <section style={S.chartZone}>
+      {/* ── Chart view (toggled via segmented control) ── */}
+      {viewMode === "chart" && (
+        <section style={S.chartZone} className="ceo-fade-in">
           <div style={S.tfRow}>
             {TFS.map((t) => (
               <button
@@ -735,7 +854,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
           </div>
           <div style={S.chartBox}>
             {candles.length > 0 ? (
-              <TradingChart candles={candles as any} height={220} showMA />
+              <TradingChart candles={candles as any} height={280} showMA />
             ) : (
               <div style={S.chartEmpty}>
                 {feedStatus === "connecting" || loading
@@ -748,7 +867,8 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       )}
 
       {/* ── Main terminal: Form (left) + Order Book (right) ── */}
-      <div style={S.terminal}>
+      {viewMode === "terminal" && (
+      <div style={S.terminal} className="ceo-fade-in">
         {/* LEFT: Order form */}
         <div style={S.formCol}>
           {/* Buy / Sell segmented */}
@@ -791,42 +911,35 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
             </span>
           </div>
 
-          {/* Order type */}
-          <div style={S.typeSelect}>
-            <button
-              type="button"
-              style={{
-                ...S.typeBtn,
-                ...(orderType === "limit" ? S.typeBtnOn : {}),
-              }}
-              onClick={() => setOrderType("limit")}
-            >
-              Limit
-            </button>
-            <button
-              type="button"
-              style={{
-                ...S.typeBtn,
-                ...(orderType === "market" ? S.typeBtnOn : {}),
-              }}
-              onClick={() => setOrderType("market")}
-            >
-              Market
-            </button>
-          </div>
+          {/* Order type dropdown trigger */}
+          <button
+            type="button"
+            style={S.orderTypeTrigger}
+            onClick={() => setShowOrderTypeMenu(true)}
+            aria-haspopup="listbox"
+            aria-expanded={showOrderTypeMenu}
+          >
+            <span>{orderTypeLabel}</span>
+            <span style={S.orderTypeChevron}>{showOrderTypeMenu ? "▴" : "▾"}</span>
+          </button>
 
-          {/* Price */}
-          <div style={S.field}>
-            <span style={S.fieldLabel}>Price</span>
-            <input
-              style={S.input}
-              inputMode="decimal"
-              value={price}
-              onChange={(e) => onPriceChange(e.target.value)}
-              placeholder="0.00"
-            />
-            <span style={S.suffix}>{quote}</span>
-          </div>
+          {/* Price — hidden for market orders */}
+          {orderType !== "market" && (
+            <div style={S.field}>
+              <span style={S.fieldLabel}>Price</span>
+              <input
+                style={S.input}
+                inputMode="decimal"
+                value={price}
+                onChange={(e) => onPriceChange(e.target.value)}
+                placeholder="0.00"
+              />
+              <span style={S.suffix}>{quote}</span>
+            </div>
+          )}
+          {orderType === "market" && (
+            <div style={S.marketHint}>Market · best available price</div>
+          )}
 
           {/* Quantity */}
           <div style={S.field}>
@@ -841,23 +954,50 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
             <span style={S.suffix}>{base}</span>
           </div>
 
-          {/* Percentage slider dots */}
-          <div style={S.pctTrack}>
-            {[0, 25, 50, 75, 100].map((p) => (
+          {/* Percentage slider — real interactive control */}
+          <div
+            ref={pctTrackRef}
+            style={S.pctTrack}
+            onClick={(e) => onPctTrackPointer(e.clientX)}
+            onPointerDown={(e) => {
+              (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+              onPctTrackPointer(e.clientX);
+            }}
+            onPointerMove={(e) => {
+              if (e.buttons === 1) onPctTrackPointer(e.clientX);
+            }}
+            role="slider"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={activePct ?? 0}
+            aria-label="Order size percentage"
+          >
+            <div style={S.pctLine} />
+            <div
+              style={{
+                ...S.pctLineFill,
+                width: `${activePct ?? 0}%`,
+              }}
+            />
+            {PCT_STEPS.map((p) => (
               <button
                 key={p}
                 type="button"
                 style={{
                   ...S.pctDot,
+                  left: `${p}%`,
                   ...(activePct === p ? S.pctDotOn : {}),
                 }}
-                onClick={() => applyPct(p)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  applyPct(p);
+                }}
                 aria-label={`${p}%`}
               />
             ))}
           </div>
           <div style={S.pctLabels}>
-            {[0, 25, 50, 75, 100].map((p) => (
+            {PCT_STEPS.map((p) => (
               <button
                 key={p}
                 type="button"
@@ -897,13 +1037,19 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
             </span>
           </div>
 
-          {/* TP/SL + Post-Only */}
+          {/* TP/SL + Post-Only (visual; TP/SL not backed by backend yet) */}
           <div style={S.optRow}>
             <label style={S.checkLabel}>
               <input
                 type="checkbox"
                 checked={tpSl}
-                onChange={(e) => setTpSl(e.target.checked)}
+                onChange={(e) => {
+                  setTpSl(e.target.checked);
+                  if (e.target.checked) {
+                    setNotice("TP/SL is coming soon and is not sent with the order.");
+                    setNoticeOk(false);
+                  }
+                }}
                 style={S.checkbox}
               />
               TP/SL
@@ -1092,6 +1238,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
           </div>
         </div>
       </div>
+      )}
 
       {notice && (
         <div
@@ -1123,7 +1270,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 ...S.bottomTab,
                 ...(bottom === t.id ? S.bottomTabOn : {}),
               }}
-              onClick={() => setBottom(t.id)}
+              onClick={() => switchBottomTab(t.id)}
             >
               {t.label}
             </button>
@@ -1137,9 +1284,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
           </label>
         </div>
 
-        {/* Content by tab */}
+        {/* Content by tab — smooth enter */}
         {bottom === "orders" && (
-          <div style={S.list}>
+          <div style={S.list} className={tabAnim ? "ceo-tab-enter" : undefined}>
             {openOrders.length === 0 && historyOrders.length === 0 ? (
               <div style={S.emptyState}>
                 <div style={S.emptyIcon}>📄</div>
@@ -1197,14 +1344,17 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         )}
 
         {bottom === "positions" && (
-          <div style={S.emptyState}>
+          <div
+            style={S.emptyState}
+            className={tabAnim ? "ceo-tab-enter" : undefined}
+          >
             <div style={S.emptyIcon}>📄</div>
             <div style={S.emptyText}>No Available Data</div>
           </div>
         )}
 
         {bottom === "assets" && (
-          <div style={S.list}>
+          <div style={S.list} className={tabAnim ? "ceo-tab-enter" : undefined}>
             {wallets.filter(
               (w) => Number(w.balance) > 0 || Number(w.locked_balance) > 0,
             ).length === 0 ? (
@@ -1235,7 +1385,10 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         )}
 
         {bottom === "borrowings" && (
-          <div style={S.emptyState}>
+          <div
+            style={S.emptyState}
+            className={tabAnim ? "ceo-tab-enter" : undefined}
+          >
             <div style={S.emptyIcon}>📄</div>
             <div style={S.emptyText}>No Available Data</div>
           </div>
@@ -1243,6 +1396,58 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       </section>
 
       <div style={{ height: 20 }} />
+
+      {/* Order type dropdown — matches reference sheet */}
+      {showOrderTypeMenu && (
+        <div
+          style={S.orderTypeBackdrop}
+          onClick={() => setShowOrderTypeMenu(false)}
+          className="ceo-menu-backdrop"
+        >
+          <div
+            style={S.orderTypeMenu}
+            onClick={(e) => e.stopPropagation()}
+            className="ceo-menu-panel"
+            role="listbox"
+            aria-label="Order type"
+          >
+            {ORDER_TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                role="option"
+                aria-selected={orderType === opt.id}
+                style={{
+                  ...S.orderTypeItem,
+                  ...(orderType === opt.id ? S.orderTypeItemOn : {}),
+                  ...(!opt.supported ? S.orderTypeItemDisabled : {}),
+                }}
+                onClick={() => selectOrderType(opt.id)}
+              >
+                <span>{opt.label}</span>
+                {!opt.supported && (
+                  <span style={S.comingSoon}>Soon</span>
+                )}
+              </button>
+            ))}
+            <div style={S.orderTypeDivider} />
+            <button
+              type="button"
+              style={S.orderTypeAbout}
+              onClick={() => {
+                setShowOrderTypeMenu(false);
+                setNotice(
+                  "Limit and Market are live. Advanced types (TP/SL, OCO, TWAP, etc.) are coming soon.",
+                );
+                setNoticeOk(true);
+              }}
+            >
+              About order types
+              <span style={{ marginLeft: 6 }}>↗</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Pair sheet */}
       {showPairs && (
@@ -1289,18 +1494,27 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 {base}/{quote}
               </b>
               <span>Type</span>
-              <b>Limit</b>
-              <span>Price</span>
-              <b>
-                {formatPrice(np)} {quote}
-              </b>
+              <b>{orderType === "market" ? "Market" : "Limit"}</b>
+              {orderType !== "market" && (
+                <>
+                  <span>Price</span>
+                  <b>
+                    {formatPrice(np)} {quote}
+                  </b>
+                </>
+              )}
               <span>Quantity</span>
               <b>
                 {na} {base}
               </b>
               <span>Total</span>
               <b>
-                {formatPrice(total)} {quote}
+                {formatPrice(
+                  orderType === "market" && (ask ?? last)
+                    ? (ask ?? last ?? 0) * na
+                    : total,
+                )}{" "}
+                {quote}
               </b>
               <span>Available</span>
               <b>
@@ -1425,6 +1639,39 @@ const S: Record<string, CSSProperties> = {
     fontSize: 11,
     color: "#888",
   },
+  segControl: {
+    display: "flex",
+    alignItems: "center",
+    background: "#1a1a1e",
+    borderRadius: 20,
+    padding: 2,
+    gap: 0,
+    border: "1px solid #2a2a2e",
+  },
+  segBtn: {
+    width: 32,
+    height: 26,
+    border: 0,
+    borderRadius: 16,
+    background: "transparent",
+    color: "#666",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "background 0.18s ease, color 0.18s ease",
+    padding: 0,
+  },
+  segBtnOn: {
+    background: "#2a2a30",
+    color: "#f5f5f5",
+  },
+  segIcon: {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: -1,
+    lineHeight: 1,
+  },
   liveDot: {
     width: 6,
     height: 6,
@@ -1439,6 +1686,95 @@ const S: Record<string, CSSProperties> = {
     color: "#f5b51b",
     fontSize: 16,
     cursor: "pointer",
+  },
+  orderTypeTrigger: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    background: "#121214",
+    border: "1px solid #1c1c1f",
+    borderRadius: 8,
+    padding: "10px 12px",
+    marginBottom: 6,
+    color: "#eee",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  orderTypeChevron: {
+    color: "#888",
+    fontSize: 11,
+  },
+  marketHint: {
+    fontSize: 11,
+    color: "#888",
+    padding: "6px 4px 8px",
+  },
+  orderTypeBackdrop: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.55)",
+    zIndex: 60,
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    paddingTop: "22%",
+  },
+  orderTypeMenu: {
+    width: "min(320px, 88vw)",
+    background: "#1a1a1e",
+    borderRadius: 12,
+    border: "1px solid #2a2a2e",
+    padding: "6px 0",
+    boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+    maxHeight: "70vh",
+    overflowY: "auto",
+  },
+  orderTypeItem: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    border: 0,
+    background: "transparent",
+    color: "#ddd",
+    padding: "12px 16px",
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  orderTypeItemOn: {
+    color: "#f5b51b",
+    fontWeight: 700,
+  },
+  orderTypeItemDisabled: {
+    color: "#666",
+  },
+  comingSoon: {
+    fontSize: 10,
+    color: "#555",
+    border: "1px solid #333",
+    borderRadius: 4,
+    padding: "1px 6px",
+  },
+  orderTypeDivider: {
+    height: 1,
+    background: "#2a2a2e",
+    margin: "4px 12px",
+  },
+  orderTypeAbout: {
+    display: "flex",
+    alignItems: "center",
+    width: "100%",
+    border: 0,
+    background: "transparent",
+    color: "#888",
+    padding: "12px 16px",
+    fontSize: 13,
+    cursor: "pointer",
+    textAlign: "left",
   },
   chartZone: {
     padding: "4px 0 8px",
@@ -1592,29 +1928,60 @@ const S: Record<string, CSSProperties> = {
     flexShrink: 0,
   },
   pctTrack: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "6px 4px 2px",
     position: "relative",
+    height: 28,
+    margin: "4px 2px 0",
+    cursor: "pointer",
+    touchAction: "none",
+    userSelect: "none",
+  },
+  pctLine: {
+    position: "absolute",
+    left: 6,
+    right: 6,
+    top: "50%",
+    height: 2,
+    marginTop: -1,
+    background: "#2a2a2e",
+    borderRadius: 1,
+    pointerEvents: "none",
+  },
+  pctLineFill: {
+    position: "absolute",
+    left: 6,
+    top: "50%",
+    height: 2,
+    marginTop: -1,
+    background: "#f5b51b",
+    borderRadius: 1,
+    pointerEvents: "none",
+    transition: "width 0.15s ease",
   },
   pctDot: {
-    width: 12,
-    height: 12,
+    position: "absolute",
+    top: "50%",
+    width: 14,
+    height: 14,
+    marginTop: -7,
+    marginLeft: -7,
     borderRadius: "50%",
-    border: "2px solid #333",
+    border: "2px solid #444",
     background: "#0a0a0a",
     cursor: "pointer",
     padding: 0,
+    zIndex: 2,
+    transition: "border-color 0.15s ease, background 0.15s ease, transform 0.15s ease",
   },
   pctDotOn: {
     borderColor: "#f5b51b",
     background: "#f5b51b",
+    transform: "scale(1.15)",
   },
   pctLabels: {
     display: "flex",
     justifyContent: "space-between",
     marginBottom: 6,
+    marginTop: 2,
   },
   pctLabel: {
     border: 0,
@@ -1623,6 +1990,7 @@ const S: Record<string, CSSProperties> = {
     fontSize: 10,
     cursor: "pointer",
     padding: "2px 0",
+    transition: "color 0.15s ease",
   },
   pctLabelOn: {
     color: "#f5b51b",
@@ -1945,7 +2313,39 @@ const CSS = `
   button:active { transform: scale(0.98); }
   input::-webkit-outer-spin-button,
   input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-  @media (max-width: 360px) {
-    /* tighter on very small phones */
+
+  .ceo-fade-in {
+    animation: ceoFadeIn 0.2s ease both;
+  }
+  .ceo-tab-enter {
+    animation: ceoTabEnter 0.22s ease both;
+  }
+  .ceo-menu-backdrop {
+    animation: ceoFadeIn 0.18s ease both;
+  }
+  .ceo-menu-panel {
+    animation: ceoMenuUp 0.2s ease both;
+  }
+
+  @keyframes ceoFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes ceoTabEnter {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes ceoMenuUp {
+    from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ceo-fade-in,
+    .ceo-tab-enter,
+    .ceo-menu-backdrop,
+    .ceo-menu-panel {
+      animation: none !important;
+    }
   }
 `;
