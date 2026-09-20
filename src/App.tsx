@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
+import LandingPage from "./components/landing/LandingPage";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
 import TradeHubPage from "./components/trade/TradeHubPage";
@@ -58,6 +59,8 @@ function getRoute(): AppRoute {
 export default function App() {
   const [ready, setReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  /** Unauthenticated: landing first; Get Started opens existing AuthScreen */
+  const [showAuthGate, setShowAuthGate] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -349,10 +352,14 @@ export default function App() {
   }
 
   if (!authenticated) {
+    if (!showAuthGate) {
+      return <LandingPage onGetStarted={() => setShowAuthGate(true)} />;
+    }
     return (
       <AuthScreen
         onAuth={() => {
           setAuthenticated(true);
+          setShowAuthGate(false);
         }}
       />
     );
