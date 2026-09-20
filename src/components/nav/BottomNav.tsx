@@ -10,7 +10,7 @@ const items: { id: NavPage; label: string; icon: string }[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "markets", label: "Markets", icon: "chart" },
   { id: "trade", label: "Trade", icon: "trade" },
-  { id: "earn", label: "Earn", icon: "earn" },
+  { id: "earn", label: "TradFi", icon: "earn" },
   { id: "assets", label: "Assets", icon: "wallet" },
 ];
 
@@ -131,4 +131,3 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "0.02em",
   },
 };
-            
