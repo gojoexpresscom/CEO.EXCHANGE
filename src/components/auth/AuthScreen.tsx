@@ -779,13 +779,6 @@ export default function AuthScreen({ onAuth }: Props) {
             <button type="button" style={styles.signupHint} onClick={goSignup}>
               Don&apos;t have an account? <span style={styles.goldInline}>Create Account</span>
             </button>
-            <button
-              type="button"
-              style={{ ...styles.signupHint, marginTop: 8 }}
-              onClick={goSignup}
-            >
-              Explore Markets — <span style={styles.goldInline}>create a free account</span>
-            </button>
           </form>
         )}
 
@@ -1079,15 +1072,17 @@ export default function AuthScreen({ onAuth }: Props) {
             ceo.privacy.v@gmail.com
           </a>
         </p>
-        <p style={styles.footerText}>
-          <button type="button" style={styles.footerBtn} onClick={() => setLegal("terms")}>
-            Terms of Service
-          </button>
-          {" · "}
-          <button type="button" style={styles.footerBtn} onClick={() => setLegal("privacy")}>
-            Privacy Policy
-          </button>
-        </p>
+        {screen !== "signup" && (
+          <p style={styles.footerText}>
+            <button type="button" style={styles.footerBtn} onClick={() => setLegal("terms")}>
+              Terms of Service
+            </button>
+            {" · "}
+            <button type="button" style={styles.footerBtn} onClick={() => setLegal("privacy")}>
+              Privacy Policy
+            </button>
+          </p>
+        )}
       </footer>
     </main>
   );
