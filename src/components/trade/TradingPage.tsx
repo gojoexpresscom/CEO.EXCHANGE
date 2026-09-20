@@ -799,7 +799,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         <div style={S.pairControls}>
           <span style={S.mmBadge}>MM</span>
           <span style={S.mmPct}>0.00%</span>
-          {/* Top-right segmented control: chart | terminal (matches reference icons) */}
+          {/* Top-right segmented control — exact match to exchange reference */}
           <div style={S.segControl} role="group" aria-label="View mode">
             <button
               type="button"
@@ -811,7 +811,17 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
               aria-label="Chart view"
               aria-pressed={viewMode === "chart"}
             >
-              <span style={S.segIcon}>▮▮</span>
+              {/* Candlestick icon */}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <path
+                  d="M4.5 2v2.5M4.5 11.5V14M11.5 3.5V5M11.5 10V12.5"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                />
+                <rect x="3.2" y="4.5" width="2.6" height="7" rx="0.6" fill="currentColor" />
+                <rect x="10.2" y="5" width="2.6" height="5" rx="0.6" fill="currentColor" />
+              </svg>
             </button>
             <button
               type="button"
@@ -823,7 +833,24 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
               aria-label="Order book view"
               aria-pressed={viewMode === "terminal"}
             >
-              <span style={S.segIcon}>☰</span>
+              {/* Order book / list icon */}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <rect
+                  x="2.5"
+                  y="2.5"
+                  width="11"
+                  height="11"
+                  rx="1.5"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                />
+                <path
+                  d="M5 5.5h6M5 8h6M5 10.5h4"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                />
+              </svg>
             </button>
           </div>
           <button
@@ -1640,37 +1667,33 @@ const S: Record<string, CSSProperties> = {
     color: "#888",
   },
   segControl: {
-    display: "flex",
+    display: "inline-flex",
     alignItems: "center",
-    background: "#1a1a1e",
+    background: "#141416",
     borderRadius: 20,
-    padding: 2,
-    gap: 0,
-    border: "1px solid #2a2a2e",
+    padding: 3,
+    gap: 2,
+    border: "none",
+    height: 32,
   },
   segBtn: {
-    width: 32,
+    width: 34,
     height: 26,
     border: 0,
-    borderRadius: 16,
+    borderRadius: 14,
     background: "transparent",
-    color: "#666",
+    color: "#6b6b6b",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     transition: "background 0.18s ease, color 0.18s ease",
     padding: 0,
+    flexShrink: 0,
   },
   segBtnOn: {
-    background: "#2a2a30",
-    color: "#f5f5f5",
-  },
-  segIcon: {
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: -1,
-    lineHeight: 1,
+    background: "#2c2c30",
+    color: "#f0f0f0",
   },
   liveDot: {
     width: 6,
