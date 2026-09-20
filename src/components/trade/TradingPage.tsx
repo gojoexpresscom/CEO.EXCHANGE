@@ -14,6 +14,8 @@ import { formatPct, formatPrice, formatVolume } from "../../lib/format";
 type Props = {
   symbol: string;
   onBack: () => void;
+  /** Guest: primary CTA opens existing AuthScreen instead of placing orders. */
+  onRequireAuth?: () => void;
 };
 
 type Pair = {
@@ -77,7 +79,7 @@ function fmtTime(iso: string) {
   }
 }
 
-export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
+export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth }: Props) {
   const [symbol, setSymbol] = useState(() => routeSymbol(propSymbol || "BTCUSDT"));
   const [pair, setPair] = useState<Pair | null>(null);
   const [pairs, setPairs] = useState<Pair[]>([]);
@@ -96,12 +98,29 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [hasSession, setHasSession] = useState(false);
+
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeOk, setNoticeOk] = useState(false);
   const [showPairs, setShowPairs] = useState(false);
   const [pairQ, setPairQ] = useState("");
   const [showReview, setShowReview] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (alive) setHasSession(Boolean(data.session));
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (alive) setHasSession(Boolean(session));
+    });
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
 
   const {
@@ -931,22 +950,39 @@ export default function TradingPage({ symbol: propSymbol, onBack }: Props) {
           ))}
         </div>
 
-        <button
-          type="button"
-          style={{
-            ...S.cta,
-            background: side === "buy" ? "#16a34a" : "#dc2626",
-            opacity: submitting ? 0.6 : 1,
-          }}
-          disabled={submitting || !pair}
-          onClick={() => setShowReview(true)}
-        >
-          {submitting
-            ? "Submitting…"
-            : side === "buy"
-              ? `Review Buy ${base}`
-              : `Review Sell ${base}`}
-        </button>
+        {!hasSession ? (
+          <button
+            type="button"
+            style={{
+              ...S.cta,
+              background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
+              color: "#111",
+            }}
+            onClick={() => {
+              if (onRequireAuth) onRequireAuth();
+              else setNotice("Sign in to place orders.");
+            }}
+          >
+            Log In
+          </button>
+        ) : (
+          <button
+            type="button"
+            style={{
+              ...S.cta,
+              background: side === "buy" ? "#16a34a" : "#dc2626",
+              opacity: submitting ? 0.6 : 1,
+            }}
+            disabled={submitting || !pair}
+            onClick={() => setShowReview(true)}
+          >
+            {submitting
+              ? "Submitting…"
+              : side === "buy"
+                ? `Review Buy ${base}`
+                : `Review Sell ${base}`}
+          </button>
+        )}
       </section>
 
       {notice && (
