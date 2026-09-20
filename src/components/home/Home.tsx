@@ -1611,12 +1611,16 @@ function Home({
       <header style={styles.header}>
         <button
           type="button"
-          style={styles.profileBtn}
+          style={
+            guestMode || !userId
+              ? styles.guestLoginBtn
+              : styles.profileBtn
+          }
           onClick={() => (guestMode || !userId ? requireAuth() : setModal("menu"))}
-          aria-label={guestMode || !userId ? "Get Started" : "Profile"}
+          aria-label={guestMode || !userId ? "Log in" : "Profile"}
         >
           {guestMode || !userId ? (
-            <span style={{ fontSize: 11, fontWeight: 800, color: "#f5b51b" }}>GO</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#f5b51b" }}>Log in</span>
           ) : (
             <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
           )}
@@ -1636,18 +1640,6 @@ function Home({
           </button>
         </div>
       </header>
-
-      {(guestMode || !userId) && (
-        <div style={styles.guestBanner}>
-          <div style={styles.guestBannerText}>
-            <strong style={{ color: "#fff" }}>CEO Exchange</strong>
-            <span style={{ color: "#aaa", fontSize: 12 }}>Explore markets — sign in to trade</span>
-          </div>
-          <button type="button" style={styles.guestCta} onClick={requireAuth}>
-            Get Started
-          </button>
-        </div>
-      )}
 
       {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
 
@@ -1691,23 +1683,50 @@ function Home({
             </div>
           </div>
         )}
-        <section style={styles.balanceCard}>
-          <div style={styles.balanceTop}>
-            <div>
-              <div style={styles.totalAssetsLabel}>
-                Total Assets
-                <button type="button" style={styles.eyeButton} onClick={() => setShowBalance((x) => !x)} aria-label={showBalance ? "Hide balance" : "Show balance"}>
-                  <Icon name={showBalance ? "eye" : "eyeOff"} size={16} />
-                </button>
+        {(guestMode || !userId) ? (
+          <section style={styles.guestHero}>
+            <div style={styles.guestHeroGlow} />
+            <p style={styles.guestHeroKicker}>CEO Exchange</p>
+            <h2 style={styles.guestHeroTitle}>Start trading spot markets</h2>
+            <p style={styles.guestHeroSub}>
+              Browse live prices freely. Create an account when you are ready to deposit or place orders.
+            </p>
+            <button type="button" style={styles.guestHeroCta} onClick={requireAuth}>
+              Get Started
+            </button>
+          </section>
+        ) : (
+          <section style={styles.balanceCard}>
+            <div style={styles.balanceTop}>
+              <div>
+                <div style={styles.totalAssetsLabel}>
+                  Total Assets
+                  <button type="button" style={styles.eyeButton} onClick={() => setShowBalance((x) => !x)} aria-label={showBalance ? "Hide balance" : "Show balance"}>
+                    <Icon name={showBalance ? "eye" : "eyeOff"} size={16} />
+                  </button>
+                </div>
+                <div style={styles.balanceAmount}>
+                  {showBalance ? formatMoney(totalUsd) : "••••"}
+                  <span style={styles.balanceUnit}> USD</span>
+                </div>
               </div>
-              <div style={styles.balanceAmount}>
-                {showBalance ? formatMoney(totalUsd) : "••••"}
-                <span style={styles.balanceUnit}> USD</span>
-              </div>
+              <button
+                type="button"
+                style={styles.depositPill}
+                onClick={() => {
+                  void loadNetworks();
+                  if (userId) {
+                    void loadWalletAddresses(userId);
+                    void loadTransactions(userId);
+                  }
+                  setModal("deposit");
+                }}
+              >
+                Deposit
+              </button>
             </div>
-            <button type="button" style={styles.depositPill} onClick={() => { void loadNetworks(); if (userId) { void loadWalletAddresses(userId); void loadTransactions(userId); } setModal("deposit"); }}>Deposit</button>
-          </div>
-        </section>
+          </section>
+        )}
 
         <section style={styles.quickGrid}>
           <QuickAction icon="percent" label="CEO Earn" onClick={() => {
@@ -1720,7 +1739,20 @@ function Home({
           <QuickAction icon="userPlus" label="Invite Friends" onClick={() => setModal("invite")} />
           <QuickAction icon="gift" label="Rewards Hub" onClick={() => setModal("rewards")} />
           <QuickAction icon="gift" label="Giveaway" onClick={() => setModal("giveaway")} />
-          <QuickAction icon="wallet" label="Deposit" onClick={() => { void loadNetworks(); if (userId) { void loadWalletAddresses(userId); void loadTransactions(userId); } setModal("deposit"); }} />
+          {!(guestMode || !userId) && (
+            <QuickAction
+              icon="wallet"
+              label="Deposit"
+              onClick={() => {
+                void loadNetworks();
+                if (userId) {
+                  void loadWalletAddresses(userId);
+                  void loadTransactions(userId);
+                }
+                setModal("deposit");
+              }}
+            />
+          )}
           <QuickAction icon="more" label="More" onClick={() => setModal("services")} />
         </section>
 
@@ -1867,8 +1899,8 @@ function Home({
       />
 
       {toast && <div style={styles.toast}>{toast}</div>}
-      {modal === "deposit" && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
-      {modal === "withdraw" && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onGetQuote={getWithdrawalQuote} onWithdraw={submitWithdrawal} />}
+      {modal === "deposit" && userId && <DepositModal networks={networks} deposits={deposits} walletAddresses={walletAddresses} onClose={() => { setDepositResult(null); closeModal(); }} onDeposit={createDeposit} onBuyCrypto={createTransakSession} onProvisionAddress={provisionDepositAddress} />}
+      {modal === "withdraw" && userId && <WithdrawModal wallets={wallets} networks={networks} withdrawals={withdrawals} onClose={closeModal} onRequestOtp={requestWithdrawalOtp} onCalculateFee={calculateFee} onGetQuote={getWithdrawalQuote} onWithdraw={submitWithdrawal} />}
       {modal === "notifications" && (
         <NotificationsCenter
           announcements={announcements}
@@ -4099,6 +4131,66 @@ const pd: Record<string, React.CSSProperties> = {
 function Stat({ label, value }: { label: string; value: React.ReactNode }) { return <div style={styles.stat}><span>{label}</span><b>{value}</b></div>; }
 
 const styles: Record<string, React.CSSProperties> = {
+  guestHero: {
+    position: "relative" as const,
+    margin: "0 12px 12px",
+    padding: "22px 18px 20px",
+    borderRadius: 16,
+    overflow: "hidden",
+    background: "linear-gradient(160deg, #1a1408 0%, #0a0a0a 55%, #050505 100%)",
+    border: "1px solid rgba(245,181,27,0.22)",
+  },
+  guestHeroGlow: {
+    position: "absolute" as const,
+    top: -40,
+    right: -20,
+    width: 160,
+    height: 160,
+    borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(245,181,27,0.28), transparent 70%)",
+    pointerEvents: "none" as const,
+  },
+  guestHeroKicker: {
+    margin: "0 0 6px",
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.1em",
+    textTransform: "uppercase" as const,
+    color: "#f5b51b",
+  },
+  guestHeroTitle: {
+    margin: "0 0 8px",
+    fontSize: 22,
+    fontWeight: 800,
+    color: "#fff",
+    lineHeight: 1.2,
+  },
+  guestHeroSub: {
+    margin: "0 0 16px",
+    fontSize: 13,
+    lineHeight: 1.45,
+    color: "#9a9a9a",
+  },
+  guestHeroCta: {
+    width: "100%",
+    border: 0,
+    borderRadius: 12,
+    padding: "14px 16px",
+    fontSize: 15,
+    fontWeight: 800,
+    color: "#111",
+    background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
+    cursor: "pointer",
+  },
+  guestLoginBtn: {
+    border: "1px solid rgba(245,181,27,0.4)",
+    background: "rgba(245,181,27,0.1)",
+    color: "#f5b51b",
+    borderRadius: 20,
+    padding: "6px 12px",
+    minHeight: 36,
+    cursor: "pointer",
+  },
   guestBanner: {
     display: "flex",
     alignItems: "center",
