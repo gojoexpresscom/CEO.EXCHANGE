@@ -1,9 +1,7 @@
 // src/trading/providers/types.ts
 //
-// Shared types for the execution-provider abstraction. Phase 1 only defines
-// the interface and the not-configured error shape — it does not implement
-// any new exchange connectivity. Kraken is the existing/legacy provider;
-// Bybit and Eterna are unconfigured placeholders for future phases.
+// Shared types for the execution-provider abstraction.
+// Live execution for spot is Bybit via the bybit-private Edge Function.
 
 export type ProviderVenue = "kraken" | "bybit" | "eterna";
 
@@ -37,12 +35,21 @@ export interface ProviderOrderBookRow {
 export interface PlaceOrderParams {
   trading_pair: string;
   side: "buy" | "sell";
-  price: number;
+  /** limit | market — backend validates */
+  order_type?: "limit" | "market";
+  /** Required for limit; omit/undefined for market */
+  price?: number;
   amount: number;
 }
 
 export interface PlaceOrderResult {
   order_id?: string;
+  bybit_order_id?: string;
+  status?: string;
+  error?: string;
+  code?: string;
+  message?: string;
+  live_trading_enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -50,15 +57,40 @@ export interface CancelOrderParams {
   order_id: string;
 }
 
+export interface CancelOrderResult {
+  order_id?: string;
+  status?: string;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+export interface ModifyOrderParams {
+  order_id: string;
+  price: number;
+  /** Optional new size; omit to keep existing amount */
+  amount?: number;
+}
+
+export interface ModifyOrderResult {
+  order_id: string;
+  status: string;
+  price: number;
+  amount: number;
+  bybit_order_id?: string;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
 export interface ReconcileParams {
   [key: string]: unknown;
 }
 
 /**
- * Common surface every execution provider (Kraken, Bybit, Eterna, ...) must
- * implement. Consumers should depend on this interface via
- * getExecutionProvider() rather than importing a concrete provider class
- * directly, so the app doesn't need to hardcode one exchange everywhere.
+ * Common surface every execution provider must implement.
+ * Consumers should use getExecutionProvider() rather than importing a
+ * concrete class, so the app does not hardcode one exchange everywhere.
  */
 export interface ExecutionProvider {
   readonly venue: ProviderVenue;
@@ -70,14 +102,18 @@ export interface ExecutionProvider {
   getCandles(symbol: string, timeframe: string): Promise<ProviderCandle[]>;
   getOrderBook(symbol: string): Promise<ProviderOrderBookRow[]>;
   placeOrder(params: PlaceOrderParams): Promise<PlaceOrderResult>;
-  cancelOrder(params: CancelOrderParams): Promise<Record<string, unknown>>;
+  cancelOrder(params: CancelOrderParams): Promise<CancelOrderResult>;
+  /**
+   * Amend an open limit order on the venue + DB.
+   * Must NOT succeed without a real venue response.
+   */
+  modifyOrder(params: ModifyOrderParams): Promise<ModifyOrderResult>;
   reconcile(params?: ReconcileParams): Promise<Record<string, unknown>>;
 }
 
 /**
- * Thrown by any provider operation that isn't wired up yet (e.g. Bybit and
- * Eterna in Phase 1). Never caught internally to return fake data — callers
- * are expected to surface this as "not connected yet" in the UI.
+ * Thrown by provider operations that are not wired up yet.
+ * Never caught internally to return fake data.
  */
 export class ProviderNotConfiguredError extends Error {
   readonly venue: ProviderVenue;
@@ -90,3 +126,4 @@ export class ProviderNotConfiguredError extends Error {
     this.operation = operation;
   }
 }
+
