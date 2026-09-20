@@ -19,7 +19,7 @@ type Screen =
 type LegalPage = "terms" | "privacy" | null;
 type SignupMethod = "email" | "phone";
 type PasswordKind = "signup" | "recovery" | "oauth";
-type Props = { onAuth: () => void; onBack?: () => void };
+type Props = { onAuth: () => void };
 
 type TurnstileAPI = {
   render: (
@@ -231,13 +231,9 @@ function Turnstile({ siteKey, onToken }: { siteKey?: string; onToken: (token: st
   return <div ref={host} style={{ ...styles.turnstile, opacity: loaded ? 1 : 0.65 }} />;
 }
 
-export default function AuthScreen({ onAuth, onBack }: Props) {
+export default function AuthScreen({ onAuth }: Props) {
   const [screen, setScreen] = useState<Screen>("login");
   const [legal, setLegal] = useState<LegalPage>(null);
-  useEffect(() => {
-    document.title = "CEO Exchange — Crypto Spot Trading Platform";
-  }, []);
-
   const [identifier, setIdentifier] = useState("");
   const [email, setEmail] = useState("");
   const [signupMethod, setSignupMethod] = useState<SignupMethod>("email");
@@ -717,13 +713,6 @@ export default function AuthScreen({ onAuth, onBack }: Props) {
       >
         {screen === "login" && (
           <form onSubmit={login}>
-            {onBack && (
-              <div style={styles.authTopBar}>
-                <button type="button" style={styles.circleBack} onClick={onBack} aria-label="Back to home">
-                  <Arrow left />
-                </button>
-              </div>
-            )}
             <div style={styles.loginHead}>
               <h1 style={styles.title}>{title.login}</h1>
               <p style={styles.subtitle}>Sign in to continue to CEO Exchange</p>
@@ -784,7 +773,7 @@ export default function AuthScreen({ onAuth, onBack }: Props) {
             </button>
 
             <button type="button" style={styles.signupHint} onClick={goSignup}>
-              Don&apos;t have an account? <span style={styles.goldInline}>Create Account</span>
+              Don&apos;t have an account? <span style={styles.goldInline}>Sign Up</span>
             </button>
           </form>
         )}
@@ -1060,86 +1049,11 @@ export default function AuthScreen({ onAuth, onBack }: Props) {
 
         {(error || message) && <div style={error ? styles.error : styles.message} role={error ? "alert" : "status"}>{error || message}</div>}
       </section>
-
-      <footer style={styles.publicFooter} aria-label="Site information">
-        <h2 style={styles.footerHeading}>About CEO Exchange</h2>
-        <p style={styles.footerText}>
-          CEO Exchange is a digital asset platform for listed spot markets. Log in or create an
-          account to trade and manage your wallet.
-        </p>
-        <h3 style={styles.footerSub}>Contact</h3>
-        <p style={styles.footerText}>
-          Support:{" "}
-          <a href="mailto:ceo.support.v@gmail.com" style={styles.footerLink}>
-            ceo.support.v@gmail.com
-          </a>
-          <br />
-          Privacy:{" "}
-          <a href="mailto:ceo.privacy.v@gmail.com" style={styles.footerLink}>
-            ceo.privacy.v@gmail.com
-          </a>
-        </p>
-        {screen !== "signup" && (
-          <p style={styles.footerText}>
-            <button type="button" style={styles.footerBtn} onClick={() => setLegal("terms")}>
-              Terms of Service
-            </button>
-            {" · "}
-            <button type="button" style={styles.footerBtn} onClick={() => setLegal("privacy")}>
-              Privacy Policy
-            </button>
-          </p>
-        )}
-      </footer>
     </main>
   );
 }
 
-
 const styles: Record<string, React.CSSProperties> = {
-  authTopBar: {
-    display: "flex",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  publicFooter: {
-    width: "100%",
-    maxWidth: 420,
-    margin: "28px auto 40px",
-    padding: "0 20px 24px",
-    textAlign: "center",
-  },
-  footerHeading: {
-    margin: "0 0 8px",
-    fontSize: 15,
-    fontWeight: 700,
-    color: "#e8e8e8",
-  },
-  footerSub: {
-    margin: "16px 0 6px",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#cfcfcf",
-  },
-  footerText: {
-    margin: 0,
-    fontSize: 12,
-    lineHeight: 1.5,
-    color: "#8a8a8a",
-  },
-  footerLink: {
-    color: "#f5b51b",
-    textDecoration: "none",
-  },
-  footerBtn: {
-    border: 0,
-    background: "transparent",
-    color: "#f5b51b",
-    fontSize: 12,
-    padding: 0,
-    cursor: "pointer",
-    textDecoration: "underline",
-  },
   page: {
     minHeight: "100vh",
     width: "100%",
