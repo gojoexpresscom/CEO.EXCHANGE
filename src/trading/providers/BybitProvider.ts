@@ -1,37 +1,19 @@
 // src/trading/providers/BybitProvider.ts
 //
-// PHASE 2: server-side Bybit private API groundwork (admin-only account
-// checks). Order execution is still out of scope — see the audit report.
+// Live spot execution via the bybit-private Supabase Edge Function.
+// All Bybit signing and private API calls stay server-side.
+// This file never contains BYBIT_API_KEY / BYBIT_API_SECRET.
 //
-//   - getTicker / getCandles / getOrderBook: still intentionally NOT
-//     implemented here. Public Bybit market data already has its own live
-//     path (BybitWebSocket.ts / useBybitMarketData.ts / useBybitTickers.ts)
-//     and this provider must not compete with or duplicate that.
-//   - placeOrder / cancelOrder / reconcile: still intentionally NOT
-//     implemented. Safe execution requires a DB migration (widening the
-//     orders.execution_venue CHECK constraint) and new Bybit-specific
-//     settlement RPCs mirroring the Kraken ones. See the audit report —
-//     that migration has NOT been applied.
-//   - isConfigured(): reverted to a hardcoded `false`. It previously called
-//     the "diag" endpoint from the frontend to check secret-configuration
-//     state; "diag" is now admin-only (see bybit-private/index.ts), and
-//     even the true/false "is a secret configured" signal isn't something
-//     an ordinary user's browser session should be triggering a server
-//     round-trip to check. There's no existing generic "is this provider
-//     configured" health mechanism elsewhere in the codebase to reuse, so
-//     this stays an intentionally-unconfigured execution state — as it was
-//     in Phase 1 — until private execution is actually wired up.
-//   - No frontend methods call the admin-only bybit-private diagnostic
-//     endpoints ("api_key_info" / "wallet_balance" / "diag"). Those remain
-//     server-side/admin-only tools for this review phase and are not
-//     wired up to any client-side code path.
-//
-// No Bybit API key or secret is ever present in this file or sent to this
-// file — they stay server-side inside the bybit-private Edge Function.
+// Public market data (ticker / candles / book) continues to use
+// useBybitMarketData / BybitWebSocket — not this provider.
 
+import { supabase } from "../../lib/supabase";
 import type {
   CancelOrderParams,
+  CancelOrderResult,
   ExecutionProvider,
+  ModifyOrderParams,
+  ModifyOrderResult,
   PlaceOrderParams,
   PlaceOrderResult,
   ProviderCandle,
@@ -44,8 +26,12 @@ import { ProviderNotConfiguredError } from "./types";
 export class BybitProvider implements ExecutionProvider {
   readonly venue = "bybit" as const;
 
+  /**
+   * Execution is live through bybit-private (place / cancel / modify).
+   * Market-data methods remain on the public WS path, not this provider.
+   */
   isConfigured(): boolean {
-    return false;
+    return true;
   }
 
   private notConfigured(operation: string): never {
@@ -53,10 +39,14 @@ export class BybitProvider implements ExecutionProvider {
   }
 
   async getTicker(_symbol: string): Promise<ProviderTicker | null> {
+    // Public path: useBybitMarketData — do not duplicate here.
     return this.notConfigured("getTicker");
   }
 
-  async getCandles(_symbol: string, _timeframe: string): Promise<ProviderCandle[]> {
+  async getCandles(
+    _symbol: string,
+    _timeframe: string,
+  ): Promise<ProviderCandle[]> {
     return this.notConfigured("getCandles");
   }
 
@@ -64,15 +54,117 @@ export class BybitProvider implements ExecutionProvider {
     return this.notConfigured("getOrderBook");
   }
 
-  async placeOrder(_params: PlaceOrderParams): Promise<PlaceOrderResult> {
-    return this.notConfigured("placeOrder");
+  /**
+   * Place a spot order through bybit-private.
+   * Uses the caller's Supabase session JWT automatically (no API keys here).
+   * Does not invent success — returns server body including error fields.
+   */
+  async placeOrder(params: PlaceOrderParams): Promise<PlaceOrderResult> {
+    const orderType = params.order_type ?? "limit";
+    const body: Record<string, unknown> = {
+      action: "place_order",
+      trading_pair: params.trading_pair,
+      side: params.side,
+      order_type: orderType,
+      amount: params.amount,
+    };
+    if (orderType === "limit" && params.price != null) {
+      body.price = params.price;
+    }
+
+    const { data, error } = await supabase.functions.invoke("bybit-private", {
+      body,
+    });
+
+    if (error) {
+      return {
+        error: error.message || "place_order failed",
+        code: "INVOKE_ERROR",
+      };
+    }
+
+    const result = (data as PlaceOrderResult) || {};
+    return result;
   }
 
-  async cancelOrder(_params: CancelOrderParams): Promise<Record<string, unknown>> {
-    return this.notConfigured("cancelOrder");
+  /**
+   * Cancel an open order through bybit-private.
+   */
+  async cancelOrder(params: CancelOrderParams): Promise<CancelOrderResult> {
+    const { data, error } = await supabase.functions.invoke("bybit-private", {
+      body: {
+        action: "cancel_order",
+        order_id: params.order_id,
+      },
+    });
+
+    if (error) {
+      return {
+        error: error.message || "cancel_order failed",
+        code: "INVOKE_ERROR",
+      };
+    }
+
+    return (data as CancelOrderResult) || {};
+  }
+
+  /**
+   * Amend price/size of an open limit order through bybit-private
+   * (Bybit POST /v5/order/amend + DB finalize on the server).
+   * Does not update UI optimistically — caller waits for this result.
+   */
+  async modifyOrder(params: ModifyOrderParams): Promise<ModifyOrderResult> {
+    const body: Record<string, unknown> = {
+      action: "modify_order",
+      order_id: params.order_id,
+      price: params.price,
+    };
+    if (params.amount !== undefined) {
+      body.amount = params.amount;
+    }
+
+    const { data, error } = await supabase.functions.invoke("bybit-private", {
+      body,
+    });
+
+    if (error) {
+      return {
+        order_id: params.order_id,
+        status: "error",
+        price: params.price,
+        amount: params.amount ?? 0,
+        error: error.message || "modify_order failed",
+        code: "INVOKE_ERROR",
+      };
+    }
+
+    const result = (data as ModifyOrderResult) || ({} as ModifyOrderResult);
+    if (result.error) {
+      return {
+        order_id: params.order_id,
+        status: result.status || "error",
+        price: params.price,
+        amount: params.amount ?? 0,
+        error: String(result.error),
+        code: result.code,
+      };
+    }
+    if (!result.order_id) {
+      return {
+        order_id: params.order_id,
+        status: "unknown",
+        price: params.price,
+        amount: params.amount ?? 0,
+        error: "Server did not return an updated order",
+        code: "INVALID_RESPONSE",
+      };
+    }
+    return result;
   }
 
   async reconcile(_params?: ReconcileParams): Promise<Record<string, unknown>> {
+    // Optional; not required for place/cancel/modify circuit.
     return this.notConfigured("reconcile");
   }
-}
+      }
+
