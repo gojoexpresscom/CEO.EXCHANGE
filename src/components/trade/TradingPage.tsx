@@ -11,7 +11,6 @@ import { useBybitMarketData } from "../../trading/useBybitMarketData";
 import { getLiveExecutionProvider } from "../../trading/providers";
 import TradingChart, {
   computeMALegend,
-  intervalToSeconds,
   type IndicatorId,
   type ChartStyle,
   type ChartDisplaySettings,
@@ -20,6 +19,26 @@ import TradingChart, {
   type CandleInfo,
 } from "./TradingChart";
 import { formatPrice } from "../../lib/format";
+
+/** Local TF → seconds (keeps build independent of TradingChart export). */
+function intervalToSeconds(tf: string): number {
+  const map: Record<string, number> = {
+    "1m": 60,
+    "3m": 180,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1h": 3600,
+    "2h": 7200,
+    "4h": 14400,
+    "6h": 21600,
+    "12h": 43200,
+    "1d": 86400,
+    "1w": 604800,
+    "1M": 2592000,
+  };
+  return map[tf] || 900;
+}
 
 type Props = {
   symbol: string;
