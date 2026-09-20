@@ -2,13 +2,138 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#080808" />
-    <title>CEO Exchange</title>
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Primary SEO -->
+    <title>CEO Exchange — Crypto Spot Trading Platform</title>
+    <meta
+      name="description"
+      content="CEO Exchange is a digital asset trading platform for spot markets. Create an account, sign in securely, and trade listed pairs with live market data."
+    />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://ceomarket.ccd/" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CEO Exchange" />
+    <meta property="og:title" content="CEO Exchange — Crypto Spot Trading Platform" />
+    <meta
+      property="og:description"
+      content="Trade listed digital assets on CEO Exchange. Create an account or log in to access markets, wallets, and account tools."
+    />
+    <meta property="og:url" content="https://ceomarket.ccd/" />
+    <meta property="og:image" content="https://ceomarket.ccd/ceo-auth-reference-transparent.png" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="CEO Exchange — Crypto Spot Trading Platform" />
+    <meta
+      name="twitter:description"
+      content="Digital asset spot trading platform. Create an account or log in to explore markets."
+    />
+
+    <!-- Performance: preconnect only to origins used on first paint / auth -->
+    <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin />
+    <link rel="dns-prefetch" href="https://challenges.cloudflare.com" />
+
+    <!-- LCP: preload the auth logo used above the fold -->
+    <link
+      rel="preload"
+      as="image"
+      href="/ceo-auth-reference-transparent.png"
+      fetchpriority="high"
+    />
+
+    <!-- Organization + FAQ JSON-LD (factual; no invented licenses or stats) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "CEO Exchange",
+        "url": "https://ceomarket.ccd/",
+        "logo": "https://ceomarket.ccd/ceo-auth-reference-transparent.png",
+        "contactPoint": [
+          {
+            "@type": "ContactPoint",
+            "email": "ceo.support.v@gmail.com",
+            "contactType": "customer support"
+          },
+          {
+            "@type": "ContactPoint",
+            "email": "ceo.privacy.v@gmail.com",
+            "contactType": "privacy inquiries"
+          }
+        ]
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is CEO Exchange?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "CEO Exchange is a digital asset trading platform that provides access to listed spot markets, account wallets, and related account tools after you sign in."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I create an account?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "On the sign-up screen, enter a valid email or mobile number, complete verification, set a password that meets the stated requirements, and accept the Terms of Service and Privacy Policy."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I contact support?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "For support, contact ceo.support.v@gmail.com. For privacy questions, contact ceo.privacy.v@gmail.com."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Where can I read the terms and privacy policy?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The Terms of Service and Privacy Policy are available from the account screens on CEO Exchange before and after registration."
+            }
+          }
+        ]
+      }
+    </script>
   </head>
 
   <body>
-    <div id="root"></div>
+    <!-- Crawler-visible fallback; React replaces #root on hydrate -->
+    <div id="root">
+      <main>
+        <h1>CEO Exchange</h1>
+        <p>
+          Digital asset spot trading platform. Create an account or log in to
+          access markets and your wallet.
+        </p>
+        <p>
+          <a href="/">Log in</a>
+          ·
+          <a href="/">Create account</a>
+          ·
+          <a href="/">Explore markets</a>
+        </p>
+        <h2>Support</h2>
+        <p>
+          Support:
+          <a href="mailto:ceo.support.v@gmail.com">ceo.support.v@gmail.com</a>
+        </p>
+      </main>
+    </div>
 
     <script type="module" src="/src/main.tsx"></script>
   </body>
