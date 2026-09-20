@@ -58,8 +58,10 @@ function getRoute(): AppRoute {
 export default function App() {
   const [ready, setReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
-  /** Unauthenticated: landing first; Get Started opens existing AuthScreen */
+  /** When true, show existing AuthScreen (Assets/Profile/order gate). */
   const [showAuthGate, setShowAuthGate] = useState(false);
+  /** Optional post-login destination for gated actions. */
+  const [authIntent, setAuthIntent] = useState<"assets" | "profile" | "generic" | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -258,6 +260,20 @@ export default function App() {
     else if (page === "assets") goAssets();
   }
 
+  function requireAuth(intent: "assets" | "profile" | "generic" = "generic") {
+    setAuthIntent(intent);
+    setShowAuthGate(true);
+  }
+
+  /** Public nav while logged out: Assets forces login; everything else is open. */
+  function onPublicNav(page: NavPage) {
+    if (page === "assets") {
+      requireAuth("assets");
+      return;
+    }
+    onNav(page);
+  }
+
   if (!ready) {
     return (
       <div
@@ -351,26 +367,96 @@ export default function App() {
   }
 
   if (!authenticated) {
-    // Guest: same Home shell as logged-in users (markets, layout).
-    // Get Started / login-required actions open existing AuthScreen.
-    if (!showAuthGate) {
+    // Public browse first — no landing page. Auth only when required.
+    if (showAuthGate) {
       return (
-        <Home
-          guestMode
-          onRequireAuth={() => setShowAuthGate(true)}
-          onTrade={() => setShowAuthGate(true)}
-          onP2P={() => setShowAuthGate(true)}
-          onExperience={() => setShowAuthGate(true)}
-          onNavigate={() => setShowAuthGate(true)}
+        <AuthScreen
+          onAuth={() => {
+            setAuthenticated(true);
+            setShowAuthGate(false);
+            const intent = authIntent;
+            setAuthIntent(null);
+            if (intent === "assets") {
+              goAssets();
+            } else {
+              goHome();
+            }
+          }}
         />
       );
     }
+
+    // Assets is private — existing login/signup only
+    if (route.page === "assets") {
+      return (
+        <AuthScreen
+          onAuth={() => {
+            setAuthenticated(true);
+            setShowAuthGate(false);
+            setAuthIntent(null);
+            goAssets();
+          }}
+        />
+      );
+    }
+
+    // Public: Trade pair view (charts / book / ticker). Orders still need session inside TradingPage.
+    if (route.page === "trade") {
+      return (
+        <TradingPage
+          symbol={route.symbol}
+          onBack={() => {
+            goMarkets();
+          }}
+          onRequireAuth={() => requireAuth("generic")}
+        />
+      );
+    }
+
+    if (route.page === "trade-hub") {
+      return <TradeHubPage onNavigate={onPublicNav} onOpenPair={openTrade} />;
+    }
+
+    if (route.page === "markets") {
+      return <MarketsPage onTrade={openTrade} onNavigate={onPublicNav} />;
+    }
+
+    if (route.page === "earn") {
+      return <EarnPage onNavigate={onPublicNav} />;
+    }
+
+    if (route.page === "experience") {
+      return (
+        <PromotionsPage
+          onBack={goHome}
+          onTrade={(symbol) => openTrade(symbol || "BTCUSDT")}
+          onP2P={() => requireAuth("generic")}
+        />
+      );
+    }
+
+    if (route.page === "p2p") {
+      return (
+        <AuthScreen
+          onAuth={() => {
+            setAuthenticated(true);
+            setShowAuthGate(false);
+            setAuthIntent(null);
+            openP2P();
+          }}
+        />
+      );
+    }
+
+    // Default: existing Home.tsx (guestMode = public markets shell)
     return (
-      <AuthScreen
-        onAuth={() => {
-          setAuthenticated(true);
-          setShowAuthGate(false);
-        }}
+      <Home
+        guestMode
+        onRequireAuth={() => requireAuth("profile")}
+        onTrade={openTrade}
+        onP2P={() => requireAuth("generic")}
+        onExperience={openExperience}
+        onNavigate={onPublicNav}
       />
     );
   }
