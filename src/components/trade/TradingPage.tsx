@@ -8,8 +8,8 @@ import {
 } from "react";
 import { supabase } from "../../lib/supabase";
 import { useBybitMarketData } from "../../trading/useBybitMarketData";
-import TradingChart from "./TradingChart";
-import { formatPct, formatPrice, formatVolume } from "../../lib/format";
+import TradingChart, { computeMALegend } from "./TradingChart";
+import { formatPrice } from "../../lib/format";
 
 type Props = {
   symbol: string;
@@ -140,6 +140,8 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
   const [pairQ, setPairQ] = useState("");
   const [showReview, setShowReview] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("terminal");
+  const [chartTab, setChartTab] = useState<"chart" | "overview">("chart");
+  const [showMA, setShowMA] = useState(true);
   const [orderType, setOrderType] = useState<OrderType>("limit");
   const [showOrderTypeMenu, setShowOrderTypeMenu] = useState(false);
   const [postOnly, setPostOnly] = useState(true);
@@ -811,16 +813,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
               aria-label="Chart view"
               aria-pressed={viewMode === "chart"}
             >
-              {/* Candlestick — bold */}
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
-                <path
-                  d="M5 1.5v3M5 13.5V16.5M13 2.5v2.5M13 12.5V15.5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-                <rect x="3.5" y="4.5" width="3" height="9" rx="0.8" fill="currentColor" />
-                <rect x="11.5" y="5" width="3" height="7.5" rx="0.8" fill="currentColor" />
+              {/* Candlestick — bold, matches picture */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M8 2v4H6.5v12H8v4h2v-4h1.5V6H10V2H8zm1.5 6h-1v10h1V8zM16 4v3h-1.5v10H16v3h2v-3h1.5V7H18V4h-2zm1.5 5h-1v8h1V9z" />
               </svg>
             </button>
             <button
@@ -833,20 +828,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
               aria-label="Order book view"
               aria-pressed={viewMode === "terminal"}
             >
-              {/* Order book depth — bold rounded card with horizontal bars */}
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
-                <rect
-                  x="2"
-                  y="2"
-                  width="14"
-                  height="14"
-                  rx="2.2"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                />
-                <rect x="4.5" y="5" width="9" height="1.8" rx="0.6" fill="currentColor" />
-                <rect x="4.5" y="8.1" width="9" height="1.8" rx="0.6" fill="currentColor" />
-                <rect x="4.5" y="11.2" width="6" height="1.8" rx="0.6" fill="currentColor" />
+              {/* Document list — bold, matches picture right icon */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M5 3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9l-6-6H5zm0 2h9v5h5v11H5V5zm2 8h10v2H7v-2zm0 4h7v2H7v-2z" />
               </svg>
             </button>
           </div>
@@ -861,32 +845,328 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         </div>
       </div>
 
-      {/* ── Chart view (toggled via segmented control) ── */}
+      {/* ── Chart view (matches reference video structure) ── */}
       {viewMode === "chart" && (
         <section style={S.chartZone} className="ceo-fade-in">
-          <div style={S.tfRow}>
-            {TFS.map((t) => (
+          {/* Chart | Overview tabs */}
+          <div style={S.chartMainTabs}>
+            {(
+              [
+                { id: "chart" as const, label: "Chart" },
+                { id: "overview" as const, label: "Overview" },
+              ]
+            ).map((t) => (
               <button
-                key={t}
+                key={t.id}
                 type="button"
-                style={{ ...S.tfChip, ...(tf === t ? S.tfActive : {}) }}
-                onClick={() => setTf(t)}
+                style={{
+                  ...S.chartMainTab,
+                  ...(chartTab === t.id ? S.chartMainTabOn : {}),
+                }}
+                onClick={() => setChartTab(t.id)}
               >
-                {t}
+                {t.label}
               </button>
             ))}
           </div>
-          <div style={S.chartBox}>
-            {candles.length > 0 ? (
-              <TradingChart candles={candles as any} height={280} showMA />
-            ) : (
-              <div style={S.chartEmpty}>
-                {feedStatus === "connecting" || loading
-                  ? "Connecting to live market data…"
-                  : "No candle data for this pair yet."}
+
+          {chartTab === "overview" ? (
+            <div style={S.overviewPanel}>
+              <div style={S.emptyState}>
+                <div style={S.emptyIcon}>📄</div>
+                <div style={S.emptyText}>No Available Data</div>
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <>
+              {/* Live price header */}
+              <div style={S.chartPriceHead}>
+                <div>
+                  <div
+                    style={{
+                      ...S.chartLastPrice,
+                      color:
+                        flash === "up"
+                          ? "#14c982"
+                          : flash === "down"
+                            ? "#f23645"
+                            : changeUp
+                              ? "#14c982"
+                              : "#f23645",
+                    }}
+                  >
+                    {last != null ? formatPrice(last) : "—"}
+                  </div>
+                  <div style={S.chartLastSub}>
+                    ≈ {last != null ? formatPrice(last) : "—"} USD
+                  </div>
+                </div>
+                <div style={S.chartStats}>
+                  <div style={S.chartStatRow}>
+                    <span style={S.chartStatLabel}>24h High</span>
+                    <span>{high24 != null ? formatPrice(high24) : "—"}</span>
+                  </div>
+                  <div style={S.chartStatRow}>
+                    <span style={S.chartStatLabel}>24h Low</span>
+                    <span>{low24 != null ? formatPrice(low24) : "—"}</span>
+                  </div>
+                  <div style={S.chartStatRow}>
+                    <span style={S.chartStatLabel}>24h Vol</span>
+                    <span>
+                      {vol24 != null
+                        ? vol24 >= 1e6
+                          ? `${(vol24 / 1e6).toFixed(2)}M`
+                          : vol24 >= 1e3
+                            ? `${(vol24 / 1e3).toFixed(1)}K`
+                            : vol24.toFixed(0)
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Timeframe row */}
+              <div style={S.tfRow}>
+                <span style={S.tfLabel}>Time</span>
+                {TFS.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    style={{ ...S.tfChip, ...(tf === t ? S.tfActive : {}) }}
+                    onClick={() => setTf(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+
+              {/* MA legend values */}
+              {showMA && (() => {
+                const ma = computeMALegend(candles as any);
+                return (
+                  <div style={S.maLegend}>
+                    <span style={{ color: "#f0b90b" }}>
+                      MA7: {ma.ma7 != null ? formatPrice(ma.ma7) : "—"}
+                    </span>
+                    <span style={{ color: "#5b8def" }}>
+                      MA14: {ma.ma14 != null ? formatPrice(ma.ma14) : "—"}
+                    </span>
+                    <span style={{ color: "#c77dff" }}>
+                      MA28: {ma.ma28 != null ? formatPrice(ma.ma28) : "—"}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              {/* Candlestick chart */}
+              <div style={S.chartBox}>
+                {candles.length > 0 ? (
+                  <TradingChart
+                    candles={candles as any}
+                    height={320}
+                    showMA={showMA}
+                  />
+                ) : (
+                  <div style={S.chartEmpty}>
+                    {feedStatus === "connecting" || loading
+                      ? "Connecting to live market data…"
+                      : "No candle data for this pair yet."}
+                  </div>
+                )}
+              </div>
+
+              {/* Indicator row — only MA is wired; others are honest "soon" */}
+              <div style={S.indRow}>
+                {(
+                  [
+                    { id: "ma", label: "MA", supported: true },
+                    { id: "ema", label: "EMA", supported: false },
+                    { id: "boll", label: "BOLL", supported: false },
+                    { id: "sar", label: "SAR", supported: false },
+                    { id: "mavol", label: "MAVOL", supported: false },
+                    { id: "macd", label: "MACD", supported: false },
+                    { id: "kdj", label: "KDJ", supported: false },
+                    { id: "rsi", label: "RSI", supported: false },
+                    { id: "wr", label: "WR", supported: false },
+                  ] as const
+                ).map((ind) => (
+                  <button
+                    key={ind.id}
+                    type="button"
+                    style={{
+                      ...S.indChip,
+                      ...(ind.id === "ma" && showMA ? S.indChipOn : {}),
+                      ...(!ind.supported ? { opacity: 0.45 } : {}),
+                    }}
+                    onClick={() => {
+                      if (ind.id === "ma") setShowMA((v) => !v);
+                      else {
+                        setNotice(`${ind.label} indicator is coming soon.`);
+                        setNoticeOk(false);
+                      }
+                    }}
+                  >
+                    {ind.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Order Book | Trades under chart */}
+              <div style={S.microTabs}>
+                <button
+                  type="button"
+                  style={{
+                    ...S.microTab,
+                    ...(micro === "book" ? S.microTabOn : {}),
+                  }}
+                  onClick={() => setMicro("book")}
+                >
+                  Order Book
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...S.microTab,
+                    ...(micro === "trades" ? S.microTabOn : {}),
+                  }}
+                  onClick={() => setMicro("trades")}
+                >
+                  Trades
+                </button>
+              </div>
+
+              {micro === "book" ? (
+                <div style={S.chartBookWrap}>
+                  <div style={S.depthRatio}>
+                    <span style={S.depthBuy}>B {bookRatio.buy}%</span>
+                    <div style={S.depthBarTrack}>
+                      <div
+                        style={{
+                          ...S.depthBarFill,
+                          width: `${bookRatio.buy}%`,
+                          background: "#14c982",
+                        }}
+                      />
+                      <div
+                        style={{
+                          ...S.depthBarFill,
+                          width: `${bookRatio.sell}%`,
+                          background: "#f23645",
+                        }}
+                      />
+                    </div>
+                    <span style={S.depthSell}>S {bookRatio.sell}%</span>
+                  </div>
+                  <div style={S.chartBookGrid}>
+                    <div style={S.chartBookCol}>
+                      <div style={S.chartBookHead}>Buy</div>
+                      {bids.slice(0, 8).map((r: any) => (
+                        <button
+                          key={`cb-${Number(r.price)}`}
+                          type="button"
+                          style={S.chartBookRow}
+                          onClick={() => {
+                            setPriceTouched(true);
+                            setPrice(String(r.price));
+                          }}
+                        >
+                          <span style={{ color: "#14c982" }}>
+                            {formatPrice(Number(r.price))}
+                          </span>
+                          <span style={{ color: "#888" }}>
+                            {Number(r.amount || 0).toFixed(4)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={S.chartBookCol}>
+                      <div style={S.chartBookHead}>Sell</div>
+                      {asks.slice(0, 8).map((r: any) => (
+                        <button
+                          key={`ca-${Number(r.price)}`}
+                          type="button"
+                          style={S.chartBookRow}
+                          onClick={() => {
+                            setPriceTouched(true);
+                            setPrice(String(r.price));
+                          }}
+                        >
+                          <span style={{ color: "#f23645" }}>
+                            {formatPrice(Number(r.price))}
+                          </span>
+                          <span style={{ color: "#888" }}>
+                            {Number(r.amount || 0).toFixed(4)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={S.tapeList}>
+                  {(trades || []).slice(0, 20).length === 0 ? (
+                    <div style={S.emptyMini}>Waiting for trades…</div>
+                  ) : (
+                    (trades || []).slice(0, 20).map((t: any, i: number) => (
+                      <div key={t.id || i} style={S.tapeRow}>
+                        <span style={{ color: "#666" }}>
+                          {fmtTime(t.created_at || "")}
+                        </span>
+                        <span
+                          style={{
+                            color:
+                              Number(t.price) >= (last || 0)
+                                ? "#14c982"
+                                : "#f23645",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {formatPrice(Number(t.price))}
+                        </span>
+                        <span style={{ textAlign: "right", color: "#aaa" }}>
+                          {Number(t.amount || 0).toFixed(5)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Sticky Buy / Sell bar matching reference */}
+              <div style={S.chartBuySellBar}>
+                <button
+                  type="button"
+                  style={S.chartBuyBtn}
+                  onClick={() => {
+                    setSide("buy");
+                    setViewMode("terminal");
+                  }}
+                >
+                  Buy
+                  <span style={S.chartBuySellPrice}>
+                    {ask != null ? formatPrice(ask) : last != null ? formatPrice(last) : "—"}
+                  </span>
+                </button>
+                <div style={S.chartQtyMid}>
+                  <div style={{ fontSize: 10, color: "#666" }}>Quantity</div>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{base}</div>
+                </div>
+                <button
+                  type="button"
+                  style={S.chartSellBtn}
+                  onClick={() => {
+                    setSide("sell");
+                    setViewMode("terminal");
+                  }}
+                >
+                  Sell
+                  <span style={S.chartBuySellPrice}>
+                    {bid != null ? formatPrice(bid) : last != null ? formatPrice(last) : "—"}
+                  </span>
+                </button>
+              </div>
+            </>
+          )}
         </section>
       )}
 
@@ -1797,14 +2077,72 @@ const S: Record<string, CSSProperties> = {
     textAlign: "left",
   },
   chartZone: {
-    padding: "4px 0 8px",
+    padding: "0 0 12px",
     borderBottom: "1px solid #141414",
+  },
+  chartMainTabs: {
+    display: "flex",
+    gap: 16,
+    padding: "4px 12px 0",
+    borderBottom: "1px solid #1a1a1a",
+  },
+  chartMainTab: {
+    border: 0,
+    background: "transparent",
+    color: "#777",
+    fontSize: 13,
+    fontWeight: 600,
+    padding: "8px 0 10px",
+    cursor: "pointer",
+    borderBottom: "2px solid transparent",
+  },
+  chartMainTabOn: {
+    color: "#f5f5f5",
+    borderBottomColor: "#f5b51b",
+  },
+  chartPriceHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    padding: "10px 12px 6px",
+  },
+  chartLastPrice: {
+    fontSize: 26,
+    fontWeight: 800,
+    letterSpacing: -0.5,
+    lineHeight: 1.15,
+    transition: "color 0.2s ease",
+  },
+  chartLastSub: {
+    fontSize: 11,
+    color: "#666",
+    marginTop: 2,
+  },
+  chartStats: {
+    textAlign: "right",
+    fontSize: 11,
+    color: "#aaa",
+  },
+  chartStatRow: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginBottom: 2,
+  },
+  chartStatLabel: {
+    color: "#555",
   },
   tfRow: {
     display: "flex",
+    alignItems: "center",
     gap: 6,
-    padding: "0 12px 6px",
+    padding: "4px 12px 6px",
     overflowX: "auto",
+  },
+  tfLabel: {
+    fontSize: 11,
+    color: "#666",
+    marginRight: 2,
   },
   tfChip: {
     border: "1px solid #1c1c1f",
@@ -1821,20 +2159,156 @@ const S: Record<string, CSSProperties> = {
     color: "#f5b51b",
     background: "rgba(245,181,27,0.08)",
   },
+  maLegend: {
+    display: "flex",
+    gap: 12,
+    padding: "0 12px 6px",
+    fontSize: 10,
+    fontWeight: 600,
+    flexWrap: "wrap",
+  },
   chartBox: {
-    margin: "0 8px",
-    borderRadius: 10,
+    margin: "0",
     overflow: "hidden",
-    border: "1px solid #141416",
-    background: "#0a0a0c",
+    background: "#000",
   },
   chartEmpty: {
-    height: 220,
+    height: 320,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     color: "#666",
     fontSize: 12,
+  },
+  indRow: {
+    display: "flex",
+    gap: 4,
+    padding: "6px 8px",
+    overflowX: "auto",
+    borderTop: "1px solid #141414",
+  },
+  indChip: {
+    border: 0,
+    background: "transparent",
+    color: "#777",
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "6px 8px",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  indChipOn: {
+    color: "#f5b51b",
+  },
+  chartBookWrap: {
+    padding: "4px 8px 8px",
+  },
+  chartBookGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 8,
+  },
+  chartBookCol: {},
+  chartBookHead: {
+    fontSize: 11,
+    color: "#666",
+    fontWeight: 600,
+    marginBottom: 4,
+  },
+  chartBookRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    width: "100%",
+    border: 0,
+    background: "transparent",
+    padding: "3px 0",
+    fontSize: 11,
+    cursor: "pointer",
+  },
+  tapeList: {
+    padding: "4px 12px 8px",
+    maxHeight: 200,
+    overflowY: "auto",
+  },
+  tapeRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr",
+    fontSize: 11,
+    padding: "4px 0",
+    color: "#ccc",
+  },
+  chartBuySellBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 12px",
+    borderTop: "1px solid #1a1a1a",
+    background: "#0a0a0a",
+    position: "sticky",
+    bottom: 0,
+    zIndex: 10,
+  },
+  chartBuyBtn: {
+    flex: 1,
+    border: 0,
+    borderRadius: 20,
+    background: "#14c982",
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 14,
+    padding: "12px 8px",
+    cursor: "pointer",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+  },
+  chartSellBtn: {
+    flex: 1,
+    border: 0,
+    borderRadius: 20,
+    background: "#f23645",
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 14,
+    padding: "12px 8px",
+    cursor: "pointer",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+  },
+  chartBuySellPrice: {
+    fontSize: 11,
+    fontWeight: 600,
+    opacity: 0.95,
+  },
+  chartQtyMid: {
+    textAlign: "center",
+    minWidth: 56,
+  },
+  overviewPanel: {
+    minHeight: 280,
+  },
+  microTabs: {
+    display: "flex",
+    gap: 16,
+    padding: "8px 12px 4px",
+    borderTop: "1px solid #141414",
+  },
+  microTab: {
+    border: 0,
+    background: "transparent",
+    color: "#777",
+    fontSize: 13,
+    fontWeight: 600,
+    padding: "6px 0",
+    cursor: "pointer",
+    borderBottom: "2px solid transparent",
+  },
+  microTabOn: {
+    color: "#f5f5f5",
+    borderBottomColor: "#f5b51b",
   },
   terminal: {
     display: "flex",

@@ -26,6 +26,7 @@ export type Candle = {
 type Props = {
   candles: Candle[];
   height?: number;
+  /** Show MA7 / MA14 / MA28 overlays */
   showMA?: boolean;
 };
 
@@ -63,21 +64,21 @@ function toVolumePoint(c: Candle): HistogramData {
     value: c.volume,
     color:
       c.close >= c.open
-        ? "rgba(22,199,132,0.45)"
-        : "rgba(234,57,67,0.45)",
+        ? "rgba(20, 201, 130, 0.55)"
+        : "rgba(242, 54, 69, 0.55)",
   };
 }
 
 /**
- * Stable chart:
- * - create once
- * - fitContent only on first non-empty dataset (or explicit structural reset)
- * - live ticks use series.update() so user zoom/pan is preserved
- * - touch-action lets pinch/drag belong to the chart without page resize
+ * Exchange-grade candlestick chart (lightweight-charts).
+ * - Bold readable candles on mobile
+ * - Pinch zoom + horizontal pan (native)
+ * - Incremental live updates preserve user zoom/pan
+ * - MA overlays when showMA is true
  */
 export default function TradingChart({
   candles,
-  height = 320,
+  height = 360,
   showMA = true,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -88,14 +89,10 @@ export default function TradingChart({
   const ma14Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ma28Ref = useRef<ISeriesApi<"Line"> | null>(null);
 
-  /** Last applied candle open_time (unix) — used for incremental update */
   const lastCandleTimeRef = useRef<number | null>(null);
-  /** Whether we have already done the initial fitContent */
   const didInitialFitRef = useRef(false);
-  /** Snapshot of last full setData length to detect pair/tf resets */
   const lastFullCountRef = useRef(0);
 
-  // ---- Create chart once (recreate only if height/showMA identity changes) ----
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -103,48 +100,50 @@ export default function TradingChart({
       height,
       width: containerRef.current.clientWidth,
       layout: {
-        background: { type: ColorType.Solid, color: "#0a0a0a" },
-        textColor: "#8b8b8b",
+        background: { type: ColorType.Solid, color: "#000000" },
+        textColor: "#848e9c",
         fontSize: 11,
+        fontFamily:
+          "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       },
       grid: {
-        vertLines: { color: "#141414" },
-        horzLines: { color: "#141414" },
+        vertLines: { color: "rgba(42, 46, 57, 0.5)", style: 0 },
+        horzLines: { color: "rgba(42, 46, 57, 0.5)", style: 0 },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: "rgba(240,185,11,0.35)",
+          color: "rgba(255, 255, 255, 0.25)",
           width: 1,
           style: 2,
-          labelBackgroundColor: "#2a2a2a",
+          labelBackgroundColor: "#2a2e39",
         },
         horzLine: {
-          color: "rgba(240,185,11,0.35)",
+          color: "rgba(255, 255, 255, 0.25)",
           width: 1,
           style: 2,
-          labelBackgroundColor: "#2a2a2a",
+          labelBackgroundColor: "#2a2e39",
         },
       },
       rightPriceScale: {
-        borderColor: "#1a1a1a",
-        scaleMargins: { top: 0.08, bottom: 0.18 },
-        // Auto-scale price axis to VISIBLE candles (TradingView-style zoom)
+        borderColor: "#1e222d",
+        scaleMargins: { top: 0.06, bottom: 0.2 },
         autoScale: true,
         entireTextOnly: false,
         visible: true,
+        textColor: "#848e9c",
       },
       timeScale: {
-        borderColor: "#1a1a1a",
+        borderColor: "#1e222d",
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 6,
-        // Default spacing; zoom changes logical range → more/fewer bars visible
-        barSpacing: 7,
-        minBarSpacing: 1.5,
+        rightOffset: 8,
+        barSpacing: 9,
+        minBarSpacing: 2,
+        maxBarSpacing: 28,
         fixLeftEdge: false,
         fixRightEdge: false,
-        lockVisibleTimeRangeOnResize: false, // avoid fighting mobile resize/keyboard; manual zoom still preserved via no fitContent on ticks
+        lockVisibleTimeRangeOnResize: false,
         shiftVisibleRangeOnNewBar: false,
       },
       handleScroll: {
@@ -154,7 +153,6 @@ export default function TradingChart({
         vertTouchDrag: false,
       },
       handleScale: {
-        // Wheel/pinch adjusts TIME range; price scale auto-fits visible data
         axisPressedMouseMove: { time: true, price: true },
         axisDoubleClickReset: { time: true, price: true },
         mouseWheel: true,
@@ -163,19 +161,23 @@ export default function TradingChart({
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#16c784",
-      downColor: "#ea3943",
+      upColor: "#14c982",
+      downColor: "#f23645",
       borderVisible: false,
-      wickUpColor: "#16c784",
-      wickDownColor: "#ea3943",
+      borderUpColor: "#14c982",
+      borderDownColor: "#f23645",
+      wickUpColor: "#14c982",
+      wickDownColor: "#f23645",
+      wickVisible: true,
       priceLineVisible: true,
+      priceLineColor: "rgba(255,255,255,0.35)",
+      priceLineWidth: 1,
       lastValueVisible: true,
-      // Price scale tracks visible range when user zooms the time axis
-      autoscaleInfoProvider: undefined,
     });
+
     chart.priceScale("right").applyOptions({
       autoScale: true,
-      scaleMargins: { top: 0.08, bottom: 0.18 },
+      scaleMargins: { top: 0.06, bottom: 0.2 },
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -185,7 +187,7 @@ export default function TradingChart({
       priceLineVisible: false,
     });
     chart.priceScale("vol").applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },
+      scaleMargins: { top: 0.8, bottom: 0 },
       borderVisible: false,
     });
 
@@ -201,8 +203,8 @@ export default function TradingChart({
         crosshairMarkerVisible: false,
       };
       ma7 = chart.addSeries(LineSeries, { ...maOpts, color: "#f0b90b" });
-      ma14 = chart.addSeries(LineSeries, { ...maOpts, color: "#3861fb" });
-      ma28 = chart.addSeries(LineSeries, { ...maOpts, color: "#e91e8c" });
+      ma14 = chart.addSeries(LineSeries, { ...maOpts, color: "#5b8def" });
+      ma28 = chart.addSeries(LineSeries, { ...maOpts, color: "#c77dff" });
     }
 
     chartRef.current = chart;
@@ -212,14 +214,12 @@ export default function TradingChart({
     ma14Ref.current = ma14;
     ma28Ref.current = ma28;
 
-    // Reset fit state when chart instance is recreated
     didInitialFitRef.current = false;
     lastCandleTimeRef.current = null;
     lastFullCountRef.current = 0;
 
     const ro = new ResizeObserver(() => {
       if (!containerRef.current || !chartRef.current) return;
-      // Only width — never reset time range on resize
       chartRef.current.applyOptions({
         width: containerRef.current.clientWidth,
       });
@@ -238,7 +238,6 @@ export default function TradingChart({
     };
   }, [height, showMA]);
 
-  // ---- Data updates: incremental when possible; never fitContent on live ticks ----
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
@@ -259,7 +258,7 @@ export default function TradingChart({
 
     const sorted = [...candles].sort(
       (a, b) =>
-        new Date(a.open_time).getTime() - new Date(b.open_time).getTime()
+        new Date(a.open_time).getTime() - new Date(b.open_time).getTime(),
     );
 
     const last = sorted[sorted.length - 1];
@@ -267,16 +266,15 @@ export default function TradingChart({
     const prevTime = lastCandleTimeRef.current;
     const prevCount = lastFullCountRef.current;
 
-    // Structural reset (pair change, TF change, history reload): full setData
-    // Detected when count drops, jumps far, or first load.
     const needsFullSet =
       prevTime == null ||
       sorted.length < prevCount * 0.5 ||
       sorted.length > prevCount + 5 ||
-      (prevCount > 0 && Math.abs(sorted.length - prevCount) > 3 && lastTime < (prevTime || 0));
+      (prevCount > 0 &&
+        Math.abs(sorted.length - prevCount) > 3 &&
+        lastTime < (prevTime || 0));
 
     if (needsFullSet) {
-      // Preserve logical range if user already zoomed (not first fit)
       let savedRange: LogicalRange | null = null;
       if (didInitialFitRef.current) {
         try {
@@ -286,10 +284,8 @@ export default function TradingChart({
         }
       }
 
-      const candleData = sorted.map(toCandlePoint);
-      const volumeData = sorted.map(toVolumePoint);
-      candleSeries.setData(candleData);
-      volumeSeries.setData(volumeData);
+      candleSeries.setData(sorted.map(toCandlePoint));
+      volumeSeries.setData(sorted.map(toVolumePoint));
 
       if (showMA && ma7Ref.current && ma14Ref.current && ma28Ref.current) {
         const closes = sorted.map((c) => c.close);
@@ -304,7 +300,7 @@ export default function TradingChart({
                 : {
                     time: toUnix(c.open_time) as LineData["time"],
                     value: vals[i] as number,
-                  }
+                  },
             )
             .filter((x): x is LineData => x != null);
         ma7Ref.current.setData(line(s7));
@@ -328,7 +324,6 @@ export default function TradingChart({
       return;
     }
 
-    // Incremental: same bar → update; new bar → update appends
     candleSeries.update(toCandlePoint(last));
     volumeSeries.update(toVolumePoint(last));
 
@@ -350,14 +345,11 @@ export default function TradingChart({
       if (v28 != null) ma28Ref.current.update({ time: t, value: v28 });
     }
 
-    // If user is following the right edge, keep them pinned; otherwise leave zoom alone
     try {
       const range = chart.timeScale().getVisibleLogicalRange();
       if (range && lastTime !== prevTime) {
-        // New bar formed: if viewport was near the end, shift by +1 logical bar
         const dataLen = sorted.length;
-        const nearRight =
-          range.to >= dataLen - 3 && range.to <= dataLen + 2;
+        const nearRight = range.to >= dataLen - 3 && range.to <= dataLen + 2;
         if (nearRight && prevTime != null) {
           const span = range.to - range.from;
           chart.timeScale().setVisibleLogicalRange({
@@ -381,8 +373,6 @@ export default function TradingChart({
         width: "100%",
         height,
         position: "relative",
-        // Pinch/drag belong to the chart; page can still scroll outside
-        // none = allow pinch-zoom on the chart (pan-y blocks multi-touch scale)
         touchAction: "none",
         userSelect: "none",
         WebkitUserSelect: "none",
@@ -401,7 +391,7 @@ export function computeMALegend(candles: Candle[]) {
     };
   const sorted = [...candles].sort(
     (a, b) =>
-      new Date(a.open_time).getTime() - new Date(b.open_time).getTime()
+      new Date(a.open_time).getTime() - new Date(b.open_time).getTime(),
   );
   const closes = sorted.map((c) => c.close);
   const last = (period: number) => {
