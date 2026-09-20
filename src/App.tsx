@@ -371,6 +371,11 @@ export default function App() {
     if (showAuthGate) {
       return (
         <AuthScreen
+          onBack={() => {
+            setShowAuthGate(false);
+            setAuthIntent(null);
+            goHome();
+          }}
           onAuth={() => {
             setAuthenticated(true);
             setShowAuthGate(false);
@@ -390,6 +395,11 @@ export default function App() {
     if (route.page === "assets") {
       return (
         <AuthScreen
+          onBack={() => {
+            setShowAuthGate(false);
+            setAuthIntent(null);
+            goHome();
+          }}
           onAuth={() => {
             setAuthenticated(true);
             setShowAuthGate(false);
@@ -438,6 +448,11 @@ export default function App() {
     if (route.page === "p2p") {
       return (
         <AuthScreen
+          onBack={() => {
+            setShowAuthGate(false);
+            setAuthIntent(null);
+            goHome();
+          }}
           onAuth={() => {
             setAuthenticated(true);
             setShowAuthGate(false);
