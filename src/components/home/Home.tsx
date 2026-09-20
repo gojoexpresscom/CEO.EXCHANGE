@@ -1608,15 +1608,22 @@ function Home({
   return (
     <div style={styles.page}>
       <style>{HOME_MOTION}</style>
-      {!(guestMode || !userId) ? (
       <header style={styles.header}>
         <button
           type="button"
-          style={styles.profileBtn}
-          onClick={() => setModal("menu")}
-          aria-label="Profile"
+          style={
+            guestMode || !userId
+              ? styles.guestLoginBtn
+              : styles.profileBtn
+          }
+          onClick={() => (guestMode || !userId ? setModal("guestMenu") : setModal("menu"))}
+          aria-label={guestMode || !userId ? "Account" : "Profile"}
         >
-          <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
+          {guestMode || !userId ? (
+            <span style={{ fontSize: 18, opacity: 0.85 }} aria-hidden="true">👤</span>
+          ) : (
+            <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
+          )}
         </button>
         <div style={styles.topSearch}>
           <Icon name="search" size={16} />
@@ -1633,13 +1640,6 @@ function Home({
           </button>
         </div>
       </header>
-      ) : (
-        <div style={styles.guestTopBar}>
-          <button type="button" style={styles.guestTopProfile} onClick={() => setModal("guestMenu")} aria-label="Account">
-            👤
-          </button>
-        </div>
-      )}
 
       {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
 
@@ -1684,115 +1684,17 @@ function Home({
           </div>
         )}
         {(guestMode || !userId) ? (
-          <>
-          <section style={styles.stageHero}>
-            <div style={styles.stageBg} aria-hidden="true">
-              <div style={styles.stageRays} />
-              <div style={styles.stageMesh} />
-              <div style={styles.stageVignette} />
-            </div>
-            <div style={styles.stageLogoWrap} aria-hidden="true">
-              <svg width="64" height="72" viewBox="0 0 64 72" fill="none">
-                
-                <path d="M18 18h28l-4 8H22l-4-8z" fill="#f5b51b" opacity="0.95"/>
-                <path d="M20 14l4 6 8-8 8 8 4-6" stroke="#f5b51b" strokeWidth="2" fill="none" strokeLinejoin="round"/>
-                <path d="M24 10h2M32 6h2M40 10h2" stroke="#f5b51b" strokeWidth="2.5" strokeLinecap="round"/>
-                
-                <circle cx="32" cy="48" r="16" stroke="#f5b51b" strokeWidth="2.8" fill="none"/>
-                <path d="M22 56L42 40" stroke="#f5b51b" strokeWidth="2.6" strokeLinecap="round"/>
-              </svg>
-            </div>
-            <h1 style={styles.stageBrand}>
-              <span style={styles.stageBrandCEO}>CEO</span>
-              <span style={styles.stageBrandEx}> Exchange</span>
-            </h1>
-            <div style={styles.stageDivider} aria-hidden="true">
-              <span style={styles.stageDividerLine} />
-              <span style={styles.stageDividerDot} />
-              <span style={styles.stageDividerLine} />
-            </div>
-            <p style={styles.stageTagline}>Trade with clarity</p>
-            <button type="button" style={styles.stageCta} onClick={requireAuth}>
-              <span style={styles.stageCtaInner}>Get Started</span>
-              <span style={styles.stageCtaArrow} aria-hidden="true">→</span>
+          <section style={styles.guestHero}>
+            <div style={styles.guestHeroGlow} />
+            <p style={styles.guestHeroKicker}>CEO Exchange</p>
+            <h2 style={styles.guestHeroTitle}>Start trading spot markets</h2>
+            <p style={styles.guestHeroSub}>
+              Browse live prices freely. Create an account when you are ready to deposit or place orders.
+            </p>
+            <button type="button" style={styles.guestHeroCta} onClick={requireAuth}>
+              Get Started
             </button>
           </section>
-
-          <section style={styles.watchCard}>
-            <div style={styles.watchHead}>
-              <span style={styles.watchLabel}>Market Watchlist</span>
-              <button
-                type="button"
-                style={styles.watchViewAll}
-                onClick={() => {
-                  setMarketTab("Hot");
-                  setMarketCategory("Spot");
-                  if (onNavigate) onNavigate("markets");
-                }}
-              >
-                View All ›
-              </button>
-            </div>
-            {(filteredMarkets.length ? filteredMarkets : []).slice(0, 5).map((m) => {
-              const ch = Number(m.change_24h ?? 0);
-              const up = ch >= 0;
-              return (
-                <button
-                  key={m.symbol}
-                  type="button"
-                  style={styles.watchRow}
-                  onClick={() => onTrade(m.symbol)}
-                >
-                  <div style={styles.watchLeft}>
-                    <span style={styles.watchIcon}>
-                      {(m.base_asset || m.symbol.replace(/USDT|USDC/i, "") || "?").slice(0, 1)}
-                    </span>
-                    <span style={styles.watchTextCol}>
-                      <span style={styles.watchSym}>{(m.base_asset || m.symbol.replace(/USDT|USDC/i, ""))} <span style={styles.watchQuote}>USDT</span></span>
-                      <span style={styles.watchName}>{m.base_asset || m.symbol}</span>
-                    </span>
-                  </div>
-                  <div style={styles.watchRight}>
-                    <span style={styles.watchPriceCol}>
-                      <span style={styles.watchPrice}>
-                        {m.last_price != null ? Number(m.last_price).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—"}
-                      </span>
-                      <span style={styles.watchQuoteSmall}>USDT</span>
-                    </span>
-                    <span style={{
-                      ...styles.watchPct,
-                      color: up ? "#e8c56a" : "#f87171",
-                      borderColor: up ? "rgba(245,181,27,0.45)" : "rgba(239,68,68,0.35)",
-                      background: up ? "rgba(245,181,27,0.08)" : "rgba(239,68,68,0.08)",
-                    }}>
-                      {up ? "+" : ""}{Number.isFinite(ch) ? ch.toFixed(2) : "0.00"}%
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-            {!filteredMarkets.length && (
-              <div style={styles.watchEmpty}>
-                {marketsLoading ? "Loading markets…" : "Waiting for live market data…"}
-              </div>
-            )}
-          </section>
-
-          <section style={styles.stageActions}>
-            <button type="button" style={styles.stageAction} onClick={() => onNavigate?.("earn")}>
-              <span style={styles.stageActionIcon}>↗</span>
-              Earn
-            </button>
-            <button type="button" style={styles.stageAction} onClick={() => setModal("invite")}>
-              <span style={styles.stageActionIcon}>👤+</span>
-              Invite
-            </button>
-            <button type="button" style={styles.stageAction} onClick={() => setModal("rewards")}>
-              <span style={styles.stageActionIcon}>★</span>
-              Rewards
-            </button>
-          </section>
-          </>
         ) : (
           <section style={styles.balanceCard}>
             <div style={styles.balanceTop}>
@@ -1826,7 +1728,6 @@ function Home({
           </section>
         )}
 
-        {!(guestMode || !userId) && (
         <section style={styles.quickGrid}>
           <QuickAction icon="percent" label="CEO Earn" onClick={() => {
             if (onNavigate) onNavigate("earn");
@@ -1854,18 +1755,14 @@ function Home({
           )}
           <QuickAction icon="more" label="More" onClick={() => setModal("services")} />
         </section>
-        )}
 
-        {!(guestMode || !userId) && (
         <PromoCarousel
           onOpenP2P={() => onP2P?.()}
           onOpenInvite={() => setModal("invite")}
           onOpenExperience={() => onExperience?.()}
           onOpenTrade={(sym) => onTrade(sym)}
         />
-        )}
 
-        {!(guestMode || !userId) && (
         <section style={styles.marketSection}>
           <div style={styles.tabsRow}>
             {(["Favorites", "Hot", "New", "Gainers", "Losers"] as MarketTab[]).map((tab) => (
@@ -1932,9 +1829,6 @@ function Home({
           )}
         </section>
 
-        )}
-
-        {!(guestMode || !userId) && (
         <section style={styles.feedSection}>
           <div style={styles.sectionTitle}><span style={styles.goldBar} />CEO</div>
           <div style={styles.feedTabs}>{(["CEO", "Following", "Campaign", "Announcements"] as FeedTab[]).map((tab) => <button key={tab} onClick={() => { setFeedTab(tab); if (userId) void loadPosts(userId, tab); }} style={{ ...styles.feedTab, ...(feedTab === tab ? styles.feedTabActive : {}) }}>{tab}</button>)}</div>
@@ -1951,11 +1845,10 @@ function Home({
             {!filteredPosts.length && <Empty text={feedTab === "Following" ? "You are not following anyone yet." : "No posts yet."} />}
           </>}
         </section>
-        )}
       </main>
 
-      {/* FAB: authenticated only */}
-      {!(guestMode || !userId) && (true || showFab) && (
+      {/* FAB always available for Post / Message / Personal center */}
+      {(true || showFab) && (
         <div style={styles.fabWrap}>
           {fabOpen && (
             <div style={styles.fabMenu}>
@@ -4276,251 +4169,142 @@ const pd: Record<string, React.CSSProperties> = {
 function Stat({ label, value }: { label: string; value: React.ReactNode }) { return <div style={styles.stat}><span>{label}</span><b>{value}</b></div>; }
 
 const styles: Record<string, React.CSSProperties> = {
-  stageHero: {
+  guestHero: {
     position: "relative" as const,
-    margin: "0 0 16px",
-    padding: "42px 22px 32px",
+    margin: "0 12px 12px",
+    padding: "22px 18px 20px",
+    borderRadius: 16,
     overflow: "hidden",
-    textAlign: "center" as const,
-    background: "#000",
-    minHeight: 280,
+    background: "linear-gradient(160deg, #1a1408 0%, #0a0a0a 55%, #050505 100%)",
+    border: "1px solid rgba(245,181,27,0.22)",
   },
-  stageBg: {
+  guestHeroGlow: {
     position: "absolute" as const,
-    inset: 0,
+    top: -40,
+    right: -20,
+    width: 160,
+    height: 160,
+    borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(245,181,27,0.28), transparent 70%)",
     pointerEvents: "none" as const,
   },
-  stageRays: {
-    position: "absolute" as const,
-    top: "-30%",
-    left: "50%",
-    transform: "translateX(-50%)",
-    width: "140%",
-    height: "90%",
-    background:
-      "conic-gradient(from 180deg at 50% 0%, transparent 0deg, rgba(245,181,27,0.0) 20deg, rgba(255,210,80,0.22) 55deg, rgba(245,181,27,0.08) 90deg, rgba(255,200,60,0.18) 125deg, transparent 160deg, transparent 360deg)",
-    filter: "blur(1px)",
-  },
-  stageMesh: {
-    position: "absolute" as const,
-    inset: 0,
-    opacity: 0.55,
-    backgroundImage:
-      "radial-gradient(circle at 15% 40%, rgba(245,181,27,0.12) 0%, transparent 28%), radial-gradient(circle at 85% 35%, rgba(245,181,27,0.1) 0%, transparent 26%), radial-gradient(circle at 50% 70%, rgba(180,120,20,0.08) 0%, transparent 40%)",
-  },
-  stageVignette: {
-    position: "absolute" as const,
-    inset: 0,
-    background:
-      "radial-gradient(ellipse 80% 60% at 50% 20%, rgba(245,181,27,0.15) 0%, transparent 55%), linear-gradient(180deg, #0a0804 0%, transparent 35%, #050505 100%)",
-  },
-  stageLogoWrap: {
-    position: "relative" as const,
-    zIndex: 1,
-    display: "flex",
-    justifyContent: "center",
-    marginBottom: 12,
-    filter: "drop-shadow(0 0 20px rgba(245,181,27,0.55))",
-  },
-  stageBrand: {
-    position: "relative" as const,
-    zIndex: 1,
-    margin: "0 0 10px",
-    fontSize: 32,
-    fontWeight: 700,
-    letterSpacing: 0.5,
-    lineHeight: 1.15,
-  },
-  stageBrandCEO: {
-    color: "#f5b51b",
-    fontFamily: 'Georgia, "Times New Roman", serif',
-    fontWeight: 700,
-    textShadow: "0 0 28px rgba(245,181,27,0.5)",
-  },
-  stageBrandEx: {
-    color: "#f5b51b",
-    fontFamily: 'Georgia, "Times New Roman", serif',
-    fontWeight: 600,
-    textShadow: "0 0 28px rgba(245,181,27,0.45)",
-  },
-  stageDivider: {
-    position: "relative" as const,
-    zIndex: 1,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    margin: "0 auto 12px",
-  },
-  stageDividerLine: {
-    width: 36,
-    height: 1,
-    background: "linear-gradient(90deg, transparent, #c9a227, #f5b51b)",
-  },
-  stageDividerDot: {
-    width: 5,
-    height: 5,
-    borderRadius: "50%",
-    background: "#f5b51b",
-    boxShadow: "0 0 8px rgba(245,181,27,0.8)",
-  },
-  stageTagline: {
-    position: "relative" as const,
-    zIndex: 1,
-    margin: "0 0 22px",
-    fontSize: 15,
-    color: "#d4c49a",
-    fontWeight: 500,
-    letterSpacing: 0.3,
-  },
-  stageCta: {
-    position: "relative" as const,
-    zIndex: 1,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    border: "1px solid rgba(255,230,150,0.55)",
-    borderRadius: 14,
-    padding: "15px 36px",
-    fontSize: 16,
-    fontWeight: 800,
-    color: "#1a1200",
-    cursor: "pointer",
-    background:
-      "linear-gradient(180deg, #fff1b8 0%, #ffd24a 18%, #f5b51b 55%, #c9920e 100%)",
-    boxShadow:
-      "0 1px 0 rgba(255,255,255,0.45) inset, 0 -2px 0 rgba(0,0,0,0.18) inset, 0 10px 32px rgba(245,181,27,0.42)",
-  },
-  stageCtaInner: { letterSpacing: 0.2 },
-  stageCtaArrow: { fontSize: 18, fontWeight: 700 },
-  watchCard: {
-    margin: "0 14px 16px",
-    padding: "16px 16px 10px",
-    borderRadius: 18,
-    background: "linear-gradient(165deg, rgba(28,24,16,0.95) 0%, rgba(10,10,10,0.98) 100%)",
-    border: "1px solid rgba(245,181,27,0.16)",
-    boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
-  },
-  watchHead: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  watchLabel: {
+  guestHeroKicker: {
+    margin: "0 0 6px",
     fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.14em",
+    fontWeight: 700,
+    letterSpacing: "0.1em",
     textTransform: "uppercase" as const,
     color: "#f5b51b",
   },
-  watchViewAll: {
+  guestHeroTitle: {
+    margin: "0 0 8px",
+    fontSize: 22,
+    fontWeight: 800,
+    color: "#fff",
+    lineHeight: 1.2,
+  },
+  guestHeroSub: {
+    margin: "0 0 16px",
+    fontSize: 13,
+    lineHeight: 1.45,
+    color: "#9a9a9a",
+  },
+  guestHeroCta: {
+    width: "100%",
     border: 0,
-    background: "transparent",
-    color: "#b8a56a",
-    fontSize: 12,
-    fontWeight: 600,
+    borderRadius: 12,
+    padding: "14px 16px",
+    fontSize: 15,
+    fontWeight: 800,
+    color: "#111",
+    background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
     cursor: "pointer",
   },
-  watchRow: {
+  guestMenuOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 1200,
+    background: "rgba(0,0,0,0.55)",
+    display: "flex",
+    alignItems: "stretch",
+    justifyContent: "flex-end",
+  },
+  guestMenuSheet: {
+    width: "min(100%, 380px)",
+    height: "100%",
+    background: "#0a0a0a",
+    padding: "16px 18px 28px",
+    boxSizing: "border-box" as const,
+    overflowY: "auto" as const,
+    borderLeft: "1px solid #1c1c1c",
+  },
+  guestMenuClose: {
+    border: 0,
+    background: "#1a1a1a",
+    color: "#fff",
+    width: 36,
+    height: 36,
+    borderRadius: "50%",
+    fontSize: 16,
+    cursor: "pointer",
+    marginBottom: 20,
+  },
+  guestMenuTitle: {
+    margin: "0 0 6px",
+    fontSize: 24,
+    fontWeight: 800,
+    color: "#fff",
+  },
+  guestMenuSub: {
+    margin: "0 0 18px",
+    fontSize: 13,
+    color: "#8a8a8a",
+  },
+  guestMenuActions: {
+    display: "flex",
+    gap: 10,
+    marginBottom: 20,
+  },
+  guestMenuSecondary: {
+    flex: 1,
+    border: "1px solid #2a2a2a",
+    background: "#161616",
+    color: "#eee",
+    borderRadius: 12,
+    padding: "12px 10px",
+    fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  guestMenuPrimary: {
+    flex: 1,
+    border: 0,
+    background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
+    color: "#111",
+    borderRadius: 12,
+    padding: "12px 10px",
+    fontWeight: 800,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  guestMenuDivider: {
+    height: 1,
+    background: "#1c1c1c",
+    margin: "8px 0 12px",
+  },
+  guestMenuRow: {
     width: "100%",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "12px 0",
     border: 0,
-    borderBottom: "1px solid rgba(255,255,255,0.06)",
     background: "transparent",
-    color: "#fff",
-    cursor: "pointer",
-    textAlign: "left" as const,
-  },
-  watchLeft: { display: "flex", alignItems: "center", gap: 12, minWidth: 0 },
-  watchIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: "50%",
-    border: "1.5px solid rgba(245,181,27,0.55)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    color: "#ddd",
+    padding: "14px 0",
     fontSize: 14,
-    fontWeight: 800,
-    color: "#f5b51b",
-    background: "rgba(245,181,27,0.08)",
-    flexShrink: 0,
-  },
-  watchTextCol: { display: "flex", flexDirection: "column" as const, gap: 2, minWidth: 0 },
-  watchSym: { fontSize: 14, fontWeight: 700, color: "#f5f5f5" },
-  watchQuote: { fontSize: 12, fontWeight: 600, color: "#aaa" },
-  watchName: { fontSize: 11, color: "#777" },
-  watchRight: { display: "flex", alignItems: "center", gap: 10 },
-  watchPriceCol: { display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 2 },
-  watchPrice: { fontSize: 14, fontWeight: 600, color: "#f0f0f0", fontVariantNumeric: "tabular-nums" as const },
-  watchQuoteSmall: { fontSize: 10, color: "#666" },
-  watchPct: {
-    fontSize: 12,
-    fontWeight: 700,
-    padding: "6px 10px",
-    borderRadius: 10,
-    border: "1px solid",
-    minWidth: 68,
-    textAlign: "center" as const,
-  },
-  watchEmpty: { padding: "16px 0", textAlign: "center" as const, color: "#777", fontSize: 13 },
-  stageActions: {
-    display: "flex",
-    justifyContent: "space-around",
-    margin: "2px 16px 24px",
-    padding: "4px 0 8px",
-  },
-  stageAction: {
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    gap: 8,
-    border: 0,
-    background: "transparent",
-    color: "#f5b51b",
-    fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
-  },
-  stageActionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: "50%",
-    border: "1px solid rgba(245,181,27,0.4)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 16,
-    background: "rgba(245,181,27,0.07)",
-    boxShadow: "0 0 16px rgba(245,181,27,0.12)",
-  },
-  guestTopBar: {
-    position: "absolute" as const,
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 5,
-    display: "flex",
-    justifyContent: "flex-start",
-    padding: "12px 14px",
-    paddingTop: "calc(10px + env(safe-area-inset-top))",
-    pointerEvents: "none" as const,
-  },
-  guestTopProfile: {
-    pointerEvents: "auto" as const,
-    width: 36,
-    height: 36,
-    borderRadius: "50%",
-    border: "1px solid rgba(245,181,27,0.35)",
-    background: "rgba(0,0,0,0.35)",
-    color: "#f5b51b",
-    fontSize: 16,
-    cursor: "pointer",
+    borderBottom: "1px solid #151515",
   },
   guestLoginBtn: {
     border: "1px solid rgba(245,181,27,0.4)",
@@ -4560,7 +4344,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
 
-  page: { position: "relative" as const, minHeight: "100vh", background: BG, color: "#fff", paddingBottom: 82, fontFamily: "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", overflowX: "hidden" },
+  page: { minHeight: "100vh", background: BG, color: "#fff", paddingBottom: 82, fontFamily: "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", overflowX: "hidden" },
   header: { position: "sticky", top: 0, zIndex: 20, minHeight: 56, padding: "10px 14px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: 10, alignItems: "center", background: "rgba(5,5,5,.96)", backdropFilter: "blur(16px)", borderBottom: "1px solid #121212" },
   profileBtn: { border: 0, background: "transparent", padding: 0, cursor: "pointer", display: "grid", placeItems: "center" },
   brand: { display: "flex", alignItems: "center", gap: 9, minWidth: 0 },
