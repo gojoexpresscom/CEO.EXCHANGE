@@ -8,7 +8,17 @@ import {
 } from "react";
 import { supabase } from "../../lib/supabase";
 import { useBybitMarketData } from "../../trading/useBybitMarketData";
-import TradingChart, { computeMALegend } from "./TradingChart";
+import { getLiveExecutionProvider } from "../../trading/providers";
+import TradingChart, {
+  computeMALegend,
+  intervalToSeconds,
+  type IndicatorId,
+  type ChartStyle,
+  type ChartDisplaySettings,
+  type DrawingTool,
+  type TradingChartHandle,
+  type CandleInfo,
+} from "./TradingChart";
 import { formatPrice } from "../../lib/format";
 
 type Props = {
@@ -50,7 +60,21 @@ type Order = {
 type MicroTab = "book" | "trades";
 type BottomTab = "orders" | "positions" | "assets" | "borrowings";
 type OrderSide = "buy" | "sell";
-type Tf = "15m" | "1h" | "4h" | "1d";
+/** Must match SUPPORTED_TIMEFRAMES in useBybitMarketData. */
+type Tf =
+  | "1m"
+  | "3m"
+  | "5m"
+  | "15m"
+  | "30m"
+  | "1h"
+  | "2h"
+  | "4h"
+  | "6h"
+  | "12h"
+  | "1d"
+  | "1w"
+  | "1M";
 /** Supported by current backend: limit (and market UI only). Others are UI-only / coming soon. */
 type OrderType =
   | "limit"
@@ -66,7 +90,24 @@ type OrderType =
 
 type ViewMode = "terminal" | "chart";
 
-const TFS: Tf[] = ["15m", "1h", "4h", "1d"];
+/** Quick chips on the chart timeframe bar */
+const TFS_QUICK: Tf[] = ["15m", "1h", "4h", "1d"];
+/** Full list for the "More" sheet — every interval the Bybit feed accepts */
+const TFS_ALL: Tf[] = [
+  "1m",
+  "3m",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "2h",
+  "4h",
+  "6h",
+  "12h",
+  "1d",
+  "1w",
+  "1M",
+];
 
 const ORDER_TYPE_OPTIONS: {
   id: OrderType;
@@ -117,6 +158,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
   const [pair, setPair] = useState<Pair | null>(null);
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [tf, setTf] = useState<Tf>("15m");
+  const [showMoreTf, setShowMoreTf] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const chartFsRef = useRef<HTMLDivElement | null>(null);
   const [micro, setMicro] = useState<MicroTab>("book");
   const [bottom, setBottom] = useState<BottomTab>("orders");
   const [side, setSide] = useState<OrderSide>("buy");
@@ -142,6 +186,33 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
   const [viewMode, setViewMode] = useState<ViewMode>("terminal");
   const [chartTab, setChartTab] = useState<"chart" | "overview">("chart");
   const [showMA, setShowMA] = useState(true);
+  const [activeIndicators, setActiveIndicators] = useState<IndicatorId[]>(["ma"]);
+  const [chartStyle, setChartStyle] = useState<ChartStyle>("candlestick");
+  const [chartHeight, setChartHeight] = useState(380);
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>("none");
+  const [showDrawBar, setShowDrawBar] = useState(false);
+  const [showChartSettings, setShowChartSettings] = useState(false);
+  const [showDateJump, setShowDateJump] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
+  const [jumpDate, setJumpDate] = useState("");
+  const [jumpTime, setJumpTime] = useState("00:00");
+  const [candleInfo, setCandleInfo] = useState<CandleInfo | null>(null);
+  const [chartDisplay, setChartDisplay] = useState<ChartDisplaySettings>({
+    lastTradedPrice: true,
+    grid: true,
+    maxPrice: true,
+    minPrice: true,
+    countdown: false,
+  });
+  /** Chart overlays driven by real orders table */
+  const [showTradeHistoryOnChart, setShowTradeHistoryOnChart] = useState(true);
+  const [showCurrentOrdersOnChart, setShowCurrentOrdersOnChart] = useState(true);
+  const [showAvgBuyOnChart, setShowAvgBuyOnChart] = useState(true);
+  const [showAvgSellOnChart, setShowAvgSellOnChart] = useState(false);
+  const [modifyTarget, setModifyTarget] = useState<Order | null>(null);
+  const [modifyPrice, setModifyPrice] = useState("");
+  const [modifyAmount, setModifyAmount] = useState("");
+  const chartApiRef = useRef<TradingChartHandle | null>(null);
   const [orderType, setOrderType] = useState<OrderType>("limit");
   const [showOrderTypeMenu, setShowOrderTypeMenu] = useState(false);
   const [postOnly, setPostOnly] = useState(true);
@@ -163,6 +234,13 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
     };
   }, []);
 
+  // Keep isFullscreen in sync when user exits via system gesture
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
 
   const {
@@ -171,6 +249,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
     book,
     trades,
     status: feedStatus,
+    loadHistoryAround,
   } = useBybitMarketData(
     pair?.base_asset ?? null,
     pair?.quote_asset ?? null,
@@ -587,24 +666,16 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
     }
     setSubmitting(true);
     setShowReview(false);
-    // Backend currently routes via kraken-spot; market is sent as market when selected.
-    // Unsupported advanced types never reach here.
-    const { data, error } = await supabase.functions.invoke("kraken-spot", {
-      body: {
-        action: "place_order",
-        trading_pair: pair.symbol,
-        side,
-        order_type: isMarket ? "market" : "limit",
-        price: isMarket ? undefined : np,
-        amount: na,
-      },
+    // Live Bybit execution via bybit-private (session JWT only; no API keys).
+    const exec = getLiveExecutionProvider();
+    const data = await exec.placeOrder({
+      trading_pair: pair.symbol,
+      side,
+      order_type: isMarket ? "market" : "limit",
+      price: isMarket ? undefined : np,
+      amount: na,
     });
     setSubmitting(false);
-    if (error) {
-      setNotice(error.message || "Order failed.");
-      setNoticeOk(false);
-      return;
-    }
     if (data?.error) {
       setNotice(
         /balance|insufficient|fund/i.test(String(data.error))
@@ -615,18 +686,20 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       return;
     }
     if (data?.live_trading_enabled === false) {
-      setNotice(data.message || "Live order routing is not enabled yet.");
+      setNotice(
+        String(data.message || "Live order routing is not enabled yet."),
+      );
       setNoticeOk(false);
       return;
     }
-    if (!data?.order_id && !data?.kraken_order_id) {
+    if (!data?.order_id && !data?.bybit_order_id) {
       setNotice("The server did not return an order id.");
       setNoticeOk(false);
       return;
     }
     setNotice(
       `${isMarket ? "Market" : "Limit"} ${side.toUpperCase()} submitted${
-        data?.kraken_order_id ? ` · ref ${data.kraken_order_id}` : ""
+        data?.bybit_order_id ? ` · ${data.bybit_order_id}` : ""
       }.`,
     );
     setNoticeOk(true);
@@ -642,15 +715,9 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
     } = await supabase.auth.getUser();
     if (!user) return;
     setCancellingId(orderId);
-    const { data, error } = await supabase.functions.invoke("kraken-spot", {
-      body: { action: "cancel_order", order_id: orderId },
-    });
+    const exec = getLiveExecutionProvider();
+    const data = await exec.cancelOrder({ order_id: orderId });
     setCancellingId(null);
-    if (error) {
-      setNotice(error.message || "Cancel failed.");
-      setNoticeOk(false);
-      return;
-    }
     if (data?.error) {
       setNotice(String(data.error));
       setNoticeOk(false);
@@ -659,6 +726,61 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
     setNotice("Order cancelled.");
     setNoticeOk(true);
     void loadUser();
+  };
+
+  /**
+   * Real modify_order via bybit-private (Bybit POST /v5/order/amend on server).
+   * No optimistic UI success — waits for server response, then refreshes orders.
+   */
+  const modifyOrder = async (
+    orderId: string,
+    price: number,
+    amount?: number,
+  ): Promise<boolean> => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setNotice("Sign in to modify orders.");
+      setNoticeOk(false);
+      return false;
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      setNotice("Invalid price.");
+      setNoticeOk(false);
+      return false;
+    }
+    if (amount !== undefined && (!Number.isFinite(amount) || amount <= 0)) {
+      setNotice("Invalid amount.");
+      setNoticeOk(false);
+      return false;
+    }
+    setCancellingId(orderId);
+    const exec = getLiveExecutionProvider();
+    const data = await exec.modifyOrder({
+      order_id: orderId,
+      price,
+      ...(amount !== undefined ? { amount } : {}),
+    });
+    setCancellingId(null);
+    if (data?.error) {
+      setNotice(String(data.error));
+      setNoticeOk(false);
+      return false;
+    }
+    if (!data?.order_id) {
+      setNotice("Modify was not confirmed by the server.");
+      setNoticeOk(false);
+      return false;
+    }
+    setNotice(
+      `Order updated · ${Number(data.price).toFixed(2)}${
+        data.bybit_order_id ? ` · ${data.bybit_order_id}` : ""
+      }`,
+    );
+    setNoticeOk(true);
+    void loadUser();
+    return true;
   };
 
   const openOrders = useMemo(
@@ -681,6 +803,75 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       }),
     [orders],
   );
+
+  /**
+   * Real average fill prices from the user's orders table.
+   * Uses filled_amount when present, else amount for filled statuses.
+   * No invented values — null when insufficient data.
+   */
+  const avgFills = useMemo(() => {
+    let buyNotional = 0;
+    let buyQty = 0;
+    let sellNotional = 0;
+    let sellQty = 0;
+    for (const o of orders) {
+      if (pair && o.trading_pair !== pair.symbol) continue;
+      const s = (o.status || "").toLowerCase();
+      const filled =
+        o.filled_amount != null && o.filled_amount > 0
+          ? Number(o.filled_amount)
+          : s === "filled" || s === "closed"
+            ? Number(o.amount)
+            : 0;
+      const px = o.price != null ? Number(o.price) : null;
+      if (!filled || px == null || !Number.isFinite(px) || px <= 0) continue;
+      if ((o.side || "").toLowerCase() === "buy") {
+        buyNotional += px * filled;
+        buyQty += filled;
+      } else if ((o.side || "").toLowerCase() === "sell") {
+        sellNotional += px * filled;
+        sellQty += filled;
+      }
+    }
+    return {
+      avgBuy: buyQty > 0 ? buyNotional / buyQty : null,
+      avgSell: sellQty > 0 ? sellNotional / sellQty : null,
+    };
+  }, [orders, pair]);
+
+  /** Filled-order markers for the chart (time + price from real rows). */
+  const tradeMarkers = useMemo(() => {
+    if (!showTradeHistoryOnChart) return [];
+    return orders
+      .filter((o) => {
+        if (pair && o.trading_pair !== pair.symbol) return false;
+        const s = (o.status || "").toLowerCase();
+        const filled =
+          (o.filled_amount != null && o.filled_amount > 0) ||
+          s === "filled" ||
+          s === "closed" ||
+          s === "partially_filled";
+        return filled && o.price != null;
+      })
+      .map((o) => ({
+        time: o.created_at,
+        price: Number(o.price),
+        side: (o.side || "").toLowerCase() as "buy" | "sell",
+        id: o.id,
+      }));
+  }, [orders, pair, showTradeHistoryOnChart]);
+
+  /** Open limit orders as price levels on the chart. */
+  const openOrderLevels = useMemo(() => {
+    if (!showCurrentOrdersOnChart) return [];
+    return openOrders
+      .filter((o) => o.price != null && Number(o.price) > 0)
+      .map((o) => ({
+        id: o.id,
+        price: Number(o.price),
+        side: (o.side || "").toLowerCase() as "buy" | "sell",
+      }));
+  }, [openOrders, showCurrentOrdersOnChart]);
 
   // Order book levels — derived from throttled displayBook (stable keys by price)
   const asks = useMemo(() => {
@@ -770,11 +961,24 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         <button
           type="button"
           style={S.iconBtn}
-          onClick={() => setViewMode((v) => (v === "chart" ? "terminal" : "chart"))}
+          onClick={() => {
+            // ONE fullscreen control: real Fullscreen API on the chart workspace
+            const el = chartFsRef.current;
+            if (!el) {
+              // If chart not mounted yet, switch to chart view first
+              setViewMode("chart");
+              return;
+            }
+            if (document.fullscreenElement) {
+              void document.exitFullscreen().then(() => setIsFullscreen(false));
+            } else {
+              void el.requestFullscreen?.().then(() => setIsFullscreen(true));
+            }
+          }}
           aria-label="Fullscreen chart"
-          title="Toggle fullscreen chart"
+          title="Fullscreen chart"
         >
-          ⛶
+          {isFullscreen ? "✕" : "⛶"}
         </button>
       </header>
 
@@ -847,7 +1051,22 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
 
       {/* ── Chart view (matches reference video structure) ── */}
       {viewMode === "chart" && (
-        <section style={S.chartZone} className="ceo-fade-in">
+        <section
+          ref={chartFsRef}
+          style={{
+            ...S.chartZone,
+            ...(isFullscreen
+              ? {
+                  position: "fixed" as const,
+                  inset: 0,
+                  zIndex: 100,
+                  background: "#0a0a0a",
+                  maxWidth: "100%",
+                }
+              : {}),
+          }}
+          className="ceo-fade-in"
+        >
           <div style={S.chartScroll}>
           {/* Chart | Overview tabs */}
           <div style={S.chartMainTabs}>
@@ -926,23 +1145,44 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 </div>
               </div>
 
-              {/* Timeframe row */}
+              {/* Timeframe row — real intervals via useBybitMarketData */}
               <div style={S.tfRow}>
                 <span style={S.tfLabel}>Time</span>
-                {TFS.map((t) => (
+                {TFS_QUICK.map((t) => (
                   <button
                     key={t}
                     type="button"
                     style={{ ...S.tfChip, ...(tf === t ? S.tfActive : {}) }}
                     onClick={() => setTf(t)}
                   >
-                    {t}
+                    {t === "1d" ? "1D" : t}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  style={{
+                    ...S.tfChip,
+                    ...(TFS_ALL.includes(tf) && !TFS_QUICK.includes(tf)
+                      ? S.tfActive
+                      : {}),
+                  }}
+                  onClick={() => setShowMoreTf(true)}
+                >
+                  {TFS_ALL.includes(tf) && !TFS_QUICK.includes(tf)
+                    ? tf === "1d"
+                      ? "1D"
+                      : tf === "1w"
+                        ? "1W"
+                        : tf === "1M"
+                          ? "1M"
+                          : tf
+                    : "More"}
+                  ▾
+                </button>
               </div>
 
-              {/* MA legend values */}
-              {showMA && (() => {
+              {/* MA legend when MA active */}
+              {activeIndicators.includes("ma") && (() => {
                 const ma = computeMALegend(candles as any);
                 return (
                   <div style={S.maLegend}>
@@ -959,18 +1199,112 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 );
               })()}
 
+              {/* Candle OHLC from crosshair */}
+              {candleInfo && (
+                <div style={S.maLegend}>
+                  <span>O {formatPrice(candleInfo.open)}</span>
+                  <span>H {formatPrice(candleInfo.high)}</span>
+                  <span>L {formatPrice(candleInfo.low)}</span>
+                  <span
+                    style={{
+                      color:
+                        candleInfo.changePct != null && candleInfo.changePct >= 0
+                          ? "#14c982"
+                          : "#f23645",
+                    }}
+                  >
+                    C {formatPrice(candleInfo.close)}
+                    {candleInfo.changePct != null
+                      ? ` (${candleInfo.changePct >= 0 ? "+" : ""}${candleInfo.changePct.toFixed(2)}%)`
+                      : ""}
+                  </span>
+                  <span style={{ color: "#848e9c" }}>
+                    Vol {candleInfo.volume.toFixed(3)}
+                  </span>
+                </div>
+              )}
+
+              {/* Drawing toolbar — only when enabled */}
+              {showDrawBar && (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 4,
+                    overflowX: "auto",
+                    padding: "6px 8px",
+                    background: "#111",
+                    borderBottom: "1px solid #1a1a1a",
+                    WebkitOverflowScrolling: "touch",
+                  }}
+                >
+                  {(
+                    [
+                      ["trend", "╱"],
+                      ["ray", "↗"],
+                      ["hline", "─"],
+                      ["vline", "│"],
+                      ["fib", "Fib"],
+                      ["rect", "▭"],
+                      ["circle", "○"],
+                      ["brush", "✎"],
+                      ["measure", "↔"],
+                      ["arrow", "→"],
+                      ["text", "T"],
+                      ["eraser", "⌫"],
+                    ] as [DrawingTool, string][]
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      style={{
+                        ...S.indChip,
+                        minWidth: 36,
+                        ...(drawingTool === id ? S.indChipOn : {}),
+                      }}
+                      onClick={() =>
+                        setDrawingTool((t) => (t === id ? "none" : id))
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    style={S.indChip}
+                    onClick={() => chartApiRef.current?.clearDrawings()}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    style={S.indChip}
+                    onClick={() => {
+                      setShowDrawBar(false);
+                      setDrawingTool("none");
+                    }}
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+
               {/* Candlestick chart */}
               <div style={S.chartBox}>
                 {candles.length > 0 ? (
                   <TradingChart
+                    ref={chartApiRef}
                     candles={candles as any}
-                    height={Math.min(
-                      420,
-                      typeof window !== "undefined"
-                        ? Math.round(window.innerHeight * 0.42)
-                        : 380,
-                    )}
-                    showMA={showMA}
+                    height={chartHeight}
+                    activeIndicators={activeIndicators}
+                    chartStyle={chartStyle}
+                    display={chartDisplay}
+                    drawingTool={drawingTool}
+                    intervalSec={intervalToSeconds(tf)}
+                    onCandleInfo={setCandleInfo}
+                    avgBuy={showAvgBuyOnChart ? avgFills.avgBuy : null}
+                    avgSell={showAvgSellOnChart ? avgFills.avgSell : null}
+                    tradeMarkers={tradeMarkers}
+                    openOrderLevels={openOrderLevels}
                   />
                 ) : (
                   <div style={S.chartEmpty}>
@@ -981,40 +1315,96 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 )}
               </div>
 
-              {/* Indicator row — only MA is wired; others are honest "soon" */}
+              {/* Chart tool row: pen / settings / date / others */}
+              <div style={S.indRow}>
+                <button
+                  type="button"
+                  style={{
+                    ...S.indChip,
+                    ...(showDrawBar ? S.indChipOn : {}),
+                  }}
+                  onClick={() => {
+                    setShowDrawBar((v) => !v);
+                    if (showDrawBar) setDrawingTool("none");
+                  }}
+                  title="Drawing tools"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  style={S.indChip}
+                  onClick={() => setShowChartSettings(true)}
+                  title="Chart settings"
+                >
+                  ⚙
+                </button>
+                <button
+                  type="button"
+                  style={S.indChip}
+                  onClick={() => {
+                    const now = new Date();
+                    setJumpDate(now.toISOString().slice(0, 10));
+                    setJumpTime(
+                      `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+                    );
+                    setShowDateJump(true);
+                  }}
+                  title="Jump to date"
+                >
+                  📅
+                </button>
+                <button
+                  type="button"
+                  style={S.indChip}
+                  onClick={() => setShowOthers(true)}
+                  title="Chart style"
+                >
+                  ▤
+                </button>
+              </div>
+
+              {/* Indicator row — all calculate from real candle data */}
               <div style={S.indRow}>
                 {(
                   [
-                    { id: "ma", label: "MA", supported: true },
-                    { id: "ema", label: "EMA", supported: false },
-                    { id: "boll", label: "BOLL", supported: false },
-                    { id: "sar", label: "SAR", supported: false },
-                    { id: "mavol", label: "MAVOL", supported: false },
-                    { id: "macd", label: "MACD", supported: false },
-                    { id: "kdj", label: "KDJ", supported: false },
-                    { id: "rsi", label: "RSI", supported: false },
-                    { id: "wr", label: "WR", supported: false },
-                  ] as const
-                ).map((ind) => (
-                  <button
-                    key={ind.id}
-                    type="button"
-                    style={{
-                      ...S.indChip,
-                      ...(ind.id === "ma" && showMA ? S.indChipOn : {}),
-                      ...(!ind.supported ? { opacity: 0.45 } : {}),
-                    }}
-                    onClick={() => {
-                      if (ind.id === "ma") setShowMA((v) => !v);
-                      else {
-                        setNotice(`${ind.label} indicator is coming soon.`);
-                        setNoticeOk(false);
-                      }
-                    }}
-                  >
-                    {ind.label}
-                  </button>
-                ))}
+                    { id: "ma" as IndicatorId, label: "MA" },
+                    { id: "ema" as IndicatorId, label: "EMA" },
+                    { id: "boll" as IndicatorId, label: "BOLL" },
+                    { id: "sar" as IndicatorId, label: "SAR" },
+                    { id: "mavol" as IndicatorId, label: "MAVOL" },
+                    { id: "macd" as IndicatorId, label: "MACD" },
+                    { id: "kdj" as IndicatorId, label: "KDJ" },
+                    { id: "rsi" as IndicatorId, label: "RSI" },
+                    { id: "wr" as IndicatorId, label: "WR" },
+                  ]
+                ).map((ind) => {
+                  const on = activeIndicators.includes(ind.id);
+                  return (
+                    <button
+                      key={ind.id}
+                      type="button"
+                      style={{
+                        ...S.indChip,
+                        ...(on ? S.indChipOn : {}),
+                      }}
+                      onClick={() => {
+                        setActiveIndicators((prev) => {
+                          if (prev.includes(ind.id)) {
+                            const next = prev.filter((x) => x !== ind.id);
+                            setShowMA(next.includes("ma"));
+                            return next;
+                          }
+                          const next = [...prev, ind.id];
+                          setShowMA(next.includes("ma"));
+                          return next;
+                        });
+                      }}
+                    >
+                      {ind.label}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Order Book | Trades under chart */}
@@ -1630,14 +2020,32 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                             {o.amount} · {o.status}
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          style={S.cancelBtn}
-                          disabled={cancellingId === o.id}
-                          onClick={() => void cancelOrder(o.id)}
-                        >
-                          {cancellingId === o.id ? "…" : "Cancel"}
-                        </button>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {(o.order_type || "").toLowerCase() !== "market" && (
+                            <button
+                              type="button"
+                              style={S.cancelBtn}
+                              disabled={cancellingId === o.id}
+                              onClick={() => {
+                                setModifyTarget(o);
+                                setModifyPrice(
+                                  o.price != null ? String(o.price) : "",
+                                );
+                                setModifyAmount(String(o.amount ?? ""));
+                              }}
+                            >
+                              Modify
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            style={S.cancelBtn}
+                            disabled={cancellingId === o.id}
+                            onClick={() => void cancelOrder(o.id)}
+                          >
+                            {cancellingId === o.id ? "…" : "Cancel"}
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </>
@@ -1771,6 +2179,421 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
         </div>
       )}
 
+      {/* Modify order sheet — real bybit-private amend */}
+      {modifyTarget && (
+        <div
+          style={S.sheet}
+          onClick={() => {
+            if (cancellingId !== modifyTarget.id) setModifyTarget(null);
+          }}
+        >
+          <div style={S.sheetCard} onClick={(e) => e.stopPropagation()}>
+            <div style={S.sheetTitle}>Modify order</div>
+            <div style={{ fontSize: 13, color: "#848e9c", marginBottom: 12 }}>
+              {(modifyTarget.side || "").toUpperCase()}{" "}
+              {modifyTarget.order_type} · {modifyTarget.trading_pair}
+            </div>
+            <label style={{ display: "block", fontSize: 12, color: "#848e9c" }}>
+              Price
+            </label>
+            <input
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                margin: "6px 0 12px",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid #333",
+                background: "#1a1a1a",
+                color: "#eee",
+                fontSize: 15,
+              }}
+              inputMode="decimal"
+              value={modifyPrice}
+              onChange={(e) => setModifyPrice(e.target.value)}
+            />
+            <label style={{ display: "block", fontSize: 12, color: "#848e9c" }}>
+              Amount
+            </label>
+            <input
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                margin: "6px 0 16px",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid #333",
+                background: "#1a1a1a",
+                color: "#eee",
+                fontSize: 15,
+              }}
+              inputMode="decimal"
+              value={modifyAmount}
+              onChange={(e) => setModifyAmount(e.target.value)}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                style={{
+                  ...S.tfChip,
+                  flex: 1,
+                  justifyContent: "center",
+                  padding: 12,
+                }}
+                disabled={cancellingId === modifyTarget.id}
+                onClick={() => setModifyTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  border: 0,
+                  borderRadius: 10,
+                  background: "#f0b90b",
+                  color: "#111",
+                  fontWeight: 700,
+                  padding: 12,
+                  cursor: "pointer",
+                  opacity: cancellingId === modifyTarget.id ? 0.6 : 1,
+                }}
+                disabled={cancellingId === modifyTarget.id}
+                onClick={async () => {
+                  const px = Number(modifyPrice);
+                  const amt = Number(modifyAmount);
+                  const ok = await modifyOrder(
+                    modifyTarget.id,
+                    px,
+                    Number.isFinite(amt) && amt > 0 ? amt : undefined,
+                  );
+                  if (ok) setModifyTarget(null);
+                }}
+              >
+                {cancellingId === modifyTarget.id ? "…" : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chart Settings — real toggles */}
+      {showChartSettings && (
+        <div style={S.sheet} onClick={() => setShowChartSettings(false)}>
+          <div
+            style={{ ...S.sheetCard, maxHeight: "85vh", overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={S.sheetTitle}>Chart Settings</div>
+            <div style={{ color: "#848e9c", fontSize: 12, marginBottom: 8 }}>
+              Chart Display
+            </div>
+            {(
+              [
+                ["lastTradedPrice", "Last Traded Price"],
+                ["grid", "Grid"],
+                ["maxPrice", "Max Price"],
+                ["minPrice", "Min Price"],
+                ["countdown", "Countdown"],
+              ] as [keyof ChartDisplaySettings, string][]
+            ).map(([key, label]) => (
+              <label
+                key={key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 0",
+                  borderBottom: "1px solid #1a1a1a",
+                  fontSize: 14,
+                }}
+              >
+                {label}
+                <input
+                  type="checkbox"
+                  checked={chartDisplay[key]}
+                  onChange={(e) =>
+                    setChartDisplay((d) => ({ ...d, [key]: e.target.checked }))
+                  }
+                />
+              </label>
+            ))}
+            <div
+              style={{
+                color: "#848e9c",
+                fontSize: 12,
+                margin: "14px 0 8px",
+              }}
+            >
+              Order Display (from your real orders)
+            </div>
+            {(
+              [
+                [
+                  showTradeHistoryOnChart,
+                  setShowTradeHistoryOnChart,
+                  "Trade History markers",
+                ],
+                [
+                  showCurrentOrdersOnChart,
+                  setShowCurrentOrdersOnChart,
+                  "Current Orders levels",
+                ],
+                [
+                  showAvgBuyOnChart,
+                  setShowAvgBuyOnChart,
+                  `Avg. Buy${avgFills.avgBuy != null ? ` (${formatPrice(avgFills.avgBuy)})` : " (no fills)"}`,
+                ],
+                [
+                  showAvgSellOnChart,
+                  setShowAvgSellOnChart,
+                  `Avg. Sell${avgFills.avgSell != null ? ` (${formatPrice(avgFills.avgSell)})` : " (no fills)"}`,
+                ],
+              ] as [boolean, (v: boolean) => void, string][]
+            ).map(([checked, set, label], i) => (
+              <label
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 0",
+                  borderBottom: "1px solid #1a1a1a",
+                  fontSize: 14,
+                }}
+              >
+                {label}
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => set(e.target.checked)}
+                />
+              </label>
+            ))}
+            <div
+              style={{
+                color: "#666",
+                fontSize: 11,
+                marginTop: 8,
+                lineHeight: 1.4,
+              }}
+            >
+              Place / Cancel / Modify use bybit-private. Chart open-order
+              levels refresh from live orders after modify. Customize
+              Buy/Sell Mode still needs a product decision.
+            </div>
+            <div
+              style={{
+                color: "#848e9c",
+                fontSize: 12,
+                margin: "14px 0 8px",
+              }}
+            >
+              Chart Height
+            </div>
+            <input
+              type="range"
+              min={240}
+              max={560}
+              step={10}
+              value={chartHeight}
+              onChange={(e) => setChartHeight(Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+            <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+              {chartHeight}px
+            </div>
+            <button
+              type="button"
+              style={{
+                ...S.tfChip,
+                marginTop: 16,
+                width: "100%",
+                justifyContent: "center",
+                padding: 12,
+              }}
+              onClick={() => setShowChartSettings(false)}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Jump to Date — real viewport jump on loaded candles */}
+      {showDateJump && (
+        <div style={S.sheet} onClick={() => setShowDateJump(false)}>
+          <div style={S.sheetCard} onClick={(e) => e.stopPropagation()}>
+            <div style={S.sheetTitle}>Jump to Date</div>
+            <div style={{ color: "#848e9c", fontSize: 12, marginBottom: 8 }}>
+              Select Date
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input
+                type="date"
+                value={jumpDate}
+                onChange={(e) => setJumpDate(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: "#1a1a1a",
+                  border: "1px solid #333",
+                  color: "#eee",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                }}
+              />
+              <input
+                type="time"
+                value={jumpTime}
+                onChange={(e) => setJumpTime(e.target.value)}
+                style={{
+                  width: 110,
+                  background: "#1a1a1a",
+                  border: "1px solid #333",
+                  color: "#eee",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                style={{
+                  ...S.tfChip,
+                  flex: 1,
+                  justifyContent: "center",
+                  padding: 12,
+                }}
+                onClick={() => {
+                  chartApiRef.current?.resetView();
+                  setShowDateJump(false);
+                }}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  border: 0,
+                  borderRadius: 10,
+                  background: "#f0b90b",
+                  color: "#111",
+                  fontWeight: 700,
+                  padding: 12,
+                  cursor: "pointer",
+                }}
+                onClick={async () => {
+                  const iso = `${jumpDate}T${jumpTime}:00`;
+                  // Always try to load real historical klines around the target
+                  setNotice("Loading historical candles…");
+                  setNoticeOk(true);
+                  const loaded = await loadHistoryAround(iso);
+                  // Give React a tick to push new candles into the chart
+                  await new Promise((r) => setTimeout(r, 120));
+                  const ok = chartApiRef.current?.jumpToDate(iso);
+                  if (!ok && !loaded) {
+                    setNotice(
+                      "Could not load candles for that date from Bybit. Try another date or timeframe.",
+                    );
+                    setNoticeOk(false);
+                  } else {
+                    setNotice(
+                      loaded
+                        ? "Jumped to selected date (historical data loaded)."
+                        : "Jumped within already-loaded candles.",
+                    );
+                    setNoticeOk(true);
+                  }
+                  setShowDateJump(false);
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Others — chart style (real) */}
+      {showOthers && (
+        <div style={S.sheet} onClick={() => setShowOthers(false)}>
+          <div style={S.sheetCard} onClick={(e) => e.stopPropagation()}>
+            <div style={S.sheetTitle}>Chart Style</div>
+            {(
+              [
+                ["candlestick", "Candlestick"],
+                ["line", "Line"],
+              ] as [ChartStyle, string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                style={{
+                  display: "flex",
+                  width: "100%",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "12px 0",
+                  border: 0,
+                  borderBottom: "1px solid #1a1a1a",
+                  background: "transparent",
+                  color: "#eee",
+                  fontSize: 14,
+                  cursor: "pointer",
+                }}
+                onClick={() => {
+                  setChartStyle(id);
+                  setShowOthers(false);
+                }}
+              >
+                {label}
+                {chartStyle === id ? (
+                  <span style={{ color: "#f0b90b" }}>✓</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Timeframe More sheet — real intervals only */}
+      {showMoreTf && (
+        <div style={S.sheet} onClick={() => setShowMoreTf(false)}>
+          <div style={S.sheetCard} onClick={(e) => e.stopPropagation()}>
+            <div style={S.sheetTitle}>Select timeframe</div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 8,
+                padding: "8px 0 12px",
+              }}
+            >
+              {TFS_ALL.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  style={{
+                    ...S.tfChip,
+                    padding: "10px 0",
+                    justifyContent: "center",
+                    ...(tf === t ? S.tfActive : {}),
+                  }}
+                  onClick={() => {
+                    setTf(t);
+                    setShowMoreTf(false);
+                  }}
+                >
+                  {t === "1d" ? "1D" : t === "1w" ? "1W" : t === "1M" ? "1M" : t}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pair sheet */}
       {showPairs && (
         <div style={S.sheet} onClick={() => setShowPairs(false)}>
@@ -1879,7 +2702,8 @@ const S: Record<string, CSSProperties> = {
     maxWidth: 480,
     margin: "0 auto",
     overflowX: "hidden",
-    paddingBottom: 0,
+    // Extra bottom space so fixed Buy/Sell never covers last rows
+    paddingBottom: 72,
   },
   header: {
     display: "flex",
@@ -2108,8 +2932,9 @@ const S: Record<string, CSSProperties> = {
     overflowY: "auto",
     overflowX: "hidden",
     WebkitOverflowScrolling: "touch",
-    // Space for fixed Buy/Sell bar (~76px)
-    paddingBottom: 88,
+    background: "#0a0a0a",
+    // Space for fixed compact Buy/Sell bar
+    paddingBottom: 64,
   },
   chartMainTabs: {
     display: "flex",
@@ -2271,9 +3096,9 @@ const S: Record<string, CSSProperties> = {
   chartBuySellBar: {
     display: "flex",
     alignItems: "center",
-    gap: 10,
-    padding: "12px 14px",
-    paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+    gap: 8,
+    padding: "8px 12px",
+    paddingBottom: "max(8px, env(safe-area-inset-bottom))",
     borderTop: "1px solid #1a1a1a",
     background: "#0a0a0a",
     position: "fixed",
@@ -2288,40 +3113,40 @@ const S: Record<string, CSSProperties> = {
   chartBuyBtn: {
     flex: 1,
     border: 0,
-    borderRadius: 24,
+    borderRadius: 22,
     background: "#14c982",
     color: "#fff",
-    fontWeight: 800,
-    fontSize: 16,
-    padding: "14px 10px",
-    minHeight: 52,
+    fontWeight: 700,
+    fontSize: 14,
+    padding: "8px 8px 6px",
+    minHeight: 44,
     cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 2,
+    gap: 1,
   },
   chartSellBtn: {
     flex: 1,
     border: 0,
-    borderRadius: 24,
+    borderRadius: 22,
     background: "#f23645",
     color: "#fff",
-    fontWeight: 800,
-    fontSize: 16,
-    padding: "14px 10px",
-    minHeight: 52,
+    fontWeight: 700,
+    fontSize: 14,
+    padding: "8px 8px 6px",
+    minHeight: 44,
     cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 2,
+    gap: 1,
   },
   chartBuySellPrice: {
-    fontSize: 12,
-    fontWeight: 700,
+    fontSize: 11,
+    fontWeight: 600,
     opacity: 0.95,
   },
   chartQtyMid: {
