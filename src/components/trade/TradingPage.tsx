@@ -848,6 +848,7 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
       {/* ── Chart view (matches reference video structure) ── */}
       {viewMode === "chart" && (
         <section style={S.chartZone} className="ceo-fade-in">
+          <div style={S.chartScroll}>
           {/* Chart | Overview tabs */}
           <div style={S.chartMainTabs}>
             {(
@@ -963,7 +964,12 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 {candles.length > 0 ? (
                   <TradingChart
                     candles={candles as any}
-                    height={320}
+                    height={Math.min(
+                      420,
+                      typeof window !== "undefined"
+                        ? Math.round(window.innerHeight * 0.42)
+                        : 380,
+                    )}
                     showMA={showMA}
                   />
                 ) : (
@@ -1132,40 +1138,52 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
                 </div>
               )}
 
-              {/* Sticky Buy / Sell bar matching reference */}
-              <div style={S.chartBuySellBar}>
-                <button
-                  type="button"
-                  style={S.chartBuyBtn}
-                  onClick={() => {
-                    setSide("buy");
-                    setViewMode("terminal");
-                  }}
-                >
-                  Buy
-                  <span style={S.chartBuySellPrice}>
-                    {ask != null ? formatPrice(ask) : last != null ? formatPrice(last) : "—"}
-                  </span>
-                </button>
-                <div style={S.chartQtyMid}>
-                  <div style={{ fontSize: 10, color: "#666" }}>Quantity</div>
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{base}</div>
-                </div>
-                <button
-                  type="button"
-                  style={S.chartSellBtn}
-                  onClick={() => {
-                    setSide("sell");
-                    setViewMode("terminal");
-                  }}
-                >
-                  Sell
-                  <span style={S.chartBuySellPrice}>
-                    {bid != null ? formatPrice(bid) : last != null ? formatPrice(last) : "—"}
-                  </span>
-                </button>
-              </div>
             </>
+          )}
+          </div>
+
+          {/* Fixed bottom Buy / Sell — always visible, does not scroll away */}
+          {chartTab === "chart" && (
+            <div style={S.chartBuySellBar}>
+              <button
+                type="button"
+                style={S.chartBuyBtn}
+                onClick={() => {
+                  setSide("buy");
+                  setViewMode("terminal");
+                }}
+              >
+                Buy
+                <span style={S.chartBuySellPrice}>
+                  {ask != null
+                    ? formatPrice(ask)
+                    : last != null
+                      ? formatPrice(last)
+                      : "—"}
+                </span>
+              </button>
+              <div style={S.chartQtyMid}>
+                <div style={{ fontSize: 10, color: "#666" }}>Quantity</div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{base}</div>
+              </div>
+              <button
+                type="button"
+                style={S.chartSellBtn}
+                onClick={() => {
+                  setSide("sell");
+                  setViewMode("terminal");
+                }}
+              >
+                Sell
+                <span style={S.chartBuySellPrice}>
+                  {bid != null
+                    ? formatPrice(bid)
+                    : last != null
+                      ? formatPrice(last)
+                      : "—"}
+                </span>
+              </button>
+            </div>
           )}
         </section>
       )}
@@ -1853,15 +1871,15 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
 
 const S: Record<string, CSSProperties> = {
   page: {
-    minHeight: "100vh",
+    minHeight: "100dvh",
     background: "#0a0a0a",
     color: "#eee",
     fontFamily:
       "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-    paddingBottom: "env(safe-area-inset-bottom)",
     maxWidth: 480,
     margin: "0 auto",
     overflowX: "hidden",
+    paddingBottom: 0,
   },
   header: {
     display: "flex",
@@ -2077,8 +2095,21 @@ const S: Record<string, CSSProperties> = {
     textAlign: "left",
   },
   chartZone: {
-    padding: "0 0 12px",
+    display: "flex",
+    flexDirection: "column",
+    flex: 1,
+    minHeight: 0,
+    padding: 0,
     borderBottom: "1px solid #141414",
+  },
+  chartScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    WebkitOverflowScrolling: "touch",
+    // Space for fixed Buy/Sell bar (~76px)
+    paddingBottom: 88,
   },
   chartMainTabs: {
     display: "flex",
@@ -2240,47 +2271,57 @@ const S: Record<string, CSSProperties> = {
   chartBuySellBar: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "10px 12px",
+    gap: 10,
+    padding: "12px 14px",
+    paddingBottom: "max(12px, env(safe-area-inset-bottom))",
     borderTop: "1px solid #1a1a1a",
     background: "#0a0a0a",
-    position: "sticky",
+    position: "fixed",
+    left: 0,
+    right: 0,
     bottom: 0,
-    zIndex: 10,
+    maxWidth: 480,
+    margin: "0 auto",
+    zIndex: 40,
+    boxSizing: "border-box",
   },
   chartBuyBtn: {
     flex: 1,
     border: 0,
-    borderRadius: 20,
+    borderRadius: 24,
     background: "#14c982",
     color: "#fff",
     fontWeight: 800,
-    fontSize: 14,
-    padding: "12px 8px",
+    fontSize: 16,
+    padding: "14px 10px",
+    minHeight: 52,
     cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
+    justifyContent: "center",
     gap: 2,
   },
   chartSellBtn: {
     flex: 1,
     border: 0,
-    borderRadius: 20,
+    borderRadius: 24,
     background: "#f23645",
     color: "#fff",
     fontWeight: 800,
-    fontSize: 14,
-    padding: "12px 8px",
+    fontSize: 16,
+    padding: "14px 10px",
+    minHeight: 52,
     cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
+    justifyContent: "center",
     gap: 2,
   },
   chartBuySellPrice: {
-    fontSize: 11,
-    fontWeight: 600,
+    fontSize: 12,
+    fontWeight: 700,
     opacity: 0.95,
   },
   chartQtyMid: {

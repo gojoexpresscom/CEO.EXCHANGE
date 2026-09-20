@@ -127,7 +127,9 @@ export default function TradingChart({
       },
       rightPriceScale: {
         borderColor: "#1e222d",
-        scaleMargins: { top: 0.06, bottom: 0.2 },
+        scaleMargins: { top: 0.08, bottom: 0.22 },
+        // Starts auto; drag the right price labels → vertical zoom
+        // (TradingView-style: candles expand/contract in price)
         autoScale: true,
         entireTextOnly: false,
         visible: true,
@@ -137,10 +139,10 @@ export default function TradingChart({
         borderColor: "#1e222d",
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 8,
-        barSpacing: 9,
-        minBarSpacing: 2,
-        maxBarSpacing: 28,
+        rightOffset: 10,
+        barSpacing: 10,
+        minBarSpacing: 2.5,
+        maxBarSpacing: 32,
         fixLeftEdge: false,
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: false,
@@ -153,10 +155,16 @@ export default function TradingChart({
         vertTouchDrag: false,
       },
       handleScale: {
+        // Price axis drag → vertical price zoom
+        // Time axis drag / pinch → horizontal candle zoom
         axisPressedMouseMove: { time: true, price: true },
         axisDoubleClickReset: { time: true, price: true },
         mouseWheel: true,
         pinch: true,
+      },
+      kineticScroll: {
+        touch: true,
+        mouse: false,
       },
     });
 
@@ -177,7 +185,7 @@ export default function TradingChart({
 
     chart.priceScale("right").applyOptions({
       autoScale: true,
-      scaleMargins: { top: 0.06, bottom: 0.2 },
+      scaleMargins: { top: 0.08, bottom: 0.22 },
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
