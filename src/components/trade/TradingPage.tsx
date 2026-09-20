@@ -811,16 +811,16 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
               aria-label="Chart view"
               aria-pressed={viewMode === "chart"}
             >
-              {/* Candlestick icon */}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+              {/* Candlestick — bold */}
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
                 <path
-                  d="M4.5 2v2.5M4.5 11.5V14M11.5 3.5V5M11.5 10V12.5"
+                  d="M5 1.5v3M5 13.5V16.5M13 2.5v2.5M13 12.5V15.5"
                   stroke="currentColor"
-                  strokeWidth="1.4"
+                  strokeWidth="2"
                   strokeLinecap="round"
                 />
-                <rect x="3.2" y="4.5" width="2.6" height="7" rx="0.6" fill="currentColor" />
-                <rect x="10.2" y="5" width="2.6" height="5" rx="0.6" fill="currentColor" />
+                <rect x="3.5" y="4.5" width="3" height="9" rx="0.8" fill="currentColor" />
+                <rect x="11.5" y="5" width="3" height="7.5" rx="0.8" fill="currentColor" />
               </svg>
             </button>
             <button
@@ -833,23 +833,20 @@ export default function TradingPage({ symbol: propSymbol, onBack, onRequireAuth 
               aria-label="Order book view"
               aria-pressed={viewMode === "terminal"}
             >
-              {/* Order book / list icon */}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+              {/* Order book depth — bold rounded card with horizontal bars */}
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
                 <rect
-                  x="2.5"
-                  y="2.5"
-                  width="11"
-                  height="11"
-                  rx="1.5"
+                  x="2"
+                  y="2"
+                  width="14"
+                  height="14"
+                  rx="2.2"
                   stroke="currentColor"
-                  strokeWidth="1.4"
+                  strokeWidth="2"
                 />
-                <path
-                  d="M5 5.5h6M5 8h6M5 10.5h4"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinecap="round"
-                />
+                <rect x="4.5" y="5" width="9" height="1.8" rx="0.6" fill="currentColor" />
+                <rect x="4.5" y="8.1" width="9" height="1.8" rx="0.6" fill="currentColor" />
+                <rect x="4.5" y="11.2" width="6" height="1.8" rx="0.6" fill="currentColor" />
               </svg>
             </button>
           </div>
@@ -1670,17 +1667,17 @@ const S: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     background: "#141416",
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 3,
-    gap: 2,
+    gap: 1,
     border: "none",
-    height: 32,
+    height: 34,
   },
   segBtn: {
-    width: 34,
-    height: 26,
+    width: 36,
+    height: 28,
     border: 0,
-    borderRadius: 14,
+    borderRadius: 15,
     background: "transparent",
     color: "#6b6b6b",
     cursor: "pointer",
@@ -1693,7 +1690,7 @@ const S: Record<string, CSSProperties> = {
   },
   segBtnOn: {
     background: "#2c2c30",
-    color: "#f0f0f0",
+    color: "#ffffff",
   },
   liveDot: {
     width: 6,
