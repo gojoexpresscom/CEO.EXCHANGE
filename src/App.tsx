@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
-import LandingPage from "./components/landing/LandingPage";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
 import TradeHubPage from "./components/trade/TradeHubPage";
@@ -352,8 +351,19 @@ export default function App() {
   }
 
   if (!authenticated) {
+    // Guest: same Home shell as logged-in users (markets, layout).
+    // Get Started / login-required actions open existing AuthScreen.
     if (!showAuthGate) {
-      return <LandingPage onGetStarted={() => setShowAuthGate(true)} />;
+      return (
+        <Home
+          guestMode
+          onRequireAuth={() => setShowAuthGate(true)}
+          onTrade={() => setShowAuthGate(true)}
+          onP2P={() => setShowAuthGate(true)}
+          onExperience={() => setShowAuthGate(true)}
+          onNavigate={() => setShowAuthGate(true)}
+        />
+      );
     }
     return (
       <AuthScreen
@@ -470,4 +480,3 @@ export default function App() {
     </>
   );
 }
- 
