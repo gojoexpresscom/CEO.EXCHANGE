@@ -166,5 +166,4 @@ export class BybitProvider implements ExecutionProvider {
     // Optional; not required for place/cancel/modify circuit.
     return this.notConfigured("reconcile");
   }
-      }
-
+}

@@ -60,4 +60,3 @@ export class EternaProvider implements ExecutionProvider {
     return this.notConfigured("reconcile");
   }
 }
-
