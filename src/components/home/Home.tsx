@@ -290,7 +290,7 @@ type Comment = {
   profile?: Pick<Profile, "nickname" | "profile_picture_url">;
 };
 
-type Modal = "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "services" | "post" | "announcement" | "messages" | "profile" | "promo" | null;
+type Modal = "guestMenu" | "deposit" | "withdraw" | "notifications" | "support" | "invite" | "rewards" | "giveaway" | "menu" | "services" | "post" | "announcement" | "messages" | "profile" | "promo" | null;
 type NotificationTab = "Announcements" | "Transactions" | "Security/Login";
 type FeedTab = "CEO" | "Following" | "Campaign" | "Announcements";
 type MarketTab = "Hot" | "New" | "Gainers" | "Losers" | "Favorites";
@@ -1616,11 +1616,11 @@ function Home({
               ? styles.guestLoginBtn
               : styles.profileBtn
           }
-          onClick={() => (guestMode || !userId ? requireAuth() : setModal("menu"))}
-          aria-label={guestMode || !userId ? "Log in" : "Profile"}
+          onClick={() => (guestMode || !userId ? setModal("guestMenu") : setModal("menu"))}
+          aria-label={guestMode || !userId ? "Account" : "Profile"}
         >
           {guestMode || !userId ? (
-            <span style={{ fontSize: 12, fontWeight: 800, color: "#f5b51b" }}>Log in</span>
+            <span style={{ fontSize: 18, opacity: 0.85 }} aria-hidden="true">👤</span>
           ) : (
             <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
           )}
@@ -1956,6 +1956,44 @@ function Home({
           }}
         />
       )}
+      {modal === "guestMenu" && (
+        <div style={styles.guestMenuOverlay} className="ceo-overlay" onClick={closeModal}>
+          <div style={styles.guestMenuSheet} className="ceo-sheet" onClick={(e) => e.stopPropagation()}>
+            <button type="button" style={styles.guestMenuClose} onClick={closeModal} aria-label="Close">
+              ←
+            </button>
+            <h2 style={styles.guestMenuTitle}>Welcome to CEO Exchange</h2>
+            <p style={styles.guestMenuSub}>Please log in or sign up for a new account</p>
+            <div style={styles.guestMenuActions}>
+              <button
+                type="button"
+                style={styles.guestMenuSecondary}
+                onClick={() => {
+                  closeModal();
+                  requireAuth();
+                }}
+              >
+                Sign Up
+              </button>
+              <button
+                type="button"
+                style={styles.guestMenuPrimary}
+                onClick={() => {
+                  closeModal();
+                  requireAuth();
+                }}
+              >
+                Log In
+              </button>
+            </div>
+            <div style={styles.guestMenuDivider} />
+            <button type="button" style={styles.guestMenuRow} onClick={() => { closeModal(); setModal("support"); }}>
+              Contact Support <span>›</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {modal === "menu" && (
         <UserCenter
           profile={profile}
@@ -4181,6 +4219,92 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#111",
     background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
     cursor: "pointer",
+  },
+  guestMenuOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 1200,
+    background: "rgba(0,0,0,0.55)",
+    display: "flex",
+    alignItems: "stretch",
+    justifyContent: "flex-end",
+  },
+  guestMenuSheet: {
+    width: "min(100%, 380px)",
+    height: "100%",
+    background: "#0a0a0a",
+    padding: "16px 18px 28px",
+    boxSizing: "border-box" as const,
+    overflowY: "auto" as const,
+    borderLeft: "1px solid #1c1c1c",
+  },
+  guestMenuClose: {
+    border: 0,
+    background: "#1a1a1a",
+    color: "#fff",
+    width: 36,
+    height: 36,
+    borderRadius: "50%",
+    fontSize: 16,
+    cursor: "pointer",
+    marginBottom: 20,
+  },
+  guestMenuTitle: {
+    margin: "0 0 6px",
+    fontSize: 24,
+    fontWeight: 800,
+    color: "#fff",
+  },
+  guestMenuSub: {
+    margin: "0 0 18px",
+    fontSize: 13,
+    color: "#8a8a8a",
+  },
+  guestMenuActions: {
+    display: "flex",
+    gap: 10,
+    marginBottom: 20,
+  },
+  guestMenuSecondary: {
+    flex: 1,
+    border: "1px solid #2a2a2a",
+    background: "#161616",
+    color: "#eee",
+    borderRadius: 12,
+    padding: "12px 10px",
+    fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  guestMenuPrimary: {
+    flex: 1,
+    border: 0,
+    background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
+    color: "#111",
+    borderRadius: 12,
+    padding: "12px 10px",
+    fontWeight: 800,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  guestMenuDivider: {
+    height: 1,
+    background: "#1c1c1c",
+    margin: "8px 0 12px",
+  },
+  guestMenuRow: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    border: 0,
+    background: "transparent",
+    color: "#ddd",
+    padding: "14px 0",
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "pointer",
+    borderBottom: "1px solid #151515",
   },
   guestLoginBtn: {
     border: "1px solid rgba(245,181,27,0.4)",
