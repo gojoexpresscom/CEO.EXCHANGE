@@ -465,12 +465,18 @@ function Home({
   onP2P,
   onExperience,
   onNavigate,
+  guestMode = false,
+  onRequireAuth,
 }: {
   onLogout?: () => void;
   onTrade: (symbol: string) => void;
   onP2P?: () => void;
   onExperience?: () => void;
   onNavigate?: (page: NavPage) => void;
+  /** When true, show the normal Home shell without requiring a session. */
+  guestMode?: boolean;
+  /** Guest taps that need an account (Get Started, Deposit, etc.). */
+  onRequireAuth?: () => void;
 }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -994,6 +1000,9 @@ function Home({
       if (id) {
         bootstrapped = true;
         void loadAll(id);
+      } else {
+        // Guest / logged-out: do not block Home shell on profile load
+        setLoading(false);
       }
     });
 
@@ -1035,10 +1044,10 @@ function Home({
   // public WebSocket via useBybitTickers below, which has its own
   // reconnect/backoff handling independent of this component.
   useEffect(() => {
-    if (!userId) return;
+    if (!userId && !guestMode) return;
     const id = window.setInterval(() => { void loadTradingPairs(); }, 120000);
     return () => window.clearInterval(id);
-  }, [userId, loadTradingPairs]);
+  }, [userId, guestMode, loadTradingPairs]);
 
   // ---- Live Bybit market data for the Home market list ----
   // base+quote → Bybit spot symbol (e.g. BTC + USDT → BTCUSDT). Pure/local
@@ -1577,7 +1586,7 @@ function Home({
     pullStartY.current = null;
   };
 
-  if (!userId && loading) {
+  if (!userId && loading && !guestMode) {
     return (
       <div style={styles.brandedLoader}>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -1586,14 +1595,31 @@ function Home({
       </div>
     );
   }
-  if (!userId) return <div style={styles.center}>Please sign in to continue.</div>;
+  // Guest mode: render the same Home shell (markets, layout) without a session.
+  // Authenticated path still requires userId.
+  if (!userId && !guestMode) {
+    return <div style={styles.center}>Please sign in to continue.</div>;
+  }
+
+  const requireAuth = () => {
+    if (onRequireAuth) onRequireAuth();
+  };
 
   return (
     <div style={styles.page}>
       <style>{HOME_MOTION}</style>
       <header style={styles.header}>
-        <button type="button" style={styles.profileBtn} onClick={() => setModal("menu")} aria-label="Profile">
-          <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
+        <button
+          type="button"
+          style={styles.profileBtn}
+          onClick={() => (guestMode || !userId ? requireAuth() : setModal("menu"))}
+          aria-label={guestMode || !userId ? "Get Started" : "Profile"}
+        >
+          {guestMode || !userId ? (
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#f5b51b" }}>GO</span>
+          ) : (
+            <Avatar url={profile?.profile_picture_url} text={profile?.nickname || "U"} />
+          )}
         </button>
         <div style={styles.topSearch}>
           <Icon name="search" size={16} />
@@ -1610,6 +1636,18 @@ function Home({
           </button>
         </div>
       </header>
+
+      {(guestMode || !userId) && (
+        <div style={styles.guestBanner}>
+          <div style={styles.guestBannerText}>
+            <strong style={{ color: "#fff" }}>CEO Exchange</strong>
+            <span style={{ color: "#aaa", fontSize: 12 }}>Explore markets — sign in to trade</span>
+          </div>
+          <button type="button" style={styles.guestCta} onClick={requireAuth}>
+            Get Started
+          </button>
+        </div>
+      )}
 
       {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
 
@@ -4061,6 +4099,35 @@ const pd: Record<string, React.CSSProperties> = {
 function Stat({ label, value }: { label: string; value: React.ReactNode }) { return <div style={styles.stat}><span>{label}</span><b>{value}</b></div>; }
 
 const styles: Record<string, React.CSSProperties> = {
+  guestBanner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    margin: "0 12px 10px",
+    padding: "12px 14px",
+    borderRadius: 14,
+    background: "linear-gradient(135deg, rgba(245,181,27,0.14), rgba(20,16,8,0.9))",
+    border: "1px solid rgba(245,181,27,0.28)",
+  },
+  guestBannerText: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 2,
+    minWidth: 0,
+  },
+  guestCta: {
+    flexShrink: 0,
+    border: 0,
+    borderRadius: 10,
+    padding: "10px 14px",
+    fontWeight: 800,
+    fontSize: 13,
+    color: "#111",
+    background: "linear-gradient(180deg, #ffca3a, #f5b51b)",
+    cursor: "pointer",
+  },
+
   page: { minHeight: "100vh", background: BG, color: "#fff", paddingBottom: 82, fontFamily: "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", overflowX: "hidden" },
   header: { position: "sticky", top: 0, zIndex: 20, minHeight: 56, padding: "10px 14px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: 10, alignItems: "center", background: "rgba(5,5,5,.96)", backdropFilter: "blur(16px)", borderBottom: "1px solid #121212" },
   profileBtn: { border: 0, background: "transparent", padding: 0, cursor: "pointer", display: "grid", placeItems: "center" },
