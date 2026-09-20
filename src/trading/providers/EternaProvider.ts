@@ -1,18 +1,14 @@
 // src/trading/providers/EternaProvider.ts
 //
 // Placeholder for a possible future Eterna execution provider.
-//
-// This is only a future placeholder — it is intentionally UNCONFIGURED:
-//   - No API credentials.
-//   - No network calls.
-//   - No fake data.
-//   - No simulated orders or fills.
-//
-// Every operation throws a clear "not connected yet" error.
+// Intentionally UNCONFIGURED — no credentials, no network, no fake data.
 
 import type {
   CancelOrderParams,
+  CancelOrderResult,
   ExecutionProvider,
+  ModifyOrderParams,
+  ModifyOrderResult,
   PlaceOrderParams,
   PlaceOrderResult,
   ProviderCandle,
@@ -37,7 +33,10 @@ export class EternaProvider implements ExecutionProvider {
     return this.notConfigured("getTicker");
   }
 
-  async getCandles(_symbol: string, _timeframe: string): Promise<ProviderCandle[]> {
+  async getCandles(
+    _symbol: string,
+    _timeframe: string,
+  ): Promise<ProviderCandle[]> {
     return this.notConfigured("getCandles");
   }
 
@@ -49,11 +48,16 @@ export class EternaProvider implements ExecutionProvider {
     return this.notConfigured("placeOrder");
   }
 
-  async cancelOrder(_params: CancelOrderParams): Promise<Record<string, unknown>> {
+  async cancelOrder(_params: CancelOrderParams): Promise<CancelOrderResult> {
     return this.notConfigured("cancelOrder");
+  }
+
+  async modifyOrder(_params: ModifyOrderParams): Promise<ModifyOrderResult> {
+    return this.notConfigured("modifyOrder");
   }
 
   async reconcile(_params?: ReconcileParams): Promise<Record<string, unknown>> {
     return this.notConfigured("reconcile");
   }
 }
+
