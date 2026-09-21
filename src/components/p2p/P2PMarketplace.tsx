@@ -9,7 +9,8 @@ import {
 } from "../../lib/p2p-types";
 import P2POrdersPanel from "./P2POrdersPanel";
 import P2PAdsPanel from "./P2PAdsPanel";
-import P2PTradeDetail from "./P2PTradeDetail"; 
+import P2PTradeDetail from "./P2PTradeDetail";
+import P2PBuyOrder from "./P2PBuyOrder";
 
 type Props = {
   onBack?: () => void;
@@ -571,6 +572,21 @@ export default function P2PMarketplace({
     );
   }
 
+  if (selected) {
+    return (
+      <P2PBuyOrder
+        order={selected}
+        userId={userId}
+        onBack={() => setSelected(null)}
+        onTradeCreated={(tradeId) => {
+          setSelected(null);
+          setOpenTradeId(tradeId);
+          setTab("orders");
+        }}
+      />
+    );
+  }
+
   return (
     <div className="p2p-page">
       <style>{css}</style>
@@ -988,147 +1004,6 @@ export default function P2PMarketplace({
         </div>
       )}
 
-      {/* Trade panel — real create_p2p_trade_with_escrow */}
-      {selected && (
-        <div className="p2p-panel-bg" onClick={closePanel}>
-          <div className="p2p-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="p2p-panel-head">
-              <div className="p2p-panel-title">
-                {myTurnToBuy ? "Buy" : "Sell"} {selected.asset}
-              </div>
-              <button
-                type="button"
-                className="p2p-panel-close"
-                onClick={closePanel}
-              >
-                ✕
-              </button>
-            </div>
-
-            {result ? (
-              <div className="p2p-result">
-                <div className="p2p-result-icon">✓</div>
-                <div style={{ fontWeight: 700 }}>Trade created</div>
-                <div className="p2p-result-id">{result.tradeId}</div>
-                <div className="p2p-result-note">
-                  Escrow is held on-platform. Follow payment instructions in
-                  your trade details.
-                </div>
-                <button
-                  type="button"
-                  className="p2p-done-btn"
-                  onClick={closePanel}
-                >
-                  Done
-                </button>
-              </div>
-            ) : userId && selected.user_id === userId ? (
-              <div className="p2p-own-note">
-                This is your own order. You cannot trade against it.
-              </div>
-            ) : (
-              <>
-                <div className="p2p-panel-row">
-                  <span>Merchant</span>
-                  <b>{selected.merchant_name}</b>
-                </div>
-                <div className="p2p-panel-row">
-                  <span>Price</span>
-                  <b>
-                    {fiatSymbol(selected.fiat_currency)}
-                    {fmt(selected.price, 4)} {selected.fiat_currency}
-                  </b>
-                </div>
-                <div className="p2p-panel-row">
-                  <span>Limits</span>
-                  <b>
-                    {fmt(selected.min_limit, 4)} – {fmt(selected.max_limit, 4)}{" "}
-                    {selected.asset}
-                  </b>
-                </div>
-                <div className="p2p-panel-row">
-                  <span>Available</span>
-                  <b>
-                    {fmt(selected.available_usdt, 4)} {selected.asset}
-                  </b>
-                </div>
-                {reputation && (
-                  <div className="p2p-rep">
-                    Rating{" "}
-                    {reputation.review_count > 0
-                      ? `${fmt(reputation.avg_rating, 1)}★ (${reputation.review_count})`
-                      : "No reviews yet"}
-                  </div>
-                )}
-
-                <div className="p2p-label">
-                  <span>Amount</span>
-                  <span>{selected.asset}</span>
-                </div>
-                <div className="p2p-input-wrap">
-                  <input
-                    className="p2p-input"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder={`${fmt(selected.min_limit, 4)} – ${fmt(selected.max_limit, 4)}`}
-                  />
-                </div>
-
-                {selected.side === "buy" && (
-                  <>
-                    <div className="p2p-label">
-                      <span>Receive payment into</span>
-                      <span />
-                    </div>
-                    {ownMethods === null ? (
-                      <div className="p2p-rep">Loading your payment methods…</div>
-                    ) : ownMethods.length === 0 ? (
-                      <div className="p2p-no-methods">
-                        You don&apos;t have an active payment method on file
-                        yet. You can&apos;t fulfil a buy order until one is
-                        added.
-                      </div>
-                    ) : (
-                      <div className="p2p-methods-pick">
-                        {ownMethods.map((m) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            className={`p2p-method-btn ${selectedMethodId === m.id ? "active" : ""}`}
-                            onClick={() => setSelectedMethodId(m.id)}
-                          >
-                            {m.bank_name || "Payment method"} —{" "}
-                            {m.account_name || ""}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {panelError && (
-                  <div className="p2p-panel-error">{panelError}</div>
-                )}
-
-                <button
-                  type="button"
-                  className={`p2p-submit ${myTurnToBuy ? "buy" : "sell"}`}
-                  disabled={
-                    submitting ||
-                    (selected.side === "buy" && !ownMethods?.length)
-                  }
-                  onClick={() => void submitTrade()}
-                >
-                  {submitting
-                    ? "Creating trade…"
-                    : `${myTurnToBuy ? "Buy" : "Sell"} ${selected.asset}`}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
