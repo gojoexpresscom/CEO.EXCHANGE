@@ -9,7 +9,7 @@ import {
 } from "../../lib/p2p-types";
 import P2POrdersPanel from "./P2POrdersPanel";
 import P2PAdsPanel from "./P2PAdsPanel";
-import P2PTradeDetail from "./P2PTradeDetail";
+import P2PTradeDetail from "./P2PTradeDetail"; 
 
 type Props = {
   onBack?: () => void;
