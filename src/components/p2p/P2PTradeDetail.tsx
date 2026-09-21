@@ -11,7 +11,7 @@ import {
 
 type Props = {
   tradeId: string;
-  userId: string | null;
+  userId: string | null; 
   onBack: () => void;
 };
 
