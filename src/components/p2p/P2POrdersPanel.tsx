@@ -12,7 +12,7 @@ type Props = {
 };
 
 function fmt(v: unknown, d = 4): string {
-  const n = typeof v === "number" ? v : Number(v);
+  const n = typeof v === "number" ? v : Number(v); 
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: d });
 }
