@@ -7,6 +7,9 @@ import {
   P2PPaymentMethod,
   p2pTradeErrorMessage,
 } from "../../lib/p2p-types";
+import P2POrdersPanel from "./P2POrdersPanel";
+import P2PAdsPanel from "./P2PAdsPanel";
+import P2PTradeDetail from "./P2PTradeDetail";
 
 type Props = {
   onBack?: () => void;
@@ -320,6 +323,10 @@ export default function P2PMarketplace({
   >(null);
   const [amountDraft, setAmountDraft] = useState("");
   const [navToast, setNavToast] = useState("");
+  const [tab, setTab] = useState<"market" | "orders" | "ads" | "profile">(
+    "market",
+  );
+  const [openTradeId, setOpenTradeId] = useState<string | null>(null);
 
   // Trade panel (existing flow)
   const [selected, setSelected] = useState<P2POrder | null>(null);
@@ -537,16 +544,32 @@ export default function P2PMarketplace({
     setResult({ tradeId });
     void loadOrders();
     onOpenTrade?.(tradeId);
+    // After success, user can open the real trade detail
+    setTimeout(() => {
+      setSelected(null);
+      setResult(null);
+      setOpenTradeId(tradeId);
+      setTab("orders");
+    }, 600);
   };
 
   const myTurnToBuy = selected ? selected.side === "sell" : side === "buy";
 
-  const showNavUnavailable = (label: string) => {
-    setNavToast(
-      `${label} is not available yet. P2P marketplace is ready; Orders / Ads / Profile pages are not connected.`,
+  if (openTradeId) {
+    return (
+      <>
+        <style>{css}</style>
+        <P2PTradeDetail
+          tradeId={openTradeId}
+          userId={userId}
+          onBack={() => {
+            setOpenTradeId(null);
+            setTab("orders");
+          }}
+        />
+      </>
     );
-    setTimeout(() => setNavToast(""), 3200);
-  };
+  }
 
   return (
     <div className="p2p-page">
@@ -562,17 +585,58 @@ export default function P2PMarketplace({
           >
             ←
           </button>
-          <div className="p2p-header-title">P2P</div>
-          <button
-            type="button"
-            className="p2p-fiat-btn"
-            onClick={() => setSheet("fiat")}
-          >
-            {fiat || "Fiat"}
-            <span className="chev">▼</span>
-          </button>
+          <div className="p2p-header-title">
+            {tab === "market"
+              ? "P2P"
+              : tab === "orders"
+                ? "Orders"
+                : tab === "ads"
+                  ? "My Ads"
+                  : "Profile"}
+          </div>
+          {tab === "market" ? (
+            <button
+              type="button"
+              className="p2p-fiat-btn"
+              onClick={() => setSheet("fiat")}
+            >
+              {fiat || "Fiat"}
+              <span className="chev">▼</span>
+            </button>
+          ) : (
+            <div style={{ width: 52 }} />
+          )}
         </header>
 
+        {tab === "orders" && (
+          <P2POrdersPanel
+            userId={userId}
+            onOpenTrade={(id) => setOpenTradeId(id)}
+          />
+        )}
+
+        {tab === "ads" && <P2PAdsPanel userId={userId} />}
+
+        {tab === "profile" && (
+          <div className="p2p-empty" style={{ padding: 24 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8, color: "#eaecef" }}>
+              P2P profile
+            </div>
+            {userId ? (
+              <div style={{ fontSize: 12, color: "#848e9c", lineHeight: 1.6 }}>
+                Signed in. Merchant reputation and verification badges appear on
+                ads when returned by{" "}
+                <code style={{ color: "#f0b90b" }}>get_merchant_reputation</code>
+                . Payment methods are loaded when you fulfill a buy-side ad.
+              </div>
+            ) : (
+              <div>Sign in to view your P2P profile.</div>
+            )}
+          </div>
+        )}
+
+        {tab === "market" && (
+        <>
         {/* Buy / Sell */}
         <div className="p2p-buy-sell">
           <div className="p2p-seg">
@@ -759,35 +823,40 @@ export default function P2PMarketplace({
             })
           )}
         </div>
+        </>
+        )}
       </div>
 
-      {/* Bottom nav — only P2P is live */}
       <nav className="p2p-bottom" aria-label="P2P navigation">
         <div className="p2p-bottom-inner">
-          <button type="button" className="p2p-nav-item active">
+          <button
+            type="button"
+            className={`p2p-nav-item ${tab === "market" ? "active" : ""}`}
+            onClick={() => setTab("market")}
+          >
             <span className="p2p-nav-icon">⌂</span>
             P2P
           </button>
           <button
             type="button"
-            className="p2p-nav-item"
-            onClick={() => showNavUnavailable("Orders")}
+            className={`p2p-nav-item ${tab === "orders" ? "active" : ""}`}
+            onClick={() => setTab("orders")}
           >
             <span className="p2p-nav-icon">☰</span>
             Orders
           </button>
           <button
             type="button"
-            className="p2p-nav-item"
-            onClick={() => showNavUnavailable("Ads")}
+            className={`p2p-nav-item ${tab === "ads" ? "active" : ""}`}
+            onClick={() => setTab("ads")}
           >
             <span className="p2p-nav-icon">▣</span>
             Ads
           </button>
           <button
             type="button"
-            className="p2p-nav-item"
-            onClick={() => showNavUnavailable("Profile")}
+            className={`p2p-nav-item ${tab === "profile" ? "active" : ""}`}
+            onClick={() => setTab("profile")}
           >
             <span className="p2p-nav-icon">◎</span>
             Profile
