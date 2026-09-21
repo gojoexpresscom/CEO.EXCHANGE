@@ -105,8 +105,6 @@ export const P2P_RPC = {
   openDispute: "raise_p2p_dispute",
   /** Create or update merchant ad */
   updateOrder: "update_p2p_order",
-  /** Send chat message (trade-scoped) — optional if table insert works */
-  sendMessage: "send_p2p_trade_message",
 } as const;
 
 export const P2P_TABLE = {
@@ -231,5 +229,5 @@ export function formatTradeStatus(status: string | null | undefined): string {
   if (!status) return "Unknown";
   const s = status.toLowerCase().replace(/_/g, " ");
   return s.replace(/\b\w/g, (c) => c.toUpperCase());
-}
+    }
 
