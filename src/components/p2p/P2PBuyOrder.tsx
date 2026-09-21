@@ -207,12 +207,15 @@ export default function P2PBuyOrder({
   const cryptoAmt = Number(cryptoStr) || 0;
   const fiatAmt = Number(fiatStr) || 0;
 
+  const adMethods = order.payment_methods || [];
   const valid = useMemo(() => {
     if (!Number.isFinite(cryptoAmt) || cryptoAmt <= 0) return false;
     if (cryptoAmt < minC - 1e-12) return false;
     if (cryptoAmt > maxCrypto + 1e-12) return false;
-    if (order.side === "buy" && !selectedOwnMethodId) return false;
-    if (order.side === "sell" && !(payMethod || "").trim()) return false;
+    // Payment methods belong to the merchant only — user never must insert PM.
+    if (order.side === "sell" && adMethods.length > 0 && !(payMethod || "").trim()) {
+      return false;
+    }
     if (userId && order.user_id === userId) return false;
     return true;
   }, [
@@ -222,7 +225,7 @@ export default function P2PBuyOrder({
     order.side,
     order.user_id,
     payMethod,
-    selectedOwnMethodId,
+    adMethods.length,
     userId,
   ]);
 
@@ -235,8 +238,8 @@ export default function P2PBuyOrder({
       {
         p_order_id: order.id,
         p_crypto_amount: cryptoAmt,
-        p_payment_method_id:
-          order.side === "buy" ? selectedOwnMethodId : null,
+        // Merchant owns payment methods; backend resolves from the ad / escrow rules.
+        p_payment_method_id: null,
       },
     );
     setSubmitting(false);
@@ -372,78 +375,14 @@ export default function P2PBuyOrder({
 
         {order.side === "buy" && (
           <div className="pbo-card">
-            <div style={{ fontSize: 12, color: "#848e9c", marginBottom: 8 }}>
-              Receive payment into
+            <div style={{ fontSize: 12, color: "#848e9c", marginBottom: 6 }}>
+              Payment method
             </div>
-            {ownMethods === null ? (
-              <div style={{ fontSize: 12, color: "#5e6673" }}>Loading…</div>
-            ) : (
-              <>
-                {ownMethods.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className={`pbo-opt ${selectedOwnMethodId === m.id ? "on" : ""}`}
-                    onClick={() => setSelectedOwnMethodId(m.id)}
-                  >
-                    <span className="pbo-pay-dot" />
-                    {m.bank_name || "Payment method"}
-                    {m.account_name ? ` — ${m.account_name}` : ""}
-                  </button>
-                ))}
-                {ownMethods.length === 0 && (
-                  <div style={{ fontSize: 12, color: "#848e9c", marginBottom: 8 }}>
-                    You have no saved payment methods. Add where the merchant
-                    should send fiat for this trade.
-                  </div>
-                )}
-                <div style={{ fontSize: 11, color: "#5e6673", margin: "8px 0 4px" }}>
-                  {ownMethods.length === 0 ? "Add payment method" : "Add another"}
-                </div>
-                <input
-                  className="pbo-amt-input"
-                  style={{ fontSize: 14, marginBottom: 6 }}
-                  placeholder="Bank / method (CBE, Telebirr…)"
-                  value={pmBank}
-                  onChange={(e) => setPmBank(e.target.value)}
-                />
-                <input
-                  className="pbo-amt-input"
-                  style={{ fontSize: 14, marginBottom: 6 }}
-                  placeholder="Account holder name"
-                  value={pmHolder}
-                  onChange={(e) => setPmHolder(e.target.value)}
-                />
-                <input
-                  className="pbo-amt-input"
-                  style={{ fontSize: 14, marginBottom: 8 }}
-                  placeholder="Account number (optional)"
-                  value={pmAccount}
-                  onChange={(e) => setPmAccount(e.target.value)}
-                />
-                {pmError && (
-                  <div style={{ fontSize: 12, color: "#ff9aa6", marginBottom: 6 }}>
-                    {pmError}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="pbo-max"
-                  style={{
-                    width: "100%",
-                    textAlign: "center",
-                    border: "1px solid #3d3420",
-                    borderRadius: 10,
-                    padding: 10,
-                    marginBottom: 4,
-                  }}
-                  disabled={pmSaving}
-                  onClick={() => void savePaymentMethod()}
-                >
-                  {pmSaving ? "Saving…" : "Save payment method"}
-                </button>
-              </>
-            )}
+            <div style={{ fontSize: 12, color: "#eaecef", lineHeight: 1.5 }}>
+              The merchant provides payment details for this trade. You do not
+              need to add a bank account here. After you sell, follow the
+              order screen and trade chat for payment instructions.
+            </div>
           </div>
         )}
 
@@ -537,4 +476,3 @@ export default function P2PBuyOrder({
     </div>
   );
 }
-
