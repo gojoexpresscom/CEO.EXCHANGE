@@ -96,14 +96,16 @@ export const P2P_RPC = {
   createTrade: "create_p2p_trade_with_escrow",
   merchantReputation: "get_merchant_reputation",
   /** Seller releases crypto after payment confirmed */
-  sellerRelease: "seller_release_p2p_escrow",
-  /** Buyer marks fiat paid */
-  markPaid: "mark_p2p_trade_paid",
-  /** Cancel trade when backend allows */
+  sellerRelease: "release_p2p_escrow",
+  /** Buyer submits payment proof / marks paid */
+  submitPaymentProof: "submit_p2p_payment_proof",
+  /** Cancel trade */
   cancelTrade: "cancel_p2p_trade",
   /** Open dispute */
-  openDispute: "open_p2p_dispute",
-  /** Send chat message (trade-scoped) */
+  openDispute: "raise_p2p_dispute",
+  /** Create or update merchant ad */
+  updateOrder: "update_p2p_order",
+  /** Send chat message (trade-scoped) — optional if table insert works */
   sendMessage: "send_p2p_trade_message",
 } as const;
 
@@ -111,7 +113,7 @@ export const P2P_TABLE = {
   orders: "p2p_orders",
   paymentMethods: "p2p_payment_methods",
   trades: "p2p_trades",
-  messages: "p2p_trade_messages",
+  messages: "p2p_messages",
 } as const;
 
 export function p2pTradeErrorMessage(
