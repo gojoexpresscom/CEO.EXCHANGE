@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import {
   type MerchantReputation,
@@ -103,6 +103,11 @@ export default function P2PBuyOrder({
   const [selectedOwnMethodId, setSelectedOwnMethodId] = useState<string | null>(
     null,
   );
+  const [pmBank, setPmBank] = useState("");
+  const [pmHolder, setPmHolder] = useState("");
+  const [pmAccount, setPmAccount] = useState("");
+  const [pmSaving, setPmSaving] = useState(false);
+  const [pmError, setPmError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -123,18 +128,61 @@ export default function P2PBuyOrder({
       });
   }, [order.user_id]);
 
+  const loadOwnMethods = useCallback(async () => {
+    if (order.side !== "buy" || !userId) return;
+    const { data } = await supabase
+      .from("p2p_payment_methods")
+      .select("id,bank_name,account_name,is_active")
+      .eq("user_id", userId)
+      .eq("is_active", true);
+    const rows = (data || []) as P2PPaymentMethod[];
+    setOwnMethods(rows);
+    if (rows.length === 1) setSelectedOwnMethodId(rows[0].id);
+  }, [order.side, userId]);
+
   // When fulfilling a merchant BUY ad, current user is seller and needs PM
   useEffect(() => {
-    if (order.side !== "buy" || !userId) return;
-    void (async () => {
-      const { data } = await supabase
-        .from("p2p_payment_methods")
-        .select("id,bank_name,account_name,is_active")
-        .eq("user_id", userId)
-        .eq("is_active", true);
-      setOwnMethods((data || []) as P2PPaymentMethod[]);
-    })();
-  }, [order.side, userId]);
+    void loadOwnMethods();
+  }, [loadOwnMethods]);
+
+  const savePaymentMethod = async () => {
+    if (!userId) return;
+    setPmError("");
+    const bank = pmBank.trim();
+    const holder = pmHolder.trim();
+    const acct = pmAccount.trim();
+    if (!bank) {
+      setPmError("Enter bank / payment method name (e.g. CBE, Telebirr).");
+      return;
+    }
+    if (!holder) {
+      setPmError("Enter account holder name.");
+      return;
+    }
+    setPmSaving(true);
+    const row: Record<string, unknown> = {
+      user_id: userId,
+      bank_name: bank,
+      account_name: holder,
+      is_active: true,
+    };
+    if (acct) row.account_number = acct;
+    const { data, error: err } = await supabase
+      .from("p2p_payment_methods")
+      .insert(row)
+      .select("id,bank_name,account_name,is_active")
+      .maybeSingle();
+    setPmSaving(false);
+    if (err) {
+      setPmError(err.message || "Could not save payment method.");
+      return;
+    }
+    setPmBank("");
+    setPmHolder("");
+    setPmAccount("");
+    await loadOwnMethods();
+    if (data?.id) setSelectedOwnMethodId(String(data.id));
+  };
 
   const setFromFiat = (raw: string) => {
     setFiatStr(raw);
@@ -329,23 +377,72 @@ export default function P2PBuyOrder({
             </div>
             {ownMethods === null ? (
               <div style={{ fontSize: 12, color: "#5e6673" }}>Loading…</div>
-            ) : ownMethods.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#ff9aa6" }}>
-                Add an active payment method before fulfilling this order.
-              </div>
             ) : (
-              ownMethods.map((m) => (
+              <>
+                {ownMethods.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={`pbo-opt ${selectedOwnMethodId === m.id ? "on" : ""}`}
+                    onClick={() => setSelectedOwnMethodId(m.id)}
+                  >
+                    <span className="pbo-pay-dot" />
+                    {m.bank_name || "Payment method"}
+                    {m.account_name ? ` — ${m.account_name}` : ""}
+                  </button>
+                ))}
+                {ownMethods.length === 0 && (
+                  <div style={{ fontSize: 12, color: "#848e9c", marginBottom: 8 }}>
+                    You have no saved payment methods. Add where the merchant
+                    should send fiat for this trade.
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: "#5e6673", margin: "8px 0 4px" }}>
+                  {ownMethods.length === 0 ? "Add payment method" : "Add another"}
+                </div>
+                <input
+                  className="pbo-amt-input"
+                  style={{ fontSize: 14, marginBottom: 6 }}
+                  placeholder="Bank / method (CBE, Telebirr…)"
+                  value={pmBank}
+                  onChange={(e) => setPmBank(e.target.value)}
+                />
+                <input
+                  className="pbo-amt-input"
+                  style={{ fontSize: 14, marginBottom: 6 }}
+                  placeholder="Account holder name"
+                  value={pmHolder}
+                  onChange={(e) => setPmHolder(e.target.value)}
+                />
+                <input
+                  className="pbo-amt-input"
+                  style={{ fontSize: 14, marginBottom: 8 }}
+                  placeholder="Account number (optional)"
+                  value={pmAccount}
+                  onChange={(e) => setPmAccount(e.target.value)}
+                />
+                {pmError && (
+                  <div style={{ fontSize: 12, color: "#ff9aa6", marginBottom: 6 }}>
+                    {pmError}
+                  </div>
+                )}
                 <button
-                  key={m.id}
                   type="button"
-                  className={`pbo-opt ${selectedOwnMethodId === m.id ? "on" : ""}`}
-                  onClick={() => setSelectedOwnMethodId(m.id)}
+                  className="pbo-max"
+                  style={{
+                    width: "100%",
+                    textAlign: "center",
+                    border: "1px solid #3d3420",
+                    borderRadius: 10,
+                    padding: 10,
+                    marginBottom: 4,
+                  }}
+                  disabled={pmSaving}
+                  onClick={() => void savePaymentMethod()}
                 >
-                  <span className="pbo-pay-dot" />
-                  {m.bank_name || "Payment method"}
-                  {m.account_name ? ` — ${m.account_name}` : ""}
+                  {pmSaving ? "Saving…" : "Save payment method"}
                 </button>
-              ))
+              </>
             )}
           </div>
         )}
@@ -440,3 +537,4 @@ export default function P2PBuyOrder({
     </div>
   );
 }
+
