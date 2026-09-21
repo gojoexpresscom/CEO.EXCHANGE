@@ -27,9 +27,7 @@ const CANCEL_REASONS = [
 ] as const;
 
 const MESSAGE_TABLES = [
-  P2P_TABLE.messages,
-  "p2p_trade_messages",
-  "trade_messages",
+  P2P_TABLE.messages, // p2p_messages
 ] as const;
 
 const css = `
@@ -277,21 +275,23 @@ export default function P2PTradeDetail({
   };
 
   const submitPaymentProof = async (extra?: {
-    proof_url?: string;
-    note?: string;
+    path?: string;
+    reference?: string;
   }) => {
     setBusy(true);
     setActionError("");
-    const args: Record<string, unknown> = { p_trade_id: tradeId };
-    if (extra?.proof_url) args.p_proof_url = extra.proof_url;
-    if (extra?.note) args.p_note = extra.note;
-    // Also try common alternate arg names if first fails
+    // Contract: submit_p2p_payment_proof(trade_id, path, reference)
+    const args: Record<string, unknown> = {
+      trade_id: tradeId,
+      path: extra?.path ?? null,
+      reference: extra?.reference ?? null,
+    };
     let { error: err } = await supabase.rpc(P2P_RPC.submitPaymentProof, args);
     if (err && /argument|parameter|could not find/i.test(err.message)) {
       const alt = await supabase.rpc(P2P_RPC.submitPaymentProof, {
-        trade_id: tradeId,
-        proof_url: extra?.proof_url ?? null,
-        note: extra?.note ?? null,
+        p_trade_id: tradeId,
+        p_path: extra?.path ?? null,
+        p_reference: extra?.reference ?? null,
       });
       err = alt.error;
     }
@@ -309,27 +309,18 @@ export default function P2PTradeDetail({
     if (!body || !userId || msgSending) return;
     setMsgSending(true);
     setActionError("");
-    if (msgTable) {
-      const { error: insErr } = await supabase.from(msgTable).insert({
-        trade_id: tradeId,
-        sender_id: userId,
-        body,
-      });
-      if (!insErr) {
-        setMsgDraft("");
-        setMsgSending(false);
-        await loadMessages();
-        return;
-      }
-      // fall through to RPC
-    }
-    const { error: rpcErr } = await supabase.rpc(P2P_RPC.sendMessage, {
-      p_trade_id: tradeId,
-      p_message: body,
-    });
+    // Real contract: direct insert into p2p_messages (no send_p2p_trade_message RPC)
+    const table = msgTable || P2P_TABLE.messages;
+    const row: Record<string, unknown> = {
+      trade_id: tradeId,
+      order_id: trade?.order_id ?? null,
+      sender_id: userId,
+      message: body,
+    };
+    const { error: insErr } = await supabase.from(table).insert(row);
     setMsgSending(false);
-    if (rpcErr) {
-      setActionError(rpcErr.message || "Could not send message");
+    if (insErr) {
+      setActionError(insErr.message || "Could not send message");
       return;
     }
     setMsgDraft("");
@@ -340,30 +331,24 @@ export default function P2PTradeDetail({
     if (!userId) return;
     setBusy(true);
     setActionError("");
-    const path = `p2p-proofs/${tradeId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
+    // Storage path: p2p-proofs/{buyer_id}/{trade_id}/<file>
+    const safeName = file.name.replace(/[^\w.-]/g, "_");
+    const path = `${userId}/${tradeId}/${Date.now()}-${safeName}`;
     const { error: upErr } = await supabase.storage
       .from("p2p-proofs")
       .upload(path, file, { upsert: false });
     if (upErr) {
-      // try public bucket name variants
-      const alt = await supabase.storage
-        .from("payment-proofs")
-        .upload(path, file, { upsert: false });
-      if (alt.error) {
-        setBusy(false);
-        setActionError(
-          upErr.message ||
-            "Could not upload proof. Ensure storage bucket is configured.",
-        );
-        return;
-      }
+      setBusy(false);
+      setActionError(
+        upErr.message ||
+          "Could not upload proof. Ensure storage bucket is configured.",
+      );
+      return;
     }
-    const { data: pub } = supabase.storage.from("p2p-proofs").getPublicUrl(path);
-    const url = pub?.publicUrl || path;
-    setProofUrl(url);
+    setProofUrl(path);
     const ok = await submitPaymentProof({
-      proof_url: url,
-      note: proofNote || `Payment proof: ${file.name}`,
+      path,
+      reference: proofNote || safeName,
     });
     setBusy(false);
     if (ok) {
@@ -767,7 +752,7 @@ export default function P2PTradeDetail({
               type="button"
               className="ptd-primary"
               disabled={busy}
-              onClick={() => void submitPaymentProof({ note: proofNote || undefined, proof_url: proofUrl || undefined })}
+              onClick={() => void submitPaymentProof({ path: proofUrl || undefined, reference: proofNote || undefined })}
             >
               {busy ? "…" : "Payment sent"}
             </button>

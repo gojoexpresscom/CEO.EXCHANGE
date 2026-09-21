@@ -36,6 +36,24 @@ function fmt(v: unknown, d = 4): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: d });
 }
 
+/** Mobile-safe decimal parse: trim, strip currency letters/spaces/commas. */
+function parseDecimal(raw: string): number | null {
+  if (raw == null) return null;
+  let s = String(raw).trim();
+  if (!s) return null;
+  // Normalize common mobile separators
+  s = s.replace(/\s/g, "").replace(/,/g, "");
+  // Keep only digits, one dot, optional leading minus
+  s = s.replace(/[^0-9.+-]/g, "");
+  // Disallow multiple dots
+  const parts = s.split(".");
+  if (parts.length > 2) s = parts[0] + "." + parts.slice(1).join("");
+  if (!s || s === "." || s === "-" || s === "+") return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
 export default function P2PAdsPanel({ userId }: Props) {
   const [ads, setAds] = useState<P2POrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,19 +105,19 @@ export default function P2PAdsPanel({ userId }: Props) {
   const submitAd = async () => {
     if (!userId) return;
     setFormErr("");
-    const p = Number(price);
-    const minL = Number(minLimit);
-    const maxL = Number(maxLimit);
-    const avail = Number(available);
-    if (!Number.isFinite(p) || p <= 0) {
+    const p = parseDecimal(price);
+    const minL = parseDecimal(minLimit);
+    const maxL = parseDecimal(maxLimit);
+    const avail = parseDecimal(available);
+    if (p == null || p <= 0) {
       setFormErr("Enter a valid price.");
       return;
     }
-    if (!Number.isFinite(minL) || !Number.isFinite(maxL) || minL <= 0 || maxL < minL) {
+    if (minL == null || maxL == null || minL <= 0 || maxL < minL) {
       setFormErr("Enter valid min/max limits.");
       return;
     }
-    if (!Number.isFinite(avail) || avail <= 0) {
+    if (avail == null || avail <= 0) {
       setFormErr("Enter available amount.");
       return;
     }
@@ -219,7 +237,7 @@ export default function P2PAdsPanel({ userId }: Props) {
           <label className="ads-label">Fiat</label>
           <input className="ads-input" value={fiat} onChange={(e) => setFiat(e.target.value.toUpperCase())} />
           <label className="ads-label">Price ({fiat})</label>
-          <input className="ads-input" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+          <input className="ads-input" inputMode="decimal" autoComplete="off" value={price} onChange={(e) => setPrice(e.target.value)} />
           <label className="ads-label">Min limit ({asset})</label>
           <input className="ads-input" inputMode="decimal" value={minLimit} onChange={(e) => setMinLimit(e.target.value)} />
           <label className="ads-label">Max limit ({asset})</label>
