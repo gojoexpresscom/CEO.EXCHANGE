@@ -2,7 +2,7 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import TermsScreen from "../legal/TermsScreen";
 import PrivacyScreen from "../legal/PrivacyScreen";
-import { CeoExchangeEmblemAnimated } from "@/components/brand/CeoExchangeEmblemAnimated";
+import { CeoExchangeEmblem } from "@/components/brand/CeoExchangeEmblem";
 
 type Screen =
   | "login"
@@ -696,7 +696,7 @@ export default function AuthScreen({ onAuth }: Props) {
       {loading && (
         <div style={styles.bootOverlay} aria-live="polite" aria-busy="true">
           <div style={styles.bootLogoWrap}>
-            <CeoExchangeEmblemAnimated size={58} className="ceo-boot-logo" />
+            <CeoExchangeEmblem size={58} className="ceo-boot-logo" />
             <div style={styles.bootPulse} />
           </div>
           <div style={styles.bootSpinner} />
@@ -704,7 +704,7 @@ export default function AuthScreen({ onAuth }: Props) {
       )}
 
       <div style={styles.logoWrap}>
-        <CeoExchangeEmblemAnimated size={160} className="ceo-auth-logo" />
+        <CeoExchangeEmblem size={160} className="ceo-auth-logo" />
       </div>
 
       <section
