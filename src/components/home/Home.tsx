@@ -1545,11 +1545,21 @@ function Home({
 
   const referralLink = referral?.referral_code ? `${window.location.origin}/?ref=${encodeURIComponent(referral.referral_code)}` : "";
 
+  const PULL_THRESHOLD = 64;
+  const PULL_MAX = 100;
+
+  /** BingX-style rubber-band: soft resistance, short travel, harder as you pull farther. */
+  const dampPull = (rawDy: number) => {
+    if (rawDy <= 0) return 0;
+    // Diminishing returns: visual distance grows slower as finger travels farther
+    const damped = rawDy * 0.38 / (1 + rawDy / 220);
+    return Math.min(PULL_MAX, damped);
+  };
+
   const runRefresh = useCallback(async () => {
     if (!userId || isRefreshing) return;
     setIsRefreshing(true);
-    setPullY(0);
-    const started = Date.now();
+    setPullY(PULL_THRESHOLD);
     try {
       // Best-effort: wake the existing Bybit ticker sync Edge Function so
       // market_tickers stay fresh. Failures must not block Home refresh.
@@ -1562,29 +1572,42 @@ function Home({
     } catch {
       // load errors already handled inside loadAll
     } finally {
-      // Hold ~2 × 2.72s so both BingX-style cycles finish; logo then stays stable
-      const wait = Math.max(0, 5440 - (Date.now() - started));
-      window.setTimeout(() => {
-        setIsRefreshing(false);
-        setPullY(0);
-      }, wait);
+      // No artificial delay — exit as soon as the real request settles (success or failure)
+      setIsRefreshing(false);
+      setPullY(0);
     }
   }, [userId, isRefreshing, loadAll]);
 
   const onPullStart = (e: React.TouchEvent) => {
     const el = contentRef.current;
-    if (!el || el.scrollTop > 2 || isRefreshing) return;
+    if (!el || el.scrollTop > 0 || isRefreshing) return;
     pullStartY.current = e.touches[0].clientY;
   };
   const onPullMove = (e: React.TouchEvent) => {
     if (pullStartY.current == null || isRefreshing) return;
+    const el = contentRef.current;
+    if (el && el.scrollTop > 0) {
+      pullStartY.current = null;
+      setPullY(0);
+      return;
+    }
     const dy = e.touches[0].clientY - pullStartY.current;
-    if (dy > 0) setPullY(Math.min(dy * 0.45, 96));
+    if (dy > 0) {
+      // Resist native overscroll while pulling at top
+      if (e.cancelable) e.preventDefault();
+      setPullY(dampPull(dy));
+    } else {
+      setPullY(0);
+    }
   };
   const onPullEnd = () => {
-    if (pullY > 64) void runRefresh();
-    else setPullY(0);
+    if (pullStartY.current == null) return;
     pullStartY.current = null;
+    if (pullY >= PULL_THRESHOLD) {
+      void runRefresh();
+    } else {
+      setPullY(0);
+    }
   };
 
   if (!userId && loading && !guestMode) {
@@ -1658,15 +1681,16 @@ function Home({
           if (top <= 180) setFabOpen(false);
         }}
       >
-        {/* Pull-to-refresh: animated titanium emblem (no PNG / no gold shine) */}
-        {(isRefreshing || pullY > 8) && (
+        {/* Compact BingX-style pull-to-refresh — short travel, soft resistance */}
+        {(isRefreshing || pullY > 6) && (
           <div
             style={{
               ...styles.pullRefresh,
-              height: isRefreshing ? 96 : Math.max(pullY, 0),
-              opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1),
-              background: "transparent",
-              backgroundColor: "transparent",
+              height: isRefreshing ? 56 : Math.max(pullY, 0),
+              opacity: isRefreshing ? 1 : Math.min(pullY / PULL_THRESHOLD, 1),
+              transition: isRefreshing || pullY === 0
+                ? "height 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease-out"
+                : "none",
             }}
             aria-busy={isRefreshing}
             aria-label={isRefreshing ? "Refreshing" : undefined}
@@ -1676,15 +1700,19 @@ function Home({
                 style={{
                   ...styles.pullLogo,
                   transform: isRefreshing
-                    ? undefined
-                    : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
+                    ? "scale(1)"
+                    : `scale(${0.72 + Math.min(pullY / PULL_THRESHOLD, 1) * 0.28})`,
+                  opacity: isRefreshing ? 1 : Math.min(0.35 + (pullY / PULL_THRESHOLD) * 0.65, 1),
+                  transition: isRefreshing
+                    ? "transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease-out"
+                    : "none",
                 }}
               >
-                <CeoExchangeEmblemAnimated
-                  key={isRefreshing ? "refresh-active" : "refresh-pull"}
-                  size={56}
-                  className="ceo-pull-logo"
-                />
+                {isRefreshing ? (
+                  <CeoExchangeEmblemAnimated size={40} className="ceo-pull-logo" />
+                ) : (
+                  <CeoExchangeEmblemAnimated size={36} className="ceo-pull-logo" />
+                )}
               </div>
             </div>
           </div>
@@ -4715,8 +4743,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     gap: 0,
-    overflow: "visible",
-    transition: "height 0.2s ease-out",
+    overflow: "hidden",
+    flexShrink: 0,
     background: "transparent",
     backgroundColor: "transparent",
     boxShadow: "none",
@@ -4725,8 +4753,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pullLogoWrap: {
     position: "relative",
-    width: 64,
-    height: 64,
+    width: 44,
+    height: 44,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -4738,8 +4766,8 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "none",
   },
   pullLogo: {
-    width: 56,
-    height: 56,
+    width: 40,
+    height: 40,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
