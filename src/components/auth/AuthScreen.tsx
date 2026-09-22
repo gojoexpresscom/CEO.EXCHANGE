@@ -2,6 +2,7 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import TermsScreen from "../legal/TermsScreen";
 import PrivacyScreen from "../legal/PrivacyScreen";
+import { CeoExchangeEmblem } from "@/components/brand/CeoExchangeEmblem";
 
 type Screen =
   | "login"
@@ -42,8 +43,8 @@ declare global {
   }
 }
 
-const GOLD = "#f5b51b";
-const GOLD_LIGHT = "#ffca3a";
+const TITANIUM = "#A8B5C4";
+const TITANIUM_LIGHT = "#D4DCE6";
 const TERMS_VERSION = 2;
 
 const PASSWORD_RULES = [
@@ -138,7 +139,7 @@ function XIcon() {
 function Rule({ ok, children }: { ok: boolean; children: React.ReactNode }) {
   return (
     <div style={styles.rule}>
-      <span style={{ color: ok ? GOLD_LIGHT : "#666", fontSize: 18 }}>{ok ? "✓" : "○"}</span>
+      <span style={{ color: ok ? TITANIUM_LIGHT : "#666", fontSize: 18 }}>{ok ? "✓" : "○"}</span>
       <span>{children}</span>
     </div>
   );
@@ -695,7 +696,7 @@ export default function AuthScreen({ onAuth }: Props) {
       {loading && (
         <div style={styles.bootOverlay} aria-live="polite" aria-busy="true">
           <div style={styles.bootLogoWrap}>
-            <img src="/ceo-auth-reference-transparent.png" alt="" style={styles.bootLogo} />
+            <CeoExchangeEmblem size={58} className="ceo-boot-logo" />
             <div style={styles.bootPulse} />
           </div>
           <div style={styles.bootSpinner} />
@@ -703,7 +704,7 @@ export default function AuthScreen({ onAuth }: Props) {
       )}
 
       <div style={styles.logoWrap}>
-        <img src="/ceo-auth-reference-transparent.png" alt="CEO Exchange" style={styles.logo} />
+        <CeoExchangeEmblem size={160} className="ceo-auth-logo" />
       </div>
 
       <section
@@ -773,7 +774,7 @@ export default function AuthScreen({ onAuth }: Props) {
             </button>
 
             <button type="button" style={styles.signupHint} onClick={goSignup}>
-              Don&apos;t have an account? <span style={styles.goldInline}>Sign Up</span>
+              Don&apos;t have an account? <span style={styles.accentInline}>Sign Up</span>
             </button>
           </form>
         )}
@@ -782,7 +783,7 @@ export default function AuthScreen({ onAuth }: Props) {
           <>
             <div style={styles.headerRow}>
               <button type="button" style={styles.circleBack} onClick={goLogin} aria-label="Back to login"><Arrow left /></button>
-              <button type="button" style={styles.goldLink} onClick={goLogin}>Login Now</button>
+              <button type="button" style={styles.accentLink} onClick={goLogin}>Login Now</button>
             </div>
 
             <h1 style={styles.signupTitle}>{title.signup}</h1>
@@ -1059,7 +1060,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     padding: "16px 16px calc(28px + env(safe-area-inset-bottom))",
     paddingTop: "calc(16px + env(safe-area-inset-top))",
-    background: "radial-gradient(ellipse at 50% 12%, rgba(245,181,27,.1) 0%, transparent 48%), #0a0a0a",
+    background: "radial-gradient(ellipse at 50% 12%, rgba(140,160,185,.08) 0%, transparent 48%), #050505",
     color: "#f5f5f5",
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     position: "relative",
@@ -1083,9 +1084,9 @@ const styles: Record<string, React.CSSProperties> = {
     width: "130%",
     height: "45%",
     pointerEvents: "none",
-    background: "radial-gradient(circle, rgba(245,181,27,.14) 0%, transparent 70%)",
+    background: "radial-gradient(circle, rgba(140,160,185,.12) 0%, transparent 70%)",
     filter: "blur(48px)",
-    opacity: 0.75,
+    opacity: 0.7,
   },
   bootOverlay: {
     position: "fixed",
@@ -1118,15 +1119,15 @@ const styles: Record<string, React.CSSProperties> = {
     position: "absolute",
     inset: 0,
     borderRadius: 20,
-    background: "radial-gradient(circle, rgba(245,181,27,.4) 0%, transparent 70%)",
+    background: "radial-gradient(circle, rgba(168,181,196,.35) 0%, transparent 70%)",
     animation: "ceoAuthPulse 1.5s ease-in-out infinite",
   },
   bootSpinner: {
     width: 22,
     height: 22,
     borderRadius: "50%",
-    border: "2px solid #2a2110",
-    borderTopColor: GOLD,
+    border: "2px solid #2a2e34",
+    borderTopColor: TITANIUM,
     animation: "ceoAuthSpin .85s linear infinite",
   },
   logoWrap: {
@@ -1140,12 +1141,11 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   logo: {
-    width: "min(58vw, 240px)",
-    maxHeight: 200,
-    objectFit: "contain",
+    width: "min(58vw, 160px)",
+    height: "auto",
     display: "block",
     margin: "0 auto",
-    filter: "drop-shadow(0 16px 40px rgba(245,181,27,.28))",
+    filter: "drop-shadow(0 12px 32px rgba(140,160,185,.25))",
   },
   card: {
     position: "relative",
@@ -1188,12 +1188,12 @@ const styles: Record<string, React.CSSProperties> = {
   centerTitle: { margin: "4px 0 8px", textAlign: "center", fontSize: "clamp(26px, 6.5vw, 32px)", fontWeight: 800 },
   centerText: { margin: "6px 0 4px", color: "#858585", fontSize: 13, lineHeight: 1.45, textAlign: "center" },
   emailText: { margin: "8px 0", textAlign: "center", color: "#f5f5f5", fontSize: 14, overflowWrap: "anywhere" },
-  goldLink: { border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", padding: "4px 0", fontWeight: 600 },
-  goldInline: { color: GOLD_LIGHT, fontWeight: 700 },
+  accentLink: { border: 0, background: "transparent", color: TITANIUM_LIGHT, fontSize: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", padding: "4px 0", fontWeight: 600 },
+  accentInline: { color: TITANIUM_LIGHT, fontWeight: 700 },
   circleBack: { width: 38, height: 38, borderRadius: "50%", border: "1px solid #2e2e2e", background: "#141414", color: "#eee", cursor: "pointer", fontSize: 18, display: "grid", placeItems: "center", flexShrink: 0 },
   label: { display: "block", margin: "2px 0 8px", fontSize: 13, fontWeight: 500, color: "#9a9a9a" },
   field: { width: "100%", minHeight: 56, marginBottom: 16, padding: "0 16px", display: "flex", alignItems: "center", boxSizing: "border-box", borderRadius: 16, border: "1px solid #2a2a2a", background: "#141418" },
-  icon: { width: 22, height: 22, flexShrink: 0, color: GOLD, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 12 },
+  icon: { width: 22, height: 22, flexShrink: 0, color: TITANIUM, display: "inline-flex", alignItems: "center", justifyContent: "center", marginRight: 12 },
   input: { width: "100%", minWidth: 0, border: 0, outline: 0, background: "transparent", color: "#fff", fontSize: 15, padding: "2px 0" },
   eyeButton: { border: 0, background: "transparent", color: "#6c6c70", cursor: "pointer", padding: 4, display: "inline-flex" },
   turnstile: {
@@ -1206,7 +1206,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
   },
   turnstileMissing: { minHeight: 52, display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0 12px", padding: "10px 12px", borderRadius: 14, border: "1px dashed #3b3b3b", color: "#777", fontSize: 11, textAlign: "center" },
-  forgot: { display: "block", margin: "0 2px 12px auto", border: 0, background: "transparent", color: "#b77c27", fontSize: 13, cursor: "pointer", fontWeight: 500 },
+  forgot: { display: "block", margin: "0 2px 12px auto", border: 0, background: "transparent", color: TITANIUM, fontSize: 13, cursor: "pointer", fontWeight: 500 },
   forgotBottom: {
     display: "flex",
     alignItems: "center",
@@ -1238,8 +1238,8 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 2,
     border: 0,
     borderRadius: 999,
-    background: "linear-gradient(180deg, #ffc94a 0%, #e89a00 100%)",
-    color: "#111",
+    background: "linear-gradient(180deg, #C5D0DC 0%, #8A98A8 100%)",
+    color: "#0a0a0a",
     fontSize: 16,
     fontWeight: 800,
     cursor: "pointer",
@@ -1247,7 +1247,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    boxShadow: "0 0 28px rgba(232,154,0,.35), 0 8px 20px rgba(0,0,0,.25)",
+    boxShadow: "0 0 28px rgba(140,160,185,.28), 0 8px 20px rgba(0,0,0,.3)",
   },
   outlineButton: { width: "100%", minHeight: 50, marginTop: 8, border: "1px solid #3a3a3d", borderRadius: 14, background: "#0c0c0c", color: "#eee", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
   divider: { display: "flex", alignItems: "center", gap: 14, margin: "22px 0 14px", width: "100%" },
@@ -1273,16 +1273,16 @@ const styles: Record<string, React.CSSProperties> = {
   globalRow: { display: "flex", alignItems: "center", gap: 8, color: "#8c8c8f", fontSize: 12, marginBottom: 12 },
   referral: { width: "100%", padding: "4px 2px 10px", border: 0, background: "transparent", color: "#d8d8d8", fontSize: 13, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between" },
   agreeRow: { display: "flex", alignItems: "flex-start", gap: 8, margin: "6px 0 10px", color: "#7f7f83", fontSize: 11, lineHeight: 1.45 },
-  checkbox: { width: 16, height: 16, marginTop: 1, accentColor: GOLD_LIGHT, flexShrink: 0 },
-  inlineLink: { padding: 0, border: 0, background: "transparent", color: GOLD_LIGHT, cursor: "pointer", fontSize: "inherit", textDecoration: "underline" },
+  checkbox: { width: 16, height: 16, marginTop: 1, accentColor: TITANIUM_LIGHT, flexShrink: 0 },
+  inlineLink: { padding: 0, border: 0, background: "transparent", color: TITANIUM_LIGHT, cursor: "pointer", fontSize: "inherit", textDecoration: "underline" },
   otpRow: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, margin: "16px 0 12px" },
   otpBox: { width: "100%", minWidth: 0, height: 48, border: "1px solid #343438", borderRadius: 10, background: "#17171b", color: "#fff", textAlign: "center", fontSize: 18, fontWeight: 800, outline: "none" },
-  resend: { display: "block", margin: "0 auto 8px", border: 0, background: "transparent", color: GOLD_LIGHT, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  resend: { display: "block", margin: "0 auto 8px", border: 0, background: "transparent", color: TITANIUM_LIGHT, fontSize: 12, fontWeight: 700, cursor: "pointer" },
   rules: { display: "grid", gap: 5, margin: "6px 0 12px", padding: "10px 12px", borderRadius: 12, background: "#111113", border: "1px solid #27272a" },
   rule: { display: "flex", alignItems: "center", gap: 8, color: "#99999d", fontSize: 11 },
   confirmHint: { fontSize: 11, margin: "5px 0 8px", textAlign: "center" },
   error: { marginTop: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(255,70,70,.08)", border: "1px solid rgba(255,70,70,.26)", color: "#ff9d9d", fontSize: 12, lineHeight: 1.4 },
-  message: { marginTop: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(245,181,27,.06)", border: "1px solid rgba(245,181,27,.22)", color: "#e7bd58", fontSize: 12, lineHeight: 1.4 },
+  message: { marginTop: 10, padding: "10px 12px", borderRadius: 11, background: "rgba(140,160,185,.08)", border: "1px solid rgba(140,160,185,.22)", color: "#C5D0DC", fontSize: 12, lineHeight: 1.4 },
   legalWrap: { width: "100%", maxWidth: 520, margin: "0 auto", padding: "8px 4px" },
 };
 
@@ -1308,6 +1308,19 @@ if (typeof document !== "undefined") {
     @keyframes ceoAuthCardIn {
       from { opacity: 0; transform: translateY(12px); }
       to { opacity: 1; transform: translateY(0); }
+    }
+    .ceo-auth-logo {
+      width: min(42vw, 160px) !important;
+      height: auto !important;
+      max-width: 160px;
+      display: block;
+      margin: 0 auto;
+      filter: drop-shadow(0 12px 32px rgba(140,160,185,.25));
+    }
+    .ceo-boot-logo {
+      position: relative;
+      z-index: 2;
+      display: block;
     }
     .ceo-auth-card {
       animation: ceoAuthCardIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
