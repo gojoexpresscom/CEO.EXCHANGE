@@ -1562,8 +1562,8 @@ function Home({
     } catch {
       // load errors already handled inside loadAll
     } finally {
-      // Keep the Bybit-style top logo visible briefly so the motion reads
-      const wait = Math.max(0, 1400 - (Date.now() - started));
+      // Keep the animated emblem visible for ~3s so enter + loop motions can play
+      const wait = Math.max(0, 3000 - (Date.now() - started));
       window.setTimeout(() => {
         setIsRefreshing(false);
         setPullY(0);
@@ -1658,12 +1658,12 @@ function Home({
           if (top <= 180) setFabOpen(false);
         }}
       >
-        {/* Bybit-style pull-to-refresh: compact logo at top, content stays visible */}
+        {/* Pull-to-refresh: animated titanium emblem (no PNG / no gold shine) */}
         {(isRefreshing || pullY > 8) && (
           <div
             style={{
               ...styles.pullRefresh,
-              height: isRefreshing ? 52 : Math.max(pullY, 0),
+              height: isRefreshing ? 96 : Math.max(pullY, 0),
               opacity: isRefreshing ? 1 : Math.min(pullY / 64, 1),
               background: "transparent",
               backgroundColor: "transparent",
@@ -1680,9 +1680,12 @@ function Home({
                     : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
                 }}
               >
-                <CeoExchangeEmblemAnimated size={42} className="ceo-pull-logo" />
+                <CeoExchangeEmblemAnimated
+                  key={isRefreshing ? "refresh-active" : "refresh-pull"}
+                  size={56}
+                  className="ceo-pull-logo"
+                />
               </div>
-              {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
             </div>
           </div>
         )}
@@ -4722,8 +4725,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pullLogoWrap: {
     position: "relative",
-    width: 48,
-    height: 48,
+    width: 64,
+    height: 64,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -4735,8 +4738,8 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "none",
   },
   pullLogo: {
-    width: 42,
-    height: 42,
+    width: 56,
+    height: 56,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -4746,19 +4749,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: 0,
     boxShadow: "none",
-  },
-  pullShine: {
-    position: "absolute",
-    top: "10%",
-    bottom: "10%",
-    width: 12,
-    left: -18,
-    zIndex: 2,
-    background: "linear-gradient(90deg, transparent, rgba(168,181,196,0.55), transparent)",
-    transform: "skewX(-18deg)",
-    animation: "ceoPullShine 1.1s ease-in-out infinite",
-    pointerEvents: "none",
-    borderRadius: 0,
   },
 };
 
@@ -4788,12 +4778,6 @@ if (typeof document !== "undefined") {
         40% { transform: rotate(3deg) scale(1.02); }
         60% { transform: rotate(-2deg) scale(1.01); }
         80% { transform: rotate(1.5deg) scale(1.01); }
-      }
-      @keyframes ceoPullShine {
-        0% { left: -24px; opacity: 0; }
-        20% { opacity: 1; }
-        80% { opacity: 1; }
-        100% { left: 52px; opacity: 0; }
       }
       @keyframes ceoFadeIn {
         from { opacity: 0; }
