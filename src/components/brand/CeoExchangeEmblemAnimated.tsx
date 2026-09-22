@@ -5,29 +5,26 @@ export const CeoExchangeEmblemAnimated: React.FC<{
   className?: string;
 }> = ({ size = 120, className = '' }) => {
   /*
-   * IMPORTANT:
+   * IMPORTANT
    *
-   * There is NO timer here.
-   * There is NO network request here.
-   * There is NO fixed number of repetitions.
+   * This component does NOT control loading or networking.
    *
-   * The parent component controls how long this component exists.
+   * There is:
+   * - no setTimeout
+   * - no setInterval
+   * - no play counter
+   * - no fixed number of repetitions
+   * - no 3-second refresh
    *
-   * While this component is mounted:
-   *   → animation repeats continuously.
+   * If this component is mounted by a loading/refresh screen,
+   * the animation continues for as long as it remains mounted.
    *
-   * When the parent unmounts it after refresh/loading finishes:
-   *   → animation stops automatically.
+   * When the parent removes the component after loading finishes,
+   * the animation stops naturally.
    */
 
   const rawId = useId();
   const uid = rawId.replace(/:/g, '');
-
-  /*
-   * Unique SVG IDs.
-   * This prevents multiple CEO logos on the same page
-   * from sharing gradients, filters, clips or masks.
-   */
 
   const upperGradientId = `titanium-upper-${uid}`;
   const lowerGradientId = `titanium-lower-${uid}`;
@@ -53,9 +50,8 @@ export const CeoExchangeEmblemAnimated: React.FC<{
         aria-hidden="true"
       >
         <defs>
-
           {/* =====================================================
-              ORIGINAL CEO EXCHANGE TITANIUM GRADIENT
+              CEO TITANIUM GRADIENTS
               ===================================================== */}
 
           <linearGradient
@@ -89,7 +85,7 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           </linearGradient>
 
           {/* =====================================================
-              CENTER DIAMOND GLOW
+              CENTER GLOW
               ===================================================== */}
 
           <radialGradient
@@ -119,7 +115,7 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           </radialGradient>
 
           {/* =====================================================
-              ORIGINAL BRACKET SHADOW
+              BRACKET SHADOW
               ===================================================== */}
 
           <filter
@@ -148,7 +144,7 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           </filter>
 
           {/* =====================================================
-              ORIGINAL SPECULAR GLOW
+              SPECULAR GLOW
               ===================================================== */}
 
           <filter
@@ -168,23 +164,19 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           </filter>
 
           {/* =====================================================
-              UPPER CLIP
+              CLIPS
               ===================================================== */}
 
           <clipPath id={upperClipId}>
             <path d="M 179 166 L 272 166 L 354 248 L 323 279 L 276 233 L 212 233 L 212 205 L 143 205 Z" />
           </clipPath>
 
-          {/* =====================================================
-              LOWER CLIP
-              ===================================================== */}
-
           <clipPath id={lowerClipId}>
             <path d="M 333 346 L 240 346 L 158 264 L 189 233 L 236 279 L 300 279 L 300 307 L 369 307 Z" />
           </clipPath>
 
           {/* =====================================================
-              LIGHT SWEEP MASK
+              METALLIC LIGHT SWEEP
               ===================================================== */}
 
           <mask id={sweepMaskId}>
@@ -207,19 +199,19 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           >
             <stop
               offset="0%"
-              stopColor="#fff"
+              stopColor="#FFFFFF"
               stopOpacity="0"
             />
 
             <stop
               offset="50%"
-              stopColor="#fff"
+              stopColor="#FFFFFF"
               stopOpacity="0.5"
             />
 
             <stop
               offset="100%"
-              stopColor="#fff"
+              stopColor="#FFFFFF"
               stopOpacity="0"
             />
           </linearGradient>
@@ -227,8 +219,6 @@ export const CeoExchangeEmblemAnimated: React.FC<{
 
         {/* =====================================================
             CENTER GLOW
-
-            Always exists while the component is mounted.
             ===================================================== */}
 
         <circle
@@ -240,18 +230,13 @@ export const CeoExchangeEmblemAnimated: React.FC<{
         />
 
         {/* =====================================================
-            MAIN LOGO
-
-            The whole logo stays in the same place.
-
-            ONLY the upper and lower pieces move toward
-            and away from each other.
+            CEO LOGO
             ===================================================== */}
 
         <g className="cx-float">
 
           {/* ===================================================
-              UPPER CEO PIECE
+              UPPER HALF
               =================================================== */}
 
           <g
@@ -272,14 +257,14 @@ export const CeoExchangeEmblemAnimated: React.FC<{
                 y="120"
                 width="312"
                 height="272"
-                fill="#ffffff"
+                fill="#FFFFFF"
                 opacity="0.35"
               />
             </g>
           </g>
 
           {/* ===================================================
-              LOWER CEO PIECE
+              LOWER HALF
               =================================================== */}
 
           <g
@@ -300,7 +285,7 @@ export const CeoExchangeEmblemAnimated: React.FC<{
                 y="120"
                 width="312"
                 height="272"
-                fill="#ffffff"
+                fill="#FFFFFF"
                 opacity="0.35"
               />
             </g>
@@ -355,257 +340,181 @@ export const CeoExchangeEmblemAnimated: React.FC<{
 };
 
 
-/* ============================================================
-   CEO EXCHANGE NETWORK-DEPENDENT LOADING ANIMATION
-   ============================================================
+/* ==============================================================
+   CEO EXCHANGE LOGO ANIMATION
+   ==============================================================
 
-   IMPORTANT:
+   LOADING / REFRESH:
+   ------------------
+   The animation continuously runs while this component exists.
 
-   This file DOES NOT control the network.
+   Cycle:
+      separated
+          ↓
+      fast convergence
+          ↓
+      complete CEO logo
+          ↓
+      quick hold
+          ↓
+      separated
+          ↓
+      repeat
 
-   It does NOT use:
-     - setTimeout
-     - setInterval
-     - playCount
-     - fixed refresh count
-     - fixed loading duration
-     - 3-second replay timer
-     - 5.44-second wait
+   No fade-out.
+   No JavaScript timer.
+   No fixed number of loops.
+   No network logic.
 
-   The PARENT decides when this component is mounted.
+   AUTH SCREEN:
+   -----------
+   .ceo-auth-logo
+   .ceo-boot-logo
 
-   While mounted:
-       animation runs forever.
+   are explicitly STATIC.
 
-   When parent unmounts:
-       animation stops immediately.
+   This means AuthScreen gets only the finished CEO logo.
 
-   ============================================================
-
-   ANIMATION:
-
-       START
-         ↓
-       upper piece is separated
-       lower piece is separated
-         ↓
-       both move toward center
-         ↓
-       complete CEO logo
-         ↓
-       stays together briefly
-         ↓
-       smoothly separates again
-         ↓
-       comes together again
-         ↓
-       forever...
-
-   There is NO opacity fade-out.
-
-   ============================================================ */
+   ============================================================== */
 
 const css = `
 
-  /* ==========================================================
-     MAIN CONTAINER
-
-     The complete logo itself does NOT move around the page.
-     ========================================================== */
+  /* ============================================================
+     MAIN LOGO
+     ============================================================ */
 
   .cx-float {
     transform-origin: center;
   }
 
 
-  /* ==========================================================
-     UPPER PIECE
-
-     Starts:
-       upper + left
-
-     Moves:
-       toward center
-
-     Then:
-       remains visible and together
-
-     Then:
-       separates again for the next cycle.
-     ========================================================== */
+  /* ============================================================
+     FAST UPPER CONVERGENCE
+     
+     Approximately 1.6 seconds per full cycle.
+     
+     The upper section starts separated,
+     comes quickly into the center,
+     briefly stays together,
+     then separates for the next cycle.
+     ============================================================ */
 
   .cx-upper {
     transform-box: view-box;
     transform-origin: center;
+    will-change: transform;
 
     animation:
       cx-upper-refresh
-      2.72s
-      cubic-bezier(.22,.9,.3,1)
+      1.6s
+      cubic-bezier(.22,.88,.32,1)
       infinite;
   }
 
 
   @keyframes cx-upper-refresh {
 
-    /* Start separated */
     0% {
       opacity: 1;
-      transform:
-        translate(-58px, -28px);
+      transform: translate(-58px, -28px);
     }
 
-    /* Begin moving toward center */
     18% {
       opacity: 1;
-      transform:
-        translate(-46px, -22px);
+      transform: translate(-38px, -18px);
     }
 
-    /* Continue convergence */
     38% {
       opacity: 1;
-      transform:
-        translate(-25px, -12px);
+      transform: translate(-15px, -7px);
     }
 
-    /* Almost together */
-    55% {
+    52% {
       opacity: 1;
-      transform:
-        translate(-7px, -3px);
+      transform: translate(0, 0);
     }
 
-    /* Fully together */
-    65% {
+    67% {
       opacity: 1;
-      transform:
-        translate(0, 0);
+      transform: translate(0, 0);
     }
 
-    /* Stay together */
-    72% {
+    80% {
       opacity: 1;
-      transform:
-        translate(0, 0);
+      transform: translate(-18px, -9px);
     }
 
-    /* Begin next separation */
-    84% {
-      opacity: 1;
-      transform:
-        translate(-12px, -6px);
-    }
-
-    /* Back to separated position */
     100% {
       opacity: 1;
-      transform:
-        translate(-58px, -28px);
+      transform: translate(-58px, -28px);
     }
   }
 
 
-  /* ==========================================================
-     LOWER PIECE
-
-     Starts:
-       lower + right
-
-     Moves:
-       toward center
-
-     Then:
-       remains together
-
-     Then:
-       separates again.
-
-     OPACITY NEVER BECOMES ZERO.
-     ========================================================== */
+  /* ============================================================
+     FAST LOWER CONVERGENCE
+     ============================================================ */
 
   .cx-lower {
     transform-box: view-box;
     transform-origin: center;
+    will-change: transform;
 
     animation:
       cx-lower-refresh
-      2.72s
-      cubic-bezier(.22,.9,.3,1)
+      1.6s
+      cubic-bezier(.22,.88,.32,1)
       infinite;
   }
 
 
   @keyframes cx-lower-refresh {
 
-    /* Start separated */
     0% {
       opacity: 1;
-      transform:
-        translate(58px, 28px);
+      transform: translate(58px, 28px);
     }
 
-    /* Begin moving toward center */
     18% {
       opacity: 1;
-      transform:
-        translate(46px, 22px);
+      transform: translate(38px, 18px);
     }
 
-    /* Continue convergence */
     38% {
       opacity: 1;
-      transform:
-        translate(25px, 12px);
+      transform: translate(15px, 7px);
     }
 
-    /* Almost together */
-    55% {
+    52% {
       opacity: 1;
-      transform:
-        translate(7px, 3px);
+      transform: translate(0, 0);
     }
 
-    /* Fully together */
-    65% {
+    67% {
       opacity: 1;
-      transform:
-        translate(0, 0);
+      transform: translate(0, 0);
     }
 
-    /* Stay together */
-    72% {
+    80% {
       opacity: 1;
-      transform:
-        translate(0, 0);
+      transform: translate(18px, 9px);
     }
 
-    /* Begin next separation */
-    84% {
-      opacity: 1;
-      transform:
-        translate(12px, 6px);
-    }
-
-    /* Back to separated position */
     100% {
       opacity: 1;
-      transform:
-        translate(58px, 28px);
+      transform: translate(58px, 28px);
     }
   }
 
 
-  /* ==========================================================
+  /* ============================================================
      CENTER GLOW
-
-     Never disappears.
-     ========================================================== */
+     ============================================================ */
 
   .cx-core-glow {
     animation:
       cx-core-pulse
-      2.2s
+      1.6s
       ease-in-out
       infinite;
   }
@@ -615,7 +524,7 @@ const css = `
 
     0%,
     100% {
-      opacity: .72;
+      opacity: .68;
     }
 
     50% {
@@ -624,21 +533,19 @@ const css = `
   }
 
 
-  /* ==========================================================
+  /* ============================================================
      CENTER DIAMOND
-
-     Stays visible.
-     Small breathing/pulse effect.
-     ========================================================== */
+     ============================================================ */
 
   .cx-diamond {
     transform-box: fill-box;
     transform-origin: center;
+    will-change: transform;
 
     animation:
       cx-diamond-pulse
-      2.72s
-      cubic-bezier(.34,1.35,.4,1)
+      1.6s
+      cubic-bezier(.34,1.25,.4,1)
       infinite;
   }
 
@@ -647,72 +554,49 @@ const css = `
 
     0% {
       opacity: 1;
-      transform:
-        scale(.94)
-        rotate(0deg);
+      transform: scale(.94);
     }
 
-    22% {
+    42% {
       opacity: 1;
-      transform:
-        scale(1)
-        rotate(0deg);
+      transform: scale(1);
     }
 
-    55% {
+    54% {
       opacity: 1;
-      transform:
-        scale(1.08)
-        rotate(0deg);
+      transform: scale(1.07);
     }
 
     68% {
       opacity: 1;
-      transform:
-        scale(1)
-        rotate(0deg);
-    }
-
-    82% {
-      opacity: 1;
-      transform:
-        scale(1.05)
-        rotate(0deg);
+      transform: scale(1);
     }
 
     100% {
       opacity: 1;
-      transform:
-        scale(.94)
-        rotate(0deg);
+      transform: scale(.94);
     }
   }
 
 
-  /* ==========================================================
-     SPECULAR LINES
-
-     They remain visible.
-     ========================================================== */
+  /* ============================================================
+     SPECULAR HIGHLIGHTS
+     ============================================================ */
 
   .cx-spec {
     stroke-dasharray: 110;
+    will-change: stroke-dashoffset, opacity;
 
     animation:
       cx-spec-refresh
-      2.72s
+      1.6s
       ease-in-out
       infinite;
   }
 
 
-  .cx-spec-a {
-    animation-delay: 0s;
-  }
-
-
   .cx-spec-b {
-    animation-delay: .08s;
+    animation-delay: .04s;
   }
 
 
@@ -723,28 +607,23 @@ const css = `
       opacity: .25;
     }
 
-    18% {
-      stroke-dashoffset: 75;
-      opacity: .55;
+    30% {
+      stroke-dashoffset: 35;
+      opacity: .8;
     }
 
-    38% {
-      stroke-dashoffset: 25;
-      opacity: .85;
-    }
-
-    55% {
+    52% {
       stroke-dashoffset: 0;
       opacity: 1;
     }
 
-    70% {
+    68% {
       stroke-dashoffset: 0;
       opacity: .72;
     }
 
-    84% {
-      stroke-dashoffset: 0;
+    82% {
+      stroke-dashoffset: 35;
       opacity: .55;
     }
 
@@ -755,16 +634,14 @@ const css = `
   }
 
 
-  /* ==========================================================
-     LIGHT SWEEP
-
-     Subtle sweep over the metallic pieces.
-     ========================================================== */
+  /* ============================================================
+     METALLIC LIGHT SWEEP
+     ============================================================ */
 
   .cx-sweep-rect {
     animation:
       cx-sweep-refresh
-      2.72s
+      1.6s
       cubic-bezier(.45,0,.25,1)
       infinite;
   }
@@ -778,16 +655,16 @@ const css = `
     }
 
     18% {
-      transform: translateX(40px);
-      opacity: .4;
+      transform: translateX(80px);
+      opacity: .35;
     }
 
-    48% {
+    45% {
       transform: translateX(430px);
       opacity: .7;
     }
 
-    62% {
+    60% {
       transform: translateX(760px);
       opacity: 0;
     }
@@ -799,13 +676,86 @@ const css = `
   }
 
 
-  /* ==========================================================
+  /* ============================================================
+     AUTH SCREEN — STATIC LOGO
+     ============================================================
+
+     AuthScreen uses:
+       ceo-auth-logo
+       ceo-boot-logo
+
+     These must NEVER animate.
+
+     This override is deliberately applied to every animated
+     child inside those SVGs.
+     ============================================================ */
+
+  .ceo-auth-logo .cx-upper,
+  .ceo-auth-logo .cx-lower,
+  .ceo-auth-logo .cx-core-glow,
+  .ceo-auth-logo .cx-diamond,
+  .ceo-auth-logo .cx-spec,
+  .ceo-auth-logo .cx-sweep-rect,
+
+  .ceo-boot-logo .cx-upper,
+  .ceo-boot-logo .cx-lower,
+  .ceo-boot-logo .cx-core-glow,
+  .ceo-boot-logo .cx-diamond,
+  .ceo-boot-logo .cx-spec,
+  .ceo-boot-logo .cx-sweep-rect {
+    animation: none !important;
+  }
+
+
+  /* Static final positions for AuthScreen */
+
+  .ceo-auth-logo .cx-upper,
+  .ceo-boot-logo .cx-upper {
+    opacity: 1 !important;
+    transform: translate(0, 0) !important;
+  }
+
+
+  .ceo-auth-logo .cx-lower,
+  .ceo-boot-logo .cx-lower {
+    opacity: 1 !important;
+    transform: translate(0, 0) !important;
+  }
+
+
+  .ceo-auth-logo .cx-core-glow,
+  .ceo-boot-logo .cx-core-glow {
+    opacity: .8 !important;
+  }
+
+
+  .ceo-auth-logo .cx-diamond,
+  .ceo-boot-logo .cx-diamond {
+    opacity: 1 !important;
+    transform: scale(1) !important;
+  }
+
+
+  .ceo-auth-logo .cx-spec,
+  .ceo-boot-logo .cx-spec {
+    stroke-dashoffset: 0 !important;
+    opacity: .75 !important;
+  }
+
+
+  .ceo-auth-logo .cx-sweep-rect,
+  .ceo-boot-logo .cx-sweep-rect {
+    opacity: 0 !important;
+    transform: translateX(760px) !important;
+  }
+
+
+  /* ============================================================
      REDUCED MOTION
-     ========================================================== */
+     ============================================================ */
 
   @media (prefers-reduced-motion: reduce) {
 
-    .cx-float,
     .cx-upper,
     .cx-lower,
     .cx-core-glow,
@@ -827,9 +777,7 @@ const css = `
 
     .cx-diamond {
       opacity: 1;
-      transform:
-        scale(1)
-        rotate(0deg);
+      transform: scale(1);
     }
 
     .cx-spec {
@@ -838,8 +786,8 @@ const css = `
     }
 
     .cx-sweep-rect {
-      transform: translateX(760px);
       opacity: 0;
+      transform: translateX(760px);
     }
   }
 `;
