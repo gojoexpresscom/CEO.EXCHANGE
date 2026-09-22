@@ -11,6 +11,7 @@ import SupportChat from "./SupportChat";
 import { PROMO_CARDS, type PromoCardItem } from "../promotion/content";
 import BottomNav from "../nav/BottomNav";
 import type { NavPage } from "../../lib/types";
+import { CeoExchangeEmblemAnimated } from "@/components/brand/CeoExchangeEmblemAnimated";
 
 
 /** Catches render errors so one failed child cannot blank the entire Home page. */
@@ -1590,7 +1591,9 @@ function Home({
     return (
       <div style={styles.brandedLoader}>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <div style={styles.brandedSpinner} />
+        <div style={styles.brandedLogoWrap}>
+          <CeoExchangeEmblemAnimated size={88} className="ceo-home-boot-logo" />
+        </div>
         <span style={styles.brandedLoaderText}>Loading…</span>
       </div>
     );
@@ -1669,16 +1672,16 @@ function Home({
             aria-label={isRefreshing ? "Refreshing" : undefined}
           >
             <div style={styles.pullLogoWrap}>
-              <img
-                src="/ceo-auth-reference-transparent.png"
-                alt="CEO"
+              <div
                 style={{
                   ...styles.pullLogo,
                   transform: isRefreshing
                     ? undefined
                     : `scale(${0.65 + Math.min(pullY / 64, 1) * 0.35})`,
                 }}
-              />
+              >
+                <CeoExchangeEmblemAnimated size={42} className="ceo-pull-logo" />
+              </div>
               {isRefreshing && <span style={styles.pullShine} aria-hidden="true" />}
             </div>
           </div>
@@ -2888,10 +2891,8 @@ function DepositModal({
       {transitioning && (
         <div style={styles.stepLoader}>
           <div style={styles.brandedLogoWrap}>
-            <img src="/ceo-auth-reference-transparent.png" alt="CEO" style={styles.brandedLogo} />
-            <div style={styles.brandedPulse} />
+            <CeoExchangeEmblemAnimated size={72} className="ceo-step-logo" />
           </div>
-          <div style={styles.brandedSpinner} />
         </div>
       )}
 
@@ -4586,7 +4587,7 @@ const styles: Record<string, React.CSSProperties> = {
   brandedLoader: {
     minHeight: "100vh",
     background: BG,
-    color: GOLD_LIGHT,
+    color: "#D4DCE6",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -4605,7 +4606,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 72,
     height: 72,
     objectFit: "contain",
-    borderRadius: 18,
     position: "relative",
     zIndex: 2,
   },
@@ -4613,22 +4613,22 @@ const styles: Record<string, React.CSSProperties> = {
     position: "absolute",
     inset: 0,
     borderRadius: 22,
-    background: "radial-gradient(circle, rgba(245,181,27,0.35) 0%, transparent 70%)",
+    background: "radial-gradient(circle, rgba(168,181,196,0.35) 0%, transparent 70%)",
     animation: "ceoPulse 1.6s ease-in-out infinite",
   },
   brandedSpinner: {
     width: 26,
     height: 26,
     borderRadius: "50%",
-    border: "2.5px solid #2a2110",
-    borderTopColor: GOLD,
+    border: "2.5px solid #2a2e34",
+    borderTopColor: "#A8B5C4",
     animation: "spin 0.85s linear infinite",
   },
   brandedLoaderText: {
     fontSize: 14,
     fontWeight: 600,
     letterSpacing: "0.02em",
-    color: "#c9a227",
+    color: "#A8B5C4",
   },
   sheetHandle: {
     width: 42,
@@ -4737,17 +4737,15 @@ const styles: Record<string, React.CSSProperties> = {
   pullLogo: {
     width: 42,
     height: 42,
-    objectFit: "contain",
-    display: "block",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     position: "relative",
     zIndex: 1,
     background: "transparent",
-    backgroundColor: "transparent",
     border: "none",
     borderRadius: 0,
     boxShadow: "none",
-    // Knock out any residual dark square baked into the PNG
-    mixBlendMode: "screen" as const,
   },
   pullShine: {
     position: "absolute",
@@ -4756,7 +4754,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 12,
     left: -18,
     zIndex: 2,
-    background: "linear-gradient(90deg, transparent, rgba(245,181,27,0.65), transparent)",
+    background: "linear-gradient(90deg, transparent, rgba(168,181,196,0.55), transparent)",
     transform: "skewX(-18deg)",
     animation: "ceoPullShine 1.1s ease-in-out infinite",
     pointerEvents: "none",
