@@ -1562,8 +1562,8 @@ function Home({
     } catch {
       // load errors already handled inside loadAll
     } finally {
-      // Keep the animated emblem visible for ~3s so enter + loop motions can play
-      const wait = Math.max(0, 3000 - (Date.now() - started));
+      // Hold ~2 × 2.72s so both BingX-style cycles finish; logo then stays stable
+      const wait = Math.max(0, 5440 - (Date.now() - started));
       window.setTimeout(() => {
         setIsRefreshing(false);
         setPullY(0);
