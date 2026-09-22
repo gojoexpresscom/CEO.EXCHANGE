@@ -390,13 +390,11 @@ const css = `
 
   /* ============================================================
      FAST UPPER CONVERGENCE
-     
-     Approximately 1.6 seconds per full cycle.
-     
-     The upper section starts separated,
-     comes quickly into the center,
-     briefly stays together,
-     then separates for the next cycle.
+
+     Full cycle ≈ 1.5s
+     0%–40%   → fast soft convergence (~600ms)
+     40%–60%  → COMPLETE logo HOLD (~300ms) at translate(0,0)
+     60%–100% → smooth separation (~600ms)
      ============================================================ */
 
   .cx-upper {
@@ -406,7 +404,7 @@ const css = `
 
     animation:
       cx-upper-refresh
-      1.6s
+      1.5s
       cubic-bezier(.22,.88,.32,1)
       infinite;
   }
@@ -421,27 +419,29 @@ const css = `
 
     18% {
       opacity: 1;
-      transform: translate(-38px, -18px);
+      transform: translate(-32px, -15px);
     }
 
-    38% {
+    32% {
       opacity: 1;
-      transform: translate(-15px, -7px);
+      transform: translate(-10px, -5px);
     }
 
-    52% {
-      opacity: 1;
-      transform: translate(0, 0);
-    }
-
-    67% {
+    /* Arrived — complete logo */
+    40% {
       opacity: 1;
       transform: translate(0, 0);
     }
 
-    80% {
+    /* HOLD ~300ms (40%→60% of 1.5s) — fully assembled, stable */
+    60% {
       opacity: 1;
-      transform: translate(-18px, -9px);
+      transform: translate(0, 0);
+    }
+
+    78% {
+      opacity: 1;
+      transform: translate(-22px, -11px);
     }
 
     100% {
@@ -462,7 +462,7 @@ const css = `
 
     animation:
       cx-lower-refresh
-      1.6s
+      1.5s
       cubic-bezier(.22,.88,.32,1)
       infinite;
   }
@@ -477,27 +477,28 @@ const css = `
 
     18% {
       opacity: 1;
-      transform: translate(38px, 18px);
+      transform: translate(32px, 15px);
     }
 
-    38% {
+    32% {
       opacity: 1;
-      transform: translate(15px, 7px);
+      transform: translate(10px, 5px);
     }
 
-    52% {
-      opacity: 1;
-      transform: translate(0, 0);
-    }
-
-    67% {
+    40% {
       opacity: 1;
       transform: translate(0, 0);
     }
 
-    80% {
+    /* HOLD ~300ms — fully assembled with upper */
+    60% {
       opacity: 1;
-      transform: translate(18px, 9px);
+      transform: translate(0, 0);
+    }
+
+    78% {
+      opacity: 1;
+      transform: translate(22px, 11px);
     }
 
     100% {
@@ -508,13 +509,13 @@ const css = `
 
 
   /* ============================================================
-     CENTER GLOW
+     CENTER GLOW — peaks during assembled hold
      ============================================================ */
 
   .cx-core-glow {
     animation:
       cx-core-pulse
-      1.6s
+      1.5s
       ease-in-out
       infinite;
   }
@@ -524,17 +525,18 @@ const css = `
 
     0%,
     100% {
-      opacity: .68;
+      opacity: .62;
     }
 
-    50% {
+    40%,
+    60% {
       opacity: 1;
     }
   }
 
 
   /* ============================================================
-     CENTER DIAMOND
+     CENTER DIAMOND — stable scale during hold
      ============================================================ */
 
   .cx-diamond {
@@ -544,7 +546,7 @@ const css = `
 
     animation:
       cx-diamond-pulse
-      1.6s
+      1.5s
       cubic-bezier(.34,1.25,.4,1)
       infinite;
   }
@@ -554,33 +556,29 @@ const css = `
 
     0% {
       opacity: 1;
-      transform: scale(.94);
+      transform: scale(.92);
     }
 
-    42% {
+    40% {
       opacity: 1;
       transform: scale(1);
     }
 
-    54% {
-      opacity: 1;
-      transform: scale(1.07);
-    }
-
-    68% {
+    /* Hold at complete logo scale */
+    60% {
       opacity: 1;
       transform: scale(1);
     }
 
     100% {
       opacity: 1;
-      transform: scale(.94);
+      transform: scale(.92);
     }
   }
 
 
   /* ============================================================
-     SPECULAR HIGHLIGHTS
+     SPECULAR HIGHLIGHTS — fully drawn during hold
      ============================================================ */
 
   .cx-spec {
@@ -589,7 +587,7 @@ const css = `
 
     animation:
       cx-spec-refresh
-      1.6s
+      1.5s
       ease-in-out
       infinite;
   }
@@ -604,44 +602,45 @@ const css = `
 
     0% {
       stroke-dashoffset: 110;
-      opacity: .25;
+      opacity: .3;
     }
 
-    30% {
-      stroke-dashoffset: 35;
-      opacity: .8;
+    28% {
+      stroke-dashoffset: 30;
+      opacity: .85;
     }
 
-    52% {
+    40% {
       stroke-dashoffset: 0;
       opacity: 1;
     }
 
-    68% {
+    /* Hold — lines fully visible on complete logo */
+    60% {
       stroke-dashoffset: 0;
-      opacity: .72;
+      opacity: 1;
     }
 
     82% {
-      stroke-dashoffset: 35;
-      opacity: .55;
+      stroke-dashoffset: 40;
+      opacity: .5;
     }
 
     100% {
       stroke-dashoffset: 110;
-      opacity: .25;
+      opacity: .3;
     }
   }
 
 
   /* ============================================================
-     METALLIC LIGHT SWEEP
+     METALLIC LIGHT SWEEP — passes during/after assembly
      ============================================================ */
 
   .cx-sweep-rect {
     animation:
       cx-sweep-refresh
-      1.6s
+      1.5s
       cubic-bezier(.45,0,.25,1)
       infinite;
   }
