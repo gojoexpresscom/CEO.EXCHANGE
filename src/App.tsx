@@ -11,6 +11,7 @@ import AssetsPage from "./components/assets/AssetsPage";
 import EarnPage from "./components/earn/EarnPage";
 import { supabase } from "./lib/supabase";
 import type { NavPage } from "./lib/types";
+import { CeoExchangeEmblemAnimated } from "@/components/brand/CeoExchangeEmblemAnimated";
 
 type AppRoute =
   | { page: "home" }
@@ -283,27 +284,17 @@ export default function App() {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: 14,
+          gap: 18,
           background: "#050505",
-          color: "#c9a227",
+          color: "#A8B5C4",
           fontFamily:
             "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
         }}
       >
-        <div
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: "50%",
-            border: "2.5px solid #2a2110",
-            borderTopColor: "#f5b51b",
-            animation: "spin 0.85s linear infinite",
-          }}
-        />
+        <CeoExchangeEmblemAnimated size={96} className="ceo-app-boot-logo" />
         <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "0.02em" }}>
           Loading…
         </span>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
