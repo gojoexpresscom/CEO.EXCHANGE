@@ -172,36 +172,128 @@ export const CeoExchangeEmblemAnimated: React.FC<{
 };
 
 const css = `
-  .cx-float { animation: cx-enter-float 1s cubic-bezier(.22,.9,.3,1) both,
-                          cx-idle-float 7s 1.6s ease-in-out infinite alternate; }
-  .cx-core-glow { animation: cx-enter 1.2s ease-out both,
-                              cx-core-pulse 3.2s ease-in-out infinite; }
-  .cx-upper { animation: cx-enter-upper .9s .35s cubic-bezier(.16,.8,.24,1) both; }
-  .cx-lower { animation: cx-enter-lower .9s .5s cubic-bezier(.16,.8,.24,1) both; }
-  .cx-diamond { transform-box: fill-box; transform-origin: center;
-                animation: cx-enter-diamond .7s 1s cubic-bezier(.34,1.6,.4,1) both,
-                           cx-diamond-pulse 3.2s ease-in-out infinite; }
-  .cx-spec { stroke-dasharray: 110; stroke-dashoffset: 110;
-             animation: cx-draw .6s ease-out forwards, cx-spec-flash 4.5s ease-in-out infinite; }
-  .cx-spec-a { animation-delay: 1.25s, 2.4s; }
-  .cx-spec-b { animation-delay: 1.4s, 2.9s; }
-  .cx-sweep-rect { animation: cx-sweep 5.5s 2s cubic-bezier(.45,0,.25,1) infinite; }
+  /* BingX-style loading refresh:
+     cycle ≈ 2.72s
+     play exactly 2 cycles
+     then remain on the finished CEO logo */
+  .cx-float {
+    animation: cx-refresh-cycle 2.72s cubic-bezier(.22,.9,.3,1) 0s 2 both;
+  }
 
-  @keyframes cx-enter-float { from { opacity: 0; transform: translateY(26px) scale(.96); } to { opacity: 1; } }
-  @keyframes cx-enter { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes cx-enter-upper { from { opacity: 0; transform: translate(-46px,-18px); } to { opacity: 1; transform: none; } }
-  @keyframes cx-enter-lower { from { opacity: 0; transform: translate(46px,18px); } to { opacity: 1; transform: none; } }
-  @keyframes cx-enter-diamond { from { opacity: 0; transform: scale(0) rotate(45deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
-  @keyframes cx-draw { to { stroke-dashoffset: 0; } }
-  @keyframes cx-idle-float { from { transform: translateY(0); } to { transform: translateY(-9px); } }
-  @keyframes cx-core-pulse { 0%,100% { opacity: .75; } 50% { opacity: 1; } }
-  @keyframes cx-diamond-pulse { 0%,100% { transform: scale(1); opacity: .92; } 50% { transform: scale(1.09); opacity: 1; } }
-  @keyframes cx-spec-flash { 0%,78%,100% { opacity: .55; } 86% { opacity: 1; } }
-  @keyframes cx-sweep { 0% { transform: translateX(0); } 42%,100% { transform: translateX(760px); } }
+  .cx-core-glow {
+    animation: cx-core-cycle 2.72s ease-out 0s 2 both;
+  }
+
+  .cx-upper {
+    animation: cx-enter-upper 0.55s 0.08s cubic-bezier(.16,.8,.24,1) both;
+  }
+
+  .cx-lower {
+    animation: cx-enter-lower 0.55s 0.14s cubic-bezier(.16,.8,.24,1) both;
+  }
+
+  .cx-diamond {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: cx-diamond-cycle 2.72s cubic-bezier(.34,1.4,.4,1) 0s 2 both;
+  }
+
+  .cx-spec {
+    stroke-dasharray: 110;
+    stroke-dashoffset: 110;
+    animation: cx-draw 0.55s ease-out forwards, cx-spec-cycle 2.72s ease-in-out 0s 2 both;
+  }
+
+  .cx-spec-a { animation-delay: 0.35s, 0s; }
+  .cx-spec-b { animation-delay: 0.45s, 0.12s; }
+
+  .cx-sweep-rect {
+    animation: cx-sweep 2.72s cubic-bezier(.45,0,.25,1) 0s 2 both;
+  }
+
+  @keyframes cx-refresh-cycle {
+    0% {
+      opacity: 0;
+      transform: translateY(18px) scale(.92);
+    }
+    10% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    28% {
+      opacity: 1;
+      transform: translateY(-2px) scale(1.015);
+    }
+    48% {
+      opacity: .72;
+      transform: translateY(0) scale(.965);
+    }
+    62% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    82% {
+      opacity: 1;
+      transform: translateY(-1px) scale(1.008);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes cx-core-cycle {
+    0% { opacity: 0; }
+    12% { opacity: .85; }
+    48% { opacity: .55; }
+    62% { opacity: .9; }
+    100% { opacity: .8; }
+  }
+
+  @keyframes cx-enter-upper {
+    from { opacity: 0; transform: translate(-28px, -12px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @keyframes cx-enter-lower {
+    from { opacity: 0; transform: translate(28px, 12px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @keyframes cx-diamond-cycle {
+    0% { opacity: 0; transform: scale(0) rotate(45deg); }
+    12% { opacity: 1; transform: scale(1) rotate(0); }
+    48% { opacity: .85; transform: scale(.96) rotate(0); }
+    62% { opacity: 1; transform: scale(1.04) rotate(0); }
+    100% { opacity: 1; transform: scale(1) rotate(0); }
+  }
+
+  @keyframes cx-draw {
+    to { stroke-dashoffset: 0; }
+  }
+
+  @keyframes cx-spec-cycle {
+    0%, 70%, 100% { opacity: .7; }
+    40% { opacity: 1; }
+    48% { opacity: .45; }
+    62% { opacity: 1; }
+  }
+
+  @keyframes cx-sweep {
+    0% { transform: translateX(0); }
+    42% { transform: translateX(760px); }
+    100% { transform: translateX(760px); }
+  }
 
   @media (prefers-reduced-motion: reduce) {
-    .cx-float, .cx-core-glow, .cx-upper, .cx-lower, .cx-diamond, .cx-spec, .cx-sweep-rect { animation: none; }
-    .cx-spec { stroke-dashoffset: 0; }
+    .cx-float, .cx-core-glow, .cx-upper, .cx-lower, .cx-diamond, .cx-spec, .cx-sweep-rect {
+      animation: none !important;
+    }
+    .cx-float, .cx-core-glow, .cx-upper, .cx-lower, .cx-diamond {
+      opacity: 1;
+      transform: none;
+    }
+    .cx-spec { stroke-dashoffset: 0; opacity: 1; }
   }
 `;
 
