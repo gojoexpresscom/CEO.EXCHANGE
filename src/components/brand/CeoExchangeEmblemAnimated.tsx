@@ -5,16 +5,29 @@ export const CeoExchangeEmblemAnimated: React.FC<{
   className?: string;
 }> = ({ size = 120, className = '' }) => {
   /*
-   * Each logo instance gets unique SVG IDs.
+   * IMPORTANT:
    *
-   * This is important because Home.tsx can render more than one
-   * CeoExchangeEmblemAnimated at the same time.
+   * There is NO timer here.
+   * There is NO network request here.
+   * There is NO fixed number of repetitions.
    *
-   * Without unique IDs, gradients/filters/masks can resolve to
-   * another SVG instance and make the logo appear invisible.
+   * The parent component controls how long this component exists.
+   *
+   * While this component is mounted:
+   *   → animation repeats continuously.
+   *
+   * When the parent unmounts it after refresh/loading finishes:
+   *   → animation stops automatically.
    */
+
   const rawId = useId();
   const uid = rawId.replace(/:/g, '');
+
+  /*
+   * Unique SVG IDs.
+   * This prevents multiple CEO logos on the same page
+   * from sharing gradients, filters, clips or masks.
+   */
 
   const upperGradientId = `titanium-upper-${uid}`;
   const lowerGradientId = `titanium-lower-${uid}`;
@@ -40,8 +53,9 @@ export const CeoExchangeEmblemAnimated: React.FC<{
         aria-hidden="true"
       >
         <defs>
+
           {/* =====================================================
-              ORIGINAL CEO EXCHANGE GRADIENTS
+              ORIGINAL CEO EXCHANGE TITANIUM GRADIENT
               ===================================================== */}
 
           <linearGradient
@@ -74,6 +88,10 @@ export const CeoExchangeEmblemAnimated: React.FC<{
             <stop offset="100%" stopColor="#B2C0CE" />
           </linearGradient>
 
+          {/* =====================================================
+              CENTER DIAMOND GLOW
+              ===================================================== */}
+
           <radialGradient
             id={diamondGlowId}
             cx="256"
@@ -86,11 +104,13 @@ export const CeoExchangeEmblemAnimated: React.FC<{
               stopColor="#FFFFFF"
               stopOpacity="0.8"
             />
+
             <stop
               offset="40%"
               stopColor="#A5C2DE"
               stopOpacity="0.35"
             />
+
             <stop
               offset="100%"
               stopColor="#0A1017"
@@ -148,12 +168,16 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           </filter>
 
           {/* =====================================================
-              ORIGINAL CLIPPING PATHS
+              UPPER CLIP
               ===================================================== */}
 
           <clipPath id={upperClipId}>
             <path d="M 179 166 L 272 166 L 354 248 L 323 279 L 276 233 L 212 233 L 212 205 L 143 205 Z" />
           </clipPath>
+
+          {/* =====================================================
+              LOWER CLIP
+              ===================================================== */}
 
           <clipPath id={lowerClipId}>
             <path d="M 333 346 L 240 346 L 158 264 L 189 233 L 236 279 L 300 279 L 300 307 L 369 307 Z" />
@@ -203,6 +227,8 @@ export const CeoExchangeEmblemAnimated: React.FC<{
 
         {/* =====================================================
             CENTER GLOW
+
+            Always exists while the component is mounted.
             ===================================================== */}
 
         <circle
@@ -214,13 +240,18 @@ export const CeoExchangeEmblemAnimated: React.FC<{
         />
 
         {/* =====================================================
-            MAIN ANIMATED LOGO
+            MAIN LOGO
+
+            The whole logo stays in the same place.
+
+            ONLY the upper and lower pieces move toward
+            and away from each other.
             ===================================================== */}
 
         <g className="cx-float">
 
           {/* ===================================================
-              UPPER CEO BRACKET
+              UPPER CEO PIECE
               =================================================== */}
 
           <g
@@ -248,7 +279,7 @@ export const CeoExchangeEmblemAnimated: React.FC<{
           </g>
 
           {/* ===================================================
-              LOWER CEO BRACKET
+              LOWER CEO PIECE
               =================================================== */}
 
           <g
@@ -324,523 +355,439 @@ export const CeoExchangeEmblemAnimated: React.FC<{
 };
 
 
-/* =========================================================
-   CEO EXCHANGE LOADING ANIMATION
-   =========================================================
+/* ============================================================
+   CEO EXCHANGE NETWORK-DEPENDENT LOADING ANIMATION
+   ============================================================
 
-   ONE COMPLETE REFRESH:
-       0.00s → 2.72s
+   IMPORTANT:
 
-   THEN IT RESTARTS:
-       2.72s → 5.44s
-       5.44s → 8.16s
-       etc.
+   This file DOES NOT control the network.
 
-   It continues ONLY while this component is mounted.
+   It does NOT use:
+     - setTimeout
+     - setInterval
+     - playCount
+     - fixed refresh count
+     - fixed loading duration
+     - 3-second replay timer
+     - 5.44-second wait
 
-   Fast network:
-       loading finishes → component disappears → animation stops.
+   The PARENT decides when this component is mounted.
 
-   Slow network:
-       component stays mounted → animation keeps refreshing.
+   While mounted:
+       animation runs forever.
 
-   NO fixed number of repetitions.
+   When parent unmounts:
+       animation stops immediately.
 
-   ========================================================= */
+   ============================================================
+
+   ANIMATION:
+
+       START
+         ↓
+       upper piece is separated
+       lower piece is separated
+         ↓
+       both move toward center
+         ↓
+       complete CEO logo
+         ↓
+       stays together briefly
+         ↓
+       smoothly separates again
+         ↓
+       comes together again
+         ↓
+       forever...
+
+   There is NO opacity fade-out.
+
+   ============================================================ */
 
 const css = `
 
-  /* =====================================================
-     MAIN LOGO
-     ===================================================== */
+  /* ==========================================================
+     MAIN CONTAINER
+
+     The complete logo itself does NOT move around the page.
+     ========================================================== */
 
   .cx-float {
     transform-origin: center;
+  }
+
+
+  /* ==========================================================
+     UPPER PIECE
+
+     Starts:
+       upper + left
+
+     Moves:
+       toward center
+
+     Then:
+       remains visible and together
+
+     Then:
+       separates again for the next cycle.
+     ========================================================== */
+
+  .cx-upper {
+    transform-box: view-box;
+    transform-origin: center;
 
     animation:
-      cx-refresh-float
+      cx-upper-refresh
       2.72s
       cubic-bezier(.22,.9,.3,1)
-      0s
       infinite;
   }
 
 
-  /* =====================================================
+  @keyframes cx-upper-refresh {
+
+    /* Start separated */
+    0% {
+      opacity: 1;
+      transform:
+        translate(-58px, -28px);
+    }
+
+    /* Begin moving toward center */
+    18% {
+      opacity: 1;
+      transform:
+        translate(-46px, -22px);
+    }
+
+    /* Continue convergence */
+    38% {
+      opacity: 1;
+      transform:
+        translate(-25px, -12px);
+    }
+
+    /* Almost together */
+    55% {
+      opacity: 1;
+      transform:
+        translate(-7px, -3px);
+    }
+
+    /* Fully together */
+    65% {
+      opacity: 1;
+      transform:
+        translate(0, 0);
+    }
+
+    /* Stay together */
+    72% {
+      opacity: 1;
+      transform:
+        translate(0, 0);
+    }
+
+    /* Begin next separation */
+    84% {
+      opacity: 1;
+      transform:
+        translate(-12px, -6px);
+    }
+
+    /* Back to separated position */
+    100% {
+      opacity: 1;
+      transform:
+        translate(-58px, -28px);
+    }
+  }
+
+
+  /* ==========================================================
+     LOWER PIECE
+
+     Starts:
+       lower + right
+
+     Moves:
+       toward center
+
+     Then:
+       remains together
+
+     Then:
+       separates again.
+
+     OPACITY NEVER BECOMES ZERO.
+     ========================================================== */
+
+  .cx-lower {
+    transform-box: view-box;
+    transform-origin: center;
+
+    animation:
+      cx-lower-refresh
+      2.72s
+      cubic-bezier(.22,.9,.3,1)
+      infinite;
+  }
+
+
+  @keyframes cx-lower-refresh {
+
+    /* Start separated */
+    0% {
+      opacity: 1;
+      transform:
+        translate(58px, 28px);
+    }
+
+    /* Begin moving toward center */
+    18% {
+      opacity: 1;
+      transform:
+        translate(46px, 22px);
+    }
+
+    /* Continue convergence */
+    38% {
+      opacity: 1;
+      transform:
+        translate(25px, 12px);
+    }
+
+    /* Almost together */
+    55% {
+      opacity: 1;
+      transform:
+        translate(7px, 3px);
+    }
+
+    /* Fully together */
+    65% {
+      opacity: 1;
+      transform:
+        translate(0, 0);
+    }
+
+    /* Stay together */
+    72% {
+      opacity: 1;
+      transform:
+        translate(0, 0);
+    }
+
+    /* Begin next separation */
+    84% {
+      opacity: 1;
+      transform:
+        translate(12px, 6px);
+    }
+
+    /* Back to separated position */
+    100% {
+      opacity: 1;
+      transform:
+        translate(58px, 28px);
+    }
+  }
+
+
+  /* ==========================================================
      CENTER GLOW
-     ===================================================== */
+
+     Never disappears.
+     ========================================================== */
 
   .cx-core-glow {
     animation:
-      cx-refresh-core
-      2.72s
+      cx-core-pulse
+      2.2s
       ease-in-out
-      0s
       infinite;
   }
 
 
-  /* =====================================================
-     UPPER BRACKET
-     ===================================================== */
+  @keyframes cx-core-pulse {
 
-  .cx-upper {
-    transform-origin: center;
+    0%,
+    100% {
+      opacity: .72;
+    }
 
-    animation:
-      cx-refresh-upper
-      2.72s
-      cubic-bezier(.16,.8,.24,1)
-      0s
-      infinite;
+    50% {
+      opacity: 1;
+    }
   }
 
 
-  /* =====================================================
-     LOWER BRACKET
-     ===================================================== */
-
-  .cx-lower {
-    transform-origin: center;
-
-    animation:
-      cx-refresh-lower
-      2.72s
-      cubic-bezier(.16,.8,.24,1)
-      0s
-      infinite;
-  }
-
-
-  /* =====================================================
+  /* ==========================================================
      CENTER DIAMOND
-     ===================================================== */
+
+     Stays visible.
+     Small breathing/pulse effect.
+     ========================================================== */
 
   .cx-diamond {
     transform-box: fill-box;
     transform-origin: center;
 
     animation:
-      cx-refresh-diamond
+      cx-diamond-pulse
       2.72s
-      cubic-bezier(.34,1.6,.4,1)
-      0s
+      cubic-bezier(.34,1.35,.4,1)
       infinite;
   }
 
 
-  /* =====================================================
-     SPECULAR LINES
-     ===================================================== */
-
-  .cx-spec {
-    stroke-dasharray: 110;
-    stroke-dashoffset: 110;
-
-    animation:
-      cx-refresh-spec
-      2.72s
-      ease-out
-      0s
-      infinite;
-  }
-
-
-  /* =====================================================
-     LIGHT SWEEP
-     ===================================================== */
-
-  .cx-sweep-rect {
-    animation:
-      cx-refresh-sweep
-      2.72s
-      cubic-bezier(.45,0,.25,1)
-      0s
-      infinite;
-  }
-
-
-  /* =====================================================
-     MAIN REFRESH MOTION
-     ===================================================== */
-
-  @keyframes cx-refresh-float {
+  @keyframes cx-diamond-pulse {
 
     0% {
-      opacity: 0;
-      transform:
-        translateY(26px)
-        scale(.96);
-    }
-
-    10% {
       opacity: 1;
       transform:
-        translateY(0)
-        scale(1);
+        scale(.94)
+        rotate(0deg);
     }
 
-    23% {
+    22% {
       opacity: 1;
       transform:
-        translateY(-3px)
-        scale(1.015);
-    }
-
-    38% {
-      opacity: 1;
-      transform:
-        translateY(0)
-        scale(1);
-    }
-
-    50% {
-      opacity: .72;
-      transform:
-        translateY(0)
-        scale(.965);
-    }
-
-    62% {
-      opacity: 1;
-      transform:
-        translateY(0)
-        scale(1);
-    }
-
-    78% {
-      opacity: 1;
-      transform:
-        translateY(-1px)
-        scale(1.008);
-    }
-
-    88% {
-      opacity: 1;
-      transform:
-        translateY(0)
-        scale(1);
-    }
-
-    100% {
-      opacity: 0;
-      transform:
-        translateY(26px)
-        scale(.96);
-    }
-  }
-
-
-  /* =====================================================
-     CORE GLOW REFRESH
-     ===================================================== */
-
-  @keyframes cx-refresh-core {
-
-    0% {
-      opacity: 0;
-    }
-
-    10% {
-      opacity: .65;
-    }
-
-    24% {
-      opacity: .95;
-    }
-
-    40% {
-      opacity: .72;
+        scale(1)
+        rotate(0deg);
     }
 
     55% {
-      opacity: 1;
-    }
-
-    70% {
-      opacity: .78;
-    }
-
-    82% {
-      opacity: 1;
-    }
-
-    90% {
-      opacity: .75;
-    }
-
-    100% {
-      opacity: 0;
-    }
-  }
-
-
-  /* =====================================================
-     UPPER BRACKET REFRESH
-     ===================================================== */
-
-  @keyframes cx-refresh-upper {
-
-    0% {
-      opacity: 0;
-      transform:
-        translate(-46px,-18px);
-    }
-
-    12% {
-      opacity: .25;
-    }
-
-    27% {
-      opacity: 1;
-      transform:
-        translate(0,0);
-    }
-
-    40% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1.012);
-    }
-
-    52% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1);
-    }
-
-    72% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1.008);
-    }
-
-    88% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1);
-    }
-
-    100% {
-      opacity: 0;
-      transform:
-        translate(-46px,-18px);
-    }
-  }
-
-
-  /* =====================================================
-     LOWER BRACKET REFRESH
-     ===================================================== */
-
-  @keyframes cx-refresh-lower {
-
-    0% {
-      opacity: 0;
-      transform:
-        translate(46px,18px);
-    }
-
-    14% {
-      opacity: .25;
-    }
-
-    32% {
-      opacity: 1;
-      transform:
-        translate(0,0);
-    }
-
-    45% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1.012);
-    }
-
-    57% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1);
-    }
-
-    74% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1.008);
-    }
-
-    88% {
-      opacity: 1;
-      transform:
-        translate(0,0)
-        scale(1);
-    }
-
-    100% {
-      opacity: 0;
-      transform:
-        translate(46px,18px);
-    }
-  }
-
-
-  /* =====================================================
-     DIAMOND REFRESH
-     ===================================================== */
-
-  @keyframes cx-refresh-diamond {
-
-    0% {
-      opacity: 0;
-      transform:
-        scale(0)
-        rotate(45deg);
-    }
-
-    14% {
-      opacity: 0;
-      transform:
-        scale(.25)
-        rotate(35deg);
-    }
-
-    28% {
       opacity: 1;
       transform:
         scale(1.08)
         rotate(0deg);
     }
 
-    38% {
-      opacity: 1;
-      transform:
-        scale(.96)
-        rotate(0deg);
-    }
-
-    50% {
+    68% {
       opacity: 1;
       transform:
         scale(1)
         rotate(0deg);
     }
 
-    63% {
+    82% {
       opacity: 1;
       transform:
-        scale(1.09)
-        rotate(0deg);
-    }
-
-    74% {
-      opacity: .92;
-      transform:
-        scale(1)
-        rotate(0deg);
-    }
-
-    88% {
-      opacity: 1;
-      transform:
-        scale(1.04)
+        scale(1.05)
         rotate(0deg);
     }
 
     100% {
-      opacity: 0;
+      opacity: 1;
       transform:
-        scale(0)
-        rotate(45deg);
+        scale(.94)
+        rotate(0deg);
     }
   }
 
 
-  /* =====================================================
-     SPECULAR LINE REFRESH
-     ===================================================== */
+  /* ==========================================================
+     SPECULAR LINES
 
-  @keyframes cx-refresh-spec {
+     They remain visible.
+     ========================================================== */
+
+  .cx-spec {
+    stroke-dasharray: 110;
+
+    animation:
+      cx-spec-refresh
+      2.72s
+      ease-in-out
+      infinite;
+  }
+
+
+  .cx-spec-a {
+    animation-delay: 0s;
+  }
+
+
+  .cx-spec-b {
+    animation-delay: .08s;
+  }
+
+
+  @keyframes cx-spec-refresh {
 
     0% {
       stroke-dashoffset: 110;
-      opacity: 0;
+      opacity: .25;
     }
 
-    20% {
-      stroke-dashoffset: 110;
-      opacity: 0;
+    18% {
+      stroke-dashoffset: 75;
+      opacity: .55;
     }
 
-    35% {
-      stroke-dashoffset: 55;
-      opacity: .6;
+    38% {
+      stroke-dashoffset: 25;
+      opacity: .85;
     }
 
-    48% {
+    55% {
       stroke-dashoffset: 0;
       opacity: 1;
-    }
-
-    58% {
-      stroke-dashoffset: 0;
-      opacity: .55;
     }
 
     70% {
       stroke-dashoffset: 0;
-      opacity: 1;
+      opacity: .72;
     }
 
-    82% {
-      stroke-dashoffset: 0;
-      opacity: .55;
-    }
-
-    90% {
+    84% {
       stroke-dashoffset: 0;
       opacity: .55;
     }
 
     100% {
       stroke-dashoffset: 110;
-      opacity: 0;
+      opacity: .25;
     }
   }
 
 
-  /* =====================================================
-     LIGHT SWEEP REFRESH
-     ===================================================== */
+  /* ==========================================================
+     LIGHT SWEEP
 
-  @keyframes cx-refresh-sweep {
+     Subtle sweep over the metallic pieces.
+     ========================================================== */
+
+  .cx-sweep-rect {
+    animation:
+      cx-sweep-refresh
+      2.72s
+      cubic-bezier(.45,0,.25,1)
+      infinite;
+  }
+
+
+  @keyframes cx-sweep-refresh {
 
     0% {
-      transform: translateX(0);
+      transform: translateX(-80px);
       opacity: 0;
     }
 
-    14% {
-      transform: translateX(0);
-      opacity: 0;
+    18% {
+      transform: translateX(40px);
+      opacity: .4;
     }
 
-    24% {
-      opacity: 1;
+    48% {
+      transform: translateX(430px);
+      opacity: .7;
     }
 
-    58% {
-      transform: translateX(760px);
-      opacity: 1;
-    }
-
-    68% {
+    62% {
       transform: translateX(760px);
       opacity: 0;
     }
@@ -852,47 +799,42 @@ const css = `
   }
 
 
-  /* =====================================================
-     ACCESSIBILITY
-     ===================================================== */
+  /* ==========================================================
+     REDUCED MOTION
+     ========================================================== */
 
   @media (prefers-reduced-motion: reduce) {
 
     .cx-float,
-    .cx-core-glow,
     .cx-upper,
     .cx-lower,
+    .cx-core-glow,
     .cx-diamond,
     .cx-spec,
     .cx-sweep-rect {
       animation: none !important;
     }
 
-    .cx-float {
-      opacity: 1;
-      transform: none;
-    }
-
-    .cx-core-glow {
-      opacity: .75;
-    }
-
     .cx-upper,
     .cx-lower {
       opacity: 1;
-      transform: none;
+      transform: translate(0, 0);
+    }
+
+    .cx-core-glow {
+      opacity: .8;
     }
 
     .cx-diamond {
-      opacity: .92;
+      opacity: 1;
       transform:
         scale(1)
-        rotate(0);
+        rotate(0deg);
     }
 
     .cx-spec {
       stroke-dashoffset: 0;
-      opacity: .55;
+      opacity: .75;
     }
 
     .cx-sweep-rect {
