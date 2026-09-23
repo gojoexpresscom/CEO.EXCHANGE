@@ -1574,12 +1574,12 @@ function Home({
     pullYRef.current = PULL_THRESHOLD;
     setPullY(PULL_THRESHOLD);
 
-    // Let React paint the refresh indicator BEFORE the network work.
-    // Without this, a fast loadAll can batch true→false and never show the logo.
+    // 1) Force a paint so the fixed indicator is on screen before network work.
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
 
+    const started = Date.now();
     try {
       try {
         await supabase.functions.invoke("bybit-spot-ticker-sync", { body: {} });
@@ -1590,6 +1590,13 @@ function Home({
     } catch {
       // load errors already handled inside loadAll
     } finally {
+      // Always show at least one full ~1.5s logo cycle (BingX-style).
+      // If the network is slower, keep showing until the real request finishes.
+      const minVisibleMs = 1500;
+      const wait = Math.max(0, minVisibleMs - (Date.now() - started));
+      if (wait > 0) {
+        await new Promise<void>((r) => window.setTimeout(r, wait));
+      }
       isRefreshingRef.current = false;
       setIsRefreshing(false);
       pullYRef.current = 0;
@@ -1732,7 +1739,7 @@ function Home({
           <div style={styles.pullRefreshFixed} aria-busy="true" aria-label="Refreshing">
             <div style={styles.pullLogoWrap}>
               <div style={styles.pullLogoGlow}>
-                <CeoExchangeEmblemAnimated size={48} className="ceo-pull-logo" />
+                <CeoExchangeEmblemAnimated size={52} className="ceo-pull-logo" />
               </div>
             </div>
           </div>
@@ -4771,21 +4778,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pullRefreshFixed: {
     position: "fixed",
-    top: "calc(56px + env(safe-area-inset-top, 0px))",
+    top: "calc(52px + env(safe-area-inset-top, 0px))",
     left: 0,
     right: 0,
-    height: 64,
-    zIndex: 50,
+    height: 72,
+    zIndex: 60,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     pointerEvents: "none",
-    background: "linear-gradient(180deg, rgba(5,5,5,0.92) 0%, rgba(5,5,5,0.55) 70%, transparent 100%)",
+    background: "transparent",
   },
   pullLogoWrap: {
     position: "relative",
-    width: 56,
-    height: 56,
+    width: 64,
+    height: 64,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -4796,17 +4803,18 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "none",
   },
   pullLogoGlow: {
-    width: 48,
-    height: 48,
+    width: 56,
+    height: 56,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
     zIndex: 1,
-    background: "transparent",
+    background: "radial-gradient(circle, rgba(200,210,225,0.22) 0%, rgba(120,140,160,0.08) 45%, transparent 70%)",
     border: "none",
     borderRadius: "50%",
-    boxShadow: "0 0 28px 10px rgba(168,181,196,0.28), 0 0 48px 16px rgba(140,160,185,0.12)",
+    boxShadow: "0 0 32px 12px rgba(190,205,225,0.35), 0 0 60px 20px rgba(150,170,195,0.15)",
+    filter: "brightness(1.35) contrast(1.1)",
   },
   pullLogo: {
     width: 40,
@@ -4836,6 +4844,10 @@ if (typeof document !== "undefined") {
       input::placeholder, textarea::placeholder { color: #68686d; opacity: 1; }
       select option { background: #101010; color: #fff; }
       button:disabled { opacity: .5; cursor: not-allowed; }
+      /* Pull-to-refresh logo must read on pure black */
+      .ceo-pull-logo {
+        filter: brightness(1.45) contrast(1.15) drop-shadow(0 0 10px rgba(200,215,235,0.45));
+      }
       @keyframes spin {
         to { transform: rotate(360deg); }
       }
