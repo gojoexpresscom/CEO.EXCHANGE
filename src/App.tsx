@@ -276,6 +276,8 @@ export default function App() {
   }
 
   if (!ready) {
+    // Same CeoExchangeEmblemAnimated motion/timing as Home pull-to-refresh
+    // (1.5s cycle: converge → 300ms hold → separate → repeat).
     return (
       <div
         style={{
@@ -291,7 +293,22 @@ export default function App() {
             "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
         }}
       >
-        <CeoExchangeEmblemAnimated size={96} className="ceo-app-boot-logo" />
+        <div
+          style={{
+            width: 112,
+            height: 112,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "50%",
+            background:
+              "radial-gradient(circle, rgba(200,210,225,0.22) 0%, transparent 70%)",
+            boxShadow: "0 0 36px 14px rgba(190,205,225,0.3)",
+            filter: "brightness(1.45) contrast(1.12)",
+          }}
+        >
+          <CeoExchangeEmblemAnimated size={96} className="ceo-app-boot-logo" />
+        </div>
         <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "0.02em" }}>
           Loading…
         </span>
