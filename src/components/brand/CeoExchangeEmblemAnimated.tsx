@@ -417,14 +417,14 @@ const css = `
       transform: translate(-58px, -28px);
     }
 
-    18% {
+    16% {
       opacity: 1;
-      transform: translate(-32px, -15px);
+      transform: translate(-30px, -14px);
     }
 
-    32% {
+    30% {
       opacity: 1;
-      transform: translate(-10px, -5px);
+      transform: translate(-8px, -4px);
     }
 
     /* Arrived — complete logo */
@@ -475,14 +475,14 @@ const css = `
       transform: translate(58px, 28px);
     }
 
-    18% {
+    16% {
       opacity: 1;
-      transform: translate(32px, 15px);
+      transform: translate(30px, 14px);
     }
 
-    32% {
+    30% {
       opacity: 1;
-      transform: translate(10px, 5px);
+      transform: translate(8px, 4px);
     }
 
     40% {
