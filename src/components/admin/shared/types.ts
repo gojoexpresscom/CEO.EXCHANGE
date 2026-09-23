@@ -16,7 +16,8 @@ export type AdminSection =
   | "finance-withdrawals"
   | "finance-deposits"
   | "finance-fees"
-  | "p2p-disputes";
+  | "p2p-disputes"
+  | "binance-operations";
 
 export interface AdminProfile {
   id: string;
@@ -24,3 +25,4 @@ export interface AdminProfile {
   role: string;
   nickname?: string | null;
 }
+
