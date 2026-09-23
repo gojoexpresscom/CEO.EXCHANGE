@@ -1558,16 +1558,29 @@ function Home({
     return Math.min(PULL_MAX, damped);
   };
 
+  /** True only when the page is scrolled fully to the top (window or content). */
+  const isAtScrollTop = () => {
+    const elTop = contentRef.current?.scrollTop ?? 0;
+    const winTop = typeof window !== "undefined"
+      ? (window.scrollY || document.documentElement.scrollTop || 0)
+      : 0;
+    return elTop <= 0 && winTop <= 0;
+  };
+
   const runRefresh = useCallback(async () => {
-    // Guard with ref so concurrent touch/releases cannot start a second refresh
     if (!userId || isRefreshingRef.current) return;
     isRefreshingRef.current = true;
     setIsRefreshing(true);
-    // Lock indicator at compact refresh height; ignore further drag until done
     pullYRef.current = PULL_THRESHOLD;
     setPullY(PULL_THRESHOLD);
+
+    // Let React paint the refresh indicator BEFORE the network work.
+    // Without this, a fast loadAll can batch true→false and never show the logo.
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+
     try {
-      // Real network work — indicator stays mounted for the full duration
       try {
         await supabase.functions.invoke("bybit-spot-ticker-sync", { body: {} });
       } catch (syncErr) {
@@ -1577,7 +1590,6 @@ function Home({
     } catch {
       // load errors already handled inside loadAll
     } finally {
-      // Success or failure: always clear. No timers — network is the source of truth.
       isRefreshingRef.current = false;
       setIsRefreshing(false);
       pullYRef.current = 0;
@@ -1586,14 +1598,12 @@ function Home({
   }, [userId, loadAll]);
 
   const onPullStart = (e: React.TouchEvent) => {
-    const el = contentRef.current;
-    if (!el || el.scrollTop > 0 || isRefreshingRef.current) return;
+    if (isRefreshingRef.current || !isAtScrollTop()) return;
     pullStartY.current = e.touches[0].clientY;
   };
   const onPullMove = (e: React.TouchEvent) => {
     if (pullStartY.current == null || isRefreshingRef.current) return;
-    const el = contentRef.current;
-    if (el && el.scrollTop > 0) {
+    if (!isAtScrollTop()) {
       pullStartY.current = null;
       pullYRef.current = 0;
       setPullY(0);
@@ -1614,7 +1624,6 @@ function Home({
     if (pullStartY.current == null) return;
     pullStartY.current = null;
     if (isRefreshingRef.current) return;
-    // Use ref so we do not miss threshold due to a stale React state read
     if (pullYRef.current >= PULL_THRESHOLD) {
       void runRefresh();
     } else {
@@ -1694,35 +1703,36 @@ function Home({
           if (top <= 180) setFabOpen(false);
         }}
       >
-        {/* Compact BingX-style pull-to-refresh — short travel, soft resistance */}
-        {(isRefreshing || pullY > 6) && (
+        {/* Pull distance spacer (in-flow) while dragging */}
+        {pullY > 6 && !isRefreshing && (
           <div
             style={{
               ...styles.pullRefresh,
-              height: isRefreshing ? 56 : Math.max(pullY, 0),
-              opacity: isRefreshing ? 1 : Math.min(pullY / PULL_THRESHOLD, 1),
-              transition: isRefreshing || pullY === 0
-                ? "height 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease-out"
-                : "none",
+              height: Math.max(pullY, 0),
+              opacity: Math.min(pullY / PULL_THRESHOLD, 1),
             }}
-            aria-busy={isRefreshing}
-            aria-label={isRefreshing ? "Refreshing" : undefined}
+            aria-hidden="true"
           >
             <div style={styles.pullLogoWrap}>
               <div
                 style={{
-                  ...styles.pullLogo,
-                  transform: isRefreshing
-                    ? "scale(1)"
-                    : `scale(${0.72 + Math.min(pullY / PULL_THRESHOLD, 1) * 0.28})`,
-                  opacity: isRefreshing ? 1 : Math.min(0.35 + (pullY / PULL_THRESHOLD) * 0.65, 1),
-                  transition: isRefreshing
-                    ? "transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease-out"
-                    : "none",
+                  ...styles.pullLogoGlow,
+                  transform: `scale(${0.72 + Math.min(pullY / PULL_THRESHOLD, 1) * 0.28})`,
+                  opacity: Math.min(0.4 + (pullY / PULL_THRESHOLD) * 0.6, 1),
                 }}
               >
-                {/* Single mount so the animation is not torn down on release → refreshing */}
                 <CeoExchangeEmblemAnimated size={40} className="ceo-pull-logo" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Locked refresh indicator — fixed under header so it cannot scroll away or vanish on paint */}
+        {isRefreshing && (
+          <div style={styles.pullRefreshFixed} aria-busy="true" aria-label="Refreshing">
+            <div style={styles.pullLogoWrap}>
+              <div style={styles.pullLogoGlow}>
+                <CeoExchangeEmblemAnimated size={48} className="ceo-pull-logo" />
               </div>
             </div>
           </div>
@@ -4745,35 +4755,58 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 16,
   },
   pullRefresh: {
-    position: "sticky",
-    top: 0,
+    position: "relative",
     zIndex: 30,
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     gap: 0,
-    overflow: "hidden",
+    overflow: "visible",
     flexShrink: 0,
     background: "transparent",
-    backgroundColor: "transparent",
     boxShadow: "none",
     border: "none",
     pointerEvents: "none",
   },
+  pullRefreshFixed: {
+    position: "fixed",
+    top: "calc(56px + env(safe-area-inset-top, 0px))",
+    left: 0,
+    right: 0,
+    height: 64,
+    zIndex: 50,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    background: "linear-gradient(180deg, rgba(5,5,5,0.92) 0%, rgba(5,5,5,0.55) 70%, transparent 100%)",
+  },
   pullLogoWrap: {
     position: "relative",
-    width: 44,
-    height: 44,
+    width: 56,
+    height: 56,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     overflow: "visible",
     background: "transparent",
-    backgroundColor: "transparent",
     border: "none",
     borderRadius: 0,
     boxShadow: "none",
+  },
+  pullLogoGlow: {
+    width: 48,
+    height: 48,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    zIndex: 1,
+    background: "transparent",
+    border: "none",
+    borderRadius: "50%",
+    boxShadow: "0 0 28px 10px rgba(168,181,196,0.28), 0 0 48px 16px rgba(140,160,185,0.12)",
   },
   pullLogo: {
     width: 40,
