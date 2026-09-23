@@ -57,6 +57,13 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
   const [marketType, setMarketType] = useState<MarketType>("Spot");
   const [sortFilter, setSortFilter] = useState<SortFilter>("Hot");
   const [quote, setQuote] = useState<(typeof QUOTES)[number] | "All">("USDT");
+  /** Keep skeleton/reveal presentation for exactly 3s on open. */
+  const [marketsRevealReady, setMarketsRevealReady] = useState(false);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setMarketsRevealReady(true), 3000);
+    return () => window.clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -355,7 +362,7 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
         </div>
       )}
 
-      {loading && !spotMarkets.length && !perpetualMarkets.length && (
+      {((!marketsRevealReady) || (loading && !spotMarkets.length && !perpetualMarkets.length)) && !emptyReason && (
         <div style={styles.skeletonWrap} aria-busy="true" aria-label="Loading markets">
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="ceo-market-skeleton-row" style={styles.skeletonRow}>
@@ -399,7 +406,7 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
       )}
 
       <div style={styles.list}>
-        {filtered.map((m, i) => {
+        {marketsRevealReady && !(loading && !spotMarkets.length && !perpetualMarkets.length) && filtered.map((m, i) => {
           const up = (m.change_24h ?? 0) >= 0;
           const hasPrice = m.last_price != null;
           return (
