@@ -538,6 +538,8 @@ function Home({
   const [pullY, setPullY] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const pullStartY = React.useRef<number | null>(null);
+  const pullYRef = React.useRef(0);
+  const isRefreshingRef = React.useRef(false);
   const contentRef = React.useRef<HTMLElement | null>(null);
 
   const notify = useCallback((message: string) => {
@@ -1557,12 +1559,15 @@ function Home({
   };
 
   const runRefresh = useCallback(async () => {
-    if (!userId || isRefreshing) return;
+    // Guard with ref so concurrent touch/releases cannot start a second refresh
+    if (!userId || isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     setIsRefreshing(true);
+    // Lock indicator at compact refresh height; ignore further drag until done
+    pullYRef.current = PULL_THRESHOLD;
     setPullY(PULL_THRESHOLD);
     try {
-      // Best-effort: wake the existing Bybit ticker sync Edge Function so
-      // market_tickers stay fresh. Failures must not block Home refresh.
+      // Real network work — indicator stays mounted for the full duration
       try {
         await supabase.functions.invoke("bybit-spot-ticker-sync", { body: {} });
       } catch (syncErr) {
@@ -1572,40 +1577,48 @@ function Home({
     } catch {
       // load errors already handled inside loadAll
     } finally {
-      // No artificial delay — exit as soon as the real request settles (success or failure)
+      // Success or failure: always clear. No timers — network is the source of truth.
+      isRefreshingRef.current = false;
       setIsRefreshing(false);
+      pullYRef.current = 0;
       setPullY(0);
     }
-  }, [userId, isRefreshing, loadAll]);
+  }, [userId, loadAll]);
 
   const onPullStart = (e: React.TouchEvent) => {
     const el = contentRef.current;
-    if (!el || el.scrollTop > 0 || isRefreshing) return;
+    if (!el || el.scrollTop > 0 || isRefreshingRef.current) return;
     pullStartY.current = e.touches[0].clientY;
   };
   const onPullMove = (e: React.TouchEvent) => {
-    if (pullStartY.current == null || isRefreshing) return;
+    if (pullStartY.current == null || isRefreshingRef.current) return;
     const el = contentRef.current;
     if (el && el.scrollTop > 0) {
       pullStartY.current = null;
+      pullYRef.current = 0;
       setPullY(0);
       return;
     }
     const dy = e.touches[0].clientY - pullStartY.current;
     if (dy > 0) {
-      // Resist native overscroll while pulling at top
       if (e.cancelable) e.preventDefault();
-      setPullY(dampPull(dy));
+      const next = dampPull(dy);
+      pullYRef.current = next;
+      setPullY(next);
     } else {
+      pullYRef.current = 0;
       setPullY(0);
     }
   };
   const onPullEnd = () => {
     if (pullStartY.current == null) return;
     pullStartY.current = null;
-    if (pullY >= PULL_THRESHOLD) {
+    if (isRefreshingRef.current) return;
+    // Use ref so we do not miss threshold due to a stale React state read
+    if (pullYRef.current >= PULL_THRESHOLD) {
       void runRefresh();
     } else {
+      pullYRef.current = 0;
       setPullY(0);
     }
   };
@@ -1708,11 +1721,8 @@ function Home({
                     : "none",
                 }}
               >
-                {isRefreshing ? (
-                  <CeoExchangeEmblemAnimated size={40} className="ceo-pull-logo" />
-                ) : (
-                  <CeoExchangeEmblemAnimated size={36} className="ceo-pull-logo" />
-                )}
+                {/* Single mount so the animation is not torn down on release → refreshing */}
+                <CeoExchangeEmblemAnimated size={40} className="ceo-pull-logo" />
               </div>
             </div>
           </div>
