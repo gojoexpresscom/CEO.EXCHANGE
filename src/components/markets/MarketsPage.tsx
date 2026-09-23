@@ -197,6 +197,26 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
 
   return (
     <div style={styles.page}>
+      <style>{`
+        .ceo-pair-row {
+          opacity: 0;
+          transform: translateY(6px);
+          animation: ceoPairFadeIn 0.35s ease forwards;
+          animation-delay: calc(var(--pair-index, 0) * 50ms);
+        }
+        @keyframes ceoPairFadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ceo-pair-row {
+            opacity: 1;
+            transform: none;
+            animation: none;
+          }
+        }
+      `}</style>
+
       <div style={styles.searchWrap}>
         <span style={styles.searchIcon}>⌕</span>
         <input
@@ -343,7 +363,7 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
       )}
 
       <div style={styles.list}>
-        {filtered.map((m) => {
+        {filtered.map((m, i) => {
           const up = (m.change_24h ?? 0) >= 0;
           const hasPrice = m.last_price != null;
           return (
@@ -351,7 +371,11 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
               key={`${m.kind}-${m.symbol}`}
               role="button"
               tabIndex={0}
-              style={styles.row}
+              className="ceo-pair-row"
+              style={{
+                ...styles.row,
+                ["--pair-index" as string]: i,
+              } as CSSProperties}
               onClick={() => onTrade(m.symbol)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
