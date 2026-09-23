@@ -1547,70 +1547,67 @@ function Home({
 
   const referralLink = referral?.referral_code ? `${window.location.origin}/?ref=${encodeURIComponent(referral.referral_code)}` : "";
 
-  const PULL_THRESHOLD = 64;
-  const PULL_MAX = 100;
+  const PULL_THRESHOLD = 55;
+  const PULL_MAX = 90;
 
-  /** BingX-style rubber-band: soft resistance, short travel, harder as you pull farther. */
+  /** Soft resistance — content follows finger but hard-caps at ~90px. */
   const dampPull = (rawDy: number) => {
     if (rawDy <= 0) return 0;
-    // Diminishing returns: visual distance grows slower as finger travels farther
-    const damped = rawDy * 0.38 / (1 + rawDy / 220);
+    const damped = rawDy * 0.55;
     return Math.min(PULL_MAX, damped);
-  };
-
-  /** True only when the page is scrolled fully to the top (window or content). */
-  const isAtScrollTop = () => {
-    const elTop = contentRef.current?.scrollTop ?? 0;
-    const winTop = typeof window !== "undefined"
-      ? (window.scrollY || document.documentElement.scrollTop || 0)
-      : 0;
-    return elTop <= 0 && winTop <= 0;
   };
 
   const runRefresh = useCallback(async () => {
     if (!userId || isRefreshingRef.current) return;
     isRefreshingRef.current = true;
     setIsRefreshing(true);
-    pullYRef.current = PULL_THRESHOLD;
-    setPullY(PULL_THRESHOLD);
+    // Settle to a compact locked position (~56px)
+    pullYRef.current = 56;
+    setPullY(56);
 
-    // 1) Force a paint so the fixed indicator is on screen before network work.
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    });
-
-    const started = Date.now();
-    try {
+    // Real data refresh in parallel with the 2s visual cycle
+    const network = (async () => {
       try {
-        await supabase.functions.invoke("bybit-spot-ticker-sync", { body: {} });
-      } catch (syncErr) {
-        console.warn("[Home] bybit-spot-ticker-sync invoke failed:", syncErr);
+        try {
+          await supabase.functions.invoke("bybit-spot-ticker-sync", { body: {} });
+        } catch (syncErr) {
+          console.warn("[Home] bybit-spot-ticker-sync invoke failed:", syncErr);
+        }
+        await loadAll(userId);
+      } catch {
+        // load errors handled inside loadAll
       }
-      await loadAll(userId);
-    } catch {
-      // load errors already handled inside loadAll
-    } finally {
-      // Always show at least one full ~1.5s logo cycle (BingX-style).
-      // If the network is slower, keep showing until the real request finishes.
-      const minVisibleMs = 1500;
-      const wait = Math.max(0, minVisibleMs - (Date.now() - started));
-      if (wait > 0) {
-        await new Promise<void>((r) => window.setTimeout(r, wait));
-      }
-      isRefreshingRef.current = false;
-      setIsRefreshing(false);
-      pullYRef.current = 0;
-      setPullY(0);
-    }
+    })();
+
+    // Visual: keep indicator for ~2 seconds (animation loops while mounted)
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 2000);
+    });
+    await network;
+
+    isRefreshingRef.current = false;
+    setIsRefreshing(false);
+    pullYRef.current = 0;
+    setPullY(0);
   }, [userId, loadAll]);
 
   const onPullStart = (e: React.TouchEvent) => {
-    if (isRefreshingRef.current || !isAtScrollTop()) return;
+    if (isRefreshingRef.current) return;
+    const winTop = typeof window !== "undefined"
+      ? (window.scrollY || document.documentElement.scrollTop || 0)
+      : 0;
+    const elTop = contentRef.current?.scrollTop ?? 0;
+    if (winTop > 0 || elTop > 0) return;
     pullStartY.current = e.touches[0].clientY;
   };
+
   const onPullMove = (e: React.TouchEvent) => {
     if (pullStartY.current == null || isRefreshingRef.current) return;
-    if (!isAtScrollTop()) {
+    const winTop = typeof window !== "undefined"
+      ? (window.scrollY || document.documentElement.scrollTop || 0)
+      : 0;
+    const elTop = contentRef.current?.scrollTop ?? 0;
+    if (winTop > 0 || elTop > 0) {
       pullStartY.current = null;
       pullYRef.current = 0;
       setPullY(0);
@@ -1618,6 +1615,7 @@ function Home({
     }
     const dy = e.touches[0].clientY - pullStartY.current;
     if (dy > 0) {
+      // Block native overscroll so the page follows our pull distance
       if (e.cancelable) e.preventDefault();
       const next = dampPull(dy);
       pullYRef.current = next;
@@ -1627,6 +1625,7 @@ function Home({
       setPullY(0);
     }
   };
+
   const onPullEnd = () => {
     if (pullStartY.current == null) return;
     pullStartY.current = null;
@@ -1638,6 +1637,69 @@ function Home({
       setPullY(0);
     }
   };
+
+  // Document-level non-passive touch so pull works when scroll is on window/body
+  React.useEffect(() => {
+    const atTop = () => {
+      const winTop = window.scrollY || document.documentElement.scrollTop || 0;
+      const elTop = contentRef.current?.scrollTop ?? 0;
+      return winTop <= 0 && elTop <= 0;
+    };
+
+    const start = (e: TouchEvent) => {
+      if (isRefreshingRef.current) return;
+      if (!atTop()) return;
+      // Ignore touches on inputs/buttons so normal UI still works
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, button, a, [role='button']")) return;
+      pullStartY.current = e.touches[0].clientY;
+    };
+
+    const move = (e: TouchEvent) => {
+      if (pullStartY.current == null || isRefreshingRef.current) return;
+      if (!atTop()) {
+        pullStartY.current = null;
+        pullYRef.current = 0;
+        setPullY(0);
+        return;
+      }
+      const dy = e.touches[0].clientY - pullStartY.current;
+      if (dy > 0) {
+        e.preventDefault(); // requires passive: false
+        const next = Math.min(90, dy * 0.55);
+        pullYRef.current = next;
+        setPullY(next);
+      } else {
+        // Finger moved up — cancel pull, allow normal scroll
+        pullStartY.current = null;
+        pullYRef.current = 0;
+        setPullY(0);
+      }
+    };
+
+    const end = () => {
+      if (pullStartY.current == null) return;
+      pullStartY.current = null;
+      if (isRefreshingRef.current) return;
+      if (pullYRef.current >= 55) {
+        void runRefresh();
+      } else {
+        pullYRef.current = 0;
+        setPullY(0);
+      }
+    };
+
+    document.addEventListener("touchstart", start, { passive: true });
+    document.addEventListener("touchmove", move, { passive: false });
+    document.addEventListener("touchend", end, { passive: true });
+    document.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", start);
+      document.removeEventListener("touchmove", move);
+      document.removeEventListener("touchend", end);
+      document.removeEventListener("touchcancel", end);
+    };
+  }, [runRefresh]);
 
   if (!userId && loading && !guestMode) {
     return (
@@ -1698,53 +1760,67 @@ function Home({
 
       {error && <div style={styles.errorBar}>{error}<button onClick={() => userId && loadAll(userId)} style={styles.retry}>Retry</button></div>}
 
+      {/* Pull-to-refresh indicator — fixed under header; content translates down to reveal it */}
+      {(isRefreshing || pullY > 4) && (
+        <div
+          style={{
+            position: "fixed",
+            top: "calc(56px + env(safe-area-inset-top, 0px))",
+            left: 0,
+            right: 0,
+            height: isRefreshing ? 56 : Math.max(pullY, 0),
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            zIndex: 25,
+            opacity: isRefreshing ? 1 : Math.min(pullY / PULL_THRESHOLD, 1),
+            transition: isRefreshing || pullY === 0
+              ? "height 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease-out"
+              : "none",
+          }}
+          aria-busy={isRefreshing}
+          aria-label={isRefreshing ? "Refreshing" : undefined}
+        >
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(200,210,225,0.22) 0%, transparent 70%)",
+              boxShadow: "0 0 28px 10px rgba(190,205,225,0.32)",
+              filter: "brightness(1.45) contrast(1.12)",
+              transform: isRefreshing
+                ? "scale(1)"
+                : `scale(${0.7 + Math.min(pullY / PULL_THRESHOLD, 1) * 0.3})`,
+            }}
+          >
+            <CeoExchangeEmblemAnimated size={44} className="ceo-pull-logo" />
+          </div>
+        </div>
+      )}
+
       <main
         ref={contentRef as React.RefObject<HTMLElement>}
-        style={styles.content}
-        onTouchStart={onPullStart}
-        onTouchMove={onPullMove}
-        onTouchEnd={onPullEnd}
+        style={{
+          ...styles.content,
+          // Content physically follows the finger (max ~90px)
+          transform: pullY > 0 || isRefreshing ? `translateY(${isRefreshing ? 56 : pullY}px)` : undefined,
+          transition: isRefreshing || pullY === 0
+            ? "transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)"
+            : "none",
+          willChange: pullY > 0 || isRefreshing ? "transform" : undefined,
+        }}
         onScroll={(e) => {
           const top = (e.target as HTMLElement).scrollTop;
           setShowFab(top > 180);
           if (top <= 180) setFabOpen(false);
         }}
       >
-        {/* Pull distance spacer (in-flow) while dragging */}
-        {pullY > 6 && !isRefreshing && (
-          <div
-            style={{
-              ...styles.pullRefresh,
-              height: Math.max(pullY, 0),
-              opacity: Math.min(pullY / PULL_THRESHOLD, 1),
-            }}
-            aria-hidden="true"
-          >
-            <div style={styles.pullLogoWrap}>
-              <div
-                style={{
-                  ...styles.pullLogoGlow,
-                  transform: `scale(${0.72 + Math.min(pullY / PULL_THRESHOLD, 1) * 0.28})`,
-                  opacity: Math.min(0.4 + (pullY / PULL_THRESHOLD) * 0.6, 1),
-                }}
-              >
-                <CeoExchangeEmblemAnimated size={40} className="ceo-pull-logo" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Locked refresh indicator — fixed under header so it cannot scroll away or vanish on paint */}
-        {isRefreshing && (
-          <div style={styles.pullRefreshFixed} aria-busy="true" aria-label="Refreshing">
-            <div style={styles.pullLogoWrap}>
-              <div style={styles.pullLogoGlow}>
-                <CeoExchangeEmblemAnimated size={52} className="ceo-pull-logo" />
-              </div>
-            </div>
-          </div>
-        )}
-        {(guestMode || !userId) ? (
+{(guestMode || !userId) ? (
           <section style={styles.guestHero}>
             <div style={styles.guestHeroGlow} />
             <p style={styles.guestHeroKicker}>CEO Exchange</p>
@@ -4420,7 +4496,7 @@ const styles: Record<string, React.CSSProperties> = {
   badgeDot: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 99, background: "#f04438", color: "#fff", fontSize: 9, fontWeight: 800, display: "grid", placeItems: "center", padding: "0 3px", lineHeight: 1 },
   errorBar: { margin: "12px 16px 0", padding: 12, border: "1px solid #4c2025", borderRadius: 12, background: "#1d0c0e", color: "#ff9aa3", fontSize: 13 },
   retry: { float: "right", border: 0, background: "transparent", color: GOLD_LIGHT, cursor: "pointer" },
-  content: { width: "min(760px,100%)", margin: "0 auto", padding: "8px 14px 20px" },
+  content: { position: "relative" as const, width: "min(760px,100%)", margin: "0 auto", padding: "8px 14px 20px" },
   balanceCard: { padding: "18px 4px 8px", background: "transparent", border: 0, borderRadius: 0, minHeight: 0 },
   balanceTop: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   totalAssetsLabel: { display: "inline-flex", alignItems: "center", gap: 6, color: "#9a9a9a", fontSize: 13, fontWeight: 500, marginBottom: 6 },
@@ -4837,7 +4913,7 @@ if (typeof document !== "undefined") {
     const style = document.createElement("style");
     style.id = id;
     style.textContent = `
-      html, body, #root { margin: 0; min-height: 100%; background: #050505; }
+      html, body, #root { margin: 0; min-height: 100%; background: #050505; overscroll-behavior-y: contain; }
       *, *::before, *::after { box-sizing: border-box; }
       button, input, textarea, select { font: inherit; -webkit-tap-highlight-color: transparent; }
       input, textarea, select { color-scheme: dark; }
