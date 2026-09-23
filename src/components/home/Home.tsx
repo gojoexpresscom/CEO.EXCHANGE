@@ -1925,10 +1925,11 @@ function Home({
               </button>
             ))}
           </div>
-          {filteredMarkets.map((m) => (
+          {filteredMarkets.map((m, i) => (
             <MarketRow
               key={m.symbol}
               market={m}
+              pairIndex={i}
               favorite={favoriteSymbols.includes(m.symbol)}
               onFavorite={() => toggleFavorite(m.symbol)}
               onTrade={() => onTrade(m.symbol)}
@@ -2590,7 +2591,7 @@ const promoStyles: Record<string, React.CSSProperties> = {
   counter: { position: "absolute", right: 12, top: 12, fontSize: 11, color: "#777" },
 };
 
-const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, onTrade }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void }) {
+const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, onTrade, pairIndex = 0 }: { market: Market; favorite: boolean; onFavorite: () => void; onTrade: () => void; pairIndex?: number }) {
   const change = market.change_24h == null ? null : Number(market.change_24h);
   const up = change != null && change >= 0;
   const base = (market.base_asset || market.symbol?.split(/[\/\-]/)[0] || "?").toUpperCase();
@@ -2631,7 +2632,15 @@ const MarketRow = React.memo(function MarketRow({ market, favorite, onFavorite, 
   }, [market.last_price]);
 
   return (
-    <button type="button" style={styles.marketRow} onClick={onTrade}>
+    <button
+      type="button"
+      className="ceo-pair-row"
+      style={{
+        ...styles.marketRow,
+        ["--pair-index" as string]: pairIndex,
+      } as React.CSSProperties}
+      onClick={onTrade}
+    >
       <span
         style={{ ...styles.starHit, ...(favorite ? styles.starButtonActive : {}) }}
         onClick={(e) => { e.stopPropagation(); onFavorite(); }}
@@ -4731,10 +4740,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   brandedLogoWrap: {
     position: "relative",
-    width: 88,
-    height: 88,
+    width: 112,
+    height: 112,
     display: "grid",
     placeItems: "center",
+    borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(200,210,225,0.22) 0%, transparent 70%)",
+    boxShadow: "0 0 36px 14px rgba(190,205,225,0.3)",
+    filter: "brightness(1.45) contrast(1.12)",
   },
   brandedLogo: {
     width: 72,
@@ -4921,6 +4934,23 @@ if (typeof document !== "undefined") {
       select option { background: #101010; color: #fff; }
       button:disabled { opacity: .5; cursor: not-allowed; }
       /* Pull-to-refresh logo must read on pure black */
+      .ceo-pair-row {
+        opacity: 0;
+        transform: translateY(6px);
+        animation: ceoPairFadeIn 0.35s ease forwards;
+        animation-delay: calc(var(--pair-index, 0) * 50ms);
+      }
+      @keyframes ceoPairFadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ceo-pair-row {
+          opacity: 1;
+          transform: none;
+          animation: none;
+        }
+      }
       .ceo-pull-logo {
         filter: brightness(1.45) contrast(1.15) drop-shadow(0 0 10px rgba(200,215,235,0.45));
       }
