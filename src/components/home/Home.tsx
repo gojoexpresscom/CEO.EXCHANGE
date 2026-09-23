@@ -489,6 +489,9 @@ function Home({
   // TradingPage already uses for the Trading page.
   const [marketPairs, setMarketPairs] = useState<Market[]>([]);
   const [marketsLoading, setMarketsLoading] = useState(true);
+  /** Home market card: keep skeleton/reveal presentation for a fixed 3s. */
+  const [homeMarketRevealReady, setHomeMarketRevealReady] = useState(false);
+
   const [marketsError, setMarketsError] = useState<string | null>(null);
   /** CoinGecko market_cap_desc rank by base asset (same source as TradingPage hot markets). */
   const [hotCapRank, setHotCapRank] = useState<Map<string, number>>(() => new Map());
@@ -974,6 +977,12 @@ function Home({
     void loadSecondary(id);
   }, [loadCritical, loadSecondary]);
 
+
+  // Home market card loading presentation lasts exactly 3s (visual only).
+  React.useEffect(() => {
+    const id = window.setTimeout(() => setHomeMarketRevealReady(true), 3000);
+    return () => window.clearTimeout(id);
+  }, []);
 
   // Market pairs are public catalog data — fetch immediately so the list is
   // not blocked behind auth + the rest of loadAll (posts, wallets, …).
@@ -1925,17 +1934,41 @@ function Home({
               </button>
             ))}
           </div>
-          {filteredMarkets.map((m, i) => (
-            <MarketRow
-              key={m.symbol}
-              market={m}
-              pairIndex={i}
-              favorite={favoriteSymbols.includes(m.symbol)}
-              onFavorite={() => toggleFavorite(m.symbol)}
-              onTrade={() => onTrade(m.symbol)}
-            />
-          ))}
-          {!filteredMarkets.length && (
+          {(!homeMarketRevealReady || (marketsLoading && filteredMarkets.length === 0)) && marketCategory === "Spot" && marketTab !== "Favorites" ? (
+            <div className="home-market-skeleton-wrap" aria-busy="true" aria-label="Loading markets">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="home-pair-loading-row"
+                  style={{ ["--pair-index" as string]: i } as React.CSSProperties}
+                >
+                  <div className="home-sk-row">
+                    <div className="home-sk-block home-sk-star" />
+                    <div className="home-sk-block home-sk-icon" />
+                    <div className="home-sk-info">
+                      <div className="home-sk-block home-sk-name" />
+                      <div className="home-sk-block home-sk-vol" />
+                    </div>
+                    <div className="home-sk-price-col">
+                      <div className="home-sk-block home-sk-price" />
+                      <div className="home-sk-block home-sk-chg" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredMarkets.length > 0 ? (
+            filteredMarkets.map((m, i) => (
+              <MarketRow
+                key={m.symbol}
+                market={m}
+                pairIndex={i}
+                favorite={favoriteSymbols.includes(m.symbol)}
+                onFavorite={() => toggleFavorite(m.symbol)}
+                onTrade={() => onTrade(m.symbol)}
+              />
+            ))
+          ) : (
             <Empty
               text={
                 marketCategory === "Futures"
@@ -1950,13 +1983,9 @@ function Home({
                   ? "No losers right now."
                   : marketsError
                   ? `Market data error: ${marketsError}`
-                  : marketsLoading
-                  ? "Loading markets…"
                   : marketPairs.length === 0
                   ? "No active trading pairs found."
-                  : marketTab === "Hot" && (hotRankLoading || hotCapRank.size === 0)
-                  ? "Waiting for live market data…"
-                  : "Waiting for live market data…"
+                  : "No markets match this filter."
               }
             />
           )}
@@ -4934,6 +4963,44 @@ if (typeof document !== "undefined") {
       select option { background: #101010; color: #fff; }
       button:disabled { opacity: .5; cursor: not-allowed; }
       /* Pull-to-refresh logo must read on pure black */
+
+      .home-pair-loading-row {
+        opacity: 0;
+        transform: translateY(6px);
+        animation: homePairFadeIn 0.35s ease forwards;
+        animation-delay: calc(var(--pair-index, 0) * 50ms);
+      }
+      @keyframes homePairFadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .home-sk-row {
+        display: grid;
+        grid-template-columns: 28px 32px 1fr 90px;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 8px;
+        border-bottom: 1px solid #121212;
+        min-height: 52px;
+      }
+      .home-sk-block {
+        background: linear-gradient(90deg, #121212 0%, #1a1a1a 40%, #242424 50%, #1a1a1a 60%, #121212 100%);
+        background-size: 200% 100%;
+        animation: homeSkShimmer 1.2s linear infinite;
+        border-radius: 6px;
+      }
+      @keyframes homeSkShimmer {
+        0% { background-position: 100% 0; }
+        100% { background-position: -100% 0; }
+      }
+      .home-sk-star { width: 14px; height: 14px; margin: 0 auto; border-radius: 3px; }
+      .home-sk-icon { width: 32px; height: 32px; border-radius: 50%; }
+      .home-sk-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+      .home-sk-name { width: 55%; height: 12px; }
+      .home-sk-vol { width: 40%; height: 10px; }
+      .home-sk-price-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+      .home-sk-price { width: 64px; height: 12px; }
+      .home-sk-chg { width: 48px; height: 18px; border-radius: 6px; }
       .ceo-pair-row {
         opacity: 0;
         transform: translateY(6px);
