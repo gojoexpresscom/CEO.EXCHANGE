@@ -19,6 +19,7 @@ import DepositRecords from "./finance/DepositRecords";
 import FeesCharges from "./finance/FeesCharges";
 import P2PDisputes from "./P2PDisputes";
 import Promotions from "./Promotions";
+import BinanceOperations from "./BinanceOperations";
 
 const NAV_ITEMS: { id: AdminSection; label: string; icon: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: "⊞" },
@@ -34,6 +35,7 @@ const NAV_ITEMS: { id: AdminSection; label: string; icon: string }[] = [
   { id: "settings", label: "Settings", icon: "⚙" },
   { id: "roles", label: "Roles & Permissions", icon: "🔑" },
   { id: "logs", label: "Logs", icon: "📋" },
+  { id: "binance-operations", label: "Binance Operations", icon: "⬡" },
 ];
 
 const FINANCE_ITEMS: { id: AdminSection; label: string }[] = [
@@ -104,6 +106,7 @@ export default function AdminPortal() {
       case "finance-deposits": return <DepositRecords />;
       case "finance-fees": return <FeesCharges />;
       case "p2p-disputes": return <P2PDisputes />;
+      case "binance-operations": return <BinanceOperations />;
       default: return <Dashboard />;
     }
   }
