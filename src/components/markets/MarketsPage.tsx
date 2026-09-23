@@ -198,21 +198,46 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
   return (
     <div style={styles.page}>
       <style>{`
+        /* Real pair reveal after data loads */
         .ceo-pair-row {
           opacity: 0;
           transform: translateY(6px);
-          animation: ceoPairFadeIn 0.35s ease forwards;
+          animation: ceoPairReveal 0.35s ease forwards;
           animation-delay: calc(var(--pair-index, 0) * 50ms);
         }
-        @keyframes ceoPairFadeIn {
+        @keyframes ceoPairReveal {
           from { opacity: 0; transform: translateY(6px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+
+        /* Skeleton shimmer — loading only */
+        .ceo-sk-block {
+          background: linear-gradient(
+            90deg,
+            #121212 0%,
+            #1a1a1a 40%,
+            #242424 50%,
+            #1a1a1a 60%,
+            #121212 100%
+          );
+          background-size: 200% 100%;
+          animation: ceoSkeletonShimmer 1.2s linear infinite;
+          border-radius: 6px;
+        }
+        @keyframes ceoSkeletonShimmer {
+          0% { background-position: 100% 0; }
+          100% { background-position: -100% 0; }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .ceo-pair-row {
             opacity: 1;
             transform: none;
             animation: none;
+          }
+          .ceo-sk-block {
+            animation: none;
+            background: #1a1a1a;
           }
         }
       `}</style>
@@ -331,9 +356,20 @@ export default function MarketsPage({ onTrade, onNavigate }: Props) {
       )}
 
       {loading && !spotMarkets.length && !perpetualMarkets.length && (
-        <div style={styles.skeletonWrap}>
+        <div style={styles.skeletonWrap} aria-busy="true" aria-label="Loading markets">
           {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} style={styles.skeletonRow} />
+            <div key={i} className="ceo-market-skeleton-row" style={styles.skeletonRow}>
+              <div className="ceo-sk-block" style={styles.skStar} />
+              <div className="ceo-sk-block" style={styles.skIcon} />
+              <div style={styles.skInfo}>
+                <div className="ceo-sk-block" style={styles.skName} />
+                <div className="ceo-sk-block" style={styles.skVol} />
+              </div>
+              <div style={styles.skPriceCol}>
+                <div className="ceo-sk-block" style={styles.skPrice} />
+                <div className="ceo-sk-block" style={styles.skChg} />
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -719,13 +755,32 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     cursor: "pointer",
   },
-  skeletonWrap: { padding: "0 16px" },
+  skeletonWrap: { padding: "0 8px" },
   skeletonRow: {
-    height: 52,
-    marginBottom: 8,
-    borderRadius: 10,
-    background:
-      "linear-gradient(90deg, #121212 25%, #1a1a1a 50%, #121212 75%)",
-    backgroundSize: "200% 100%",
+    display: "grid",
+    gridTemplateColumns: "28px 32px 1fr 90px",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 8px",
+    borderBottom: "1px solid #121212",
+    minHeight: 52,
   },
+  skStar: { width: 14, height: 14, borderRadius: 3, justify: "0 auto" },
+  skIcon: { width: 32, height: 32, borderRadius: "50%" },
+  skInfo: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  skName: { width: "55%", height: 12, borderRadius: 4 },
+  skVol: { width: "40%", height: 10, borderRadius: 4 },
+  skPriceCol: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  skPrice: { width: 64, height: 12, borderRadius: 4 },
+  skChg: { width: 48, height: 18, borderRadius: 6 },
 };
