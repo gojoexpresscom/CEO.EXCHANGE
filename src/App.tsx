@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useRef, useEffect, useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
 import Home from "./components/home/Home";
 import TradingPage from "./components/trade/TradingPage";
@@ -58,6 +58,9 @@ function getRoute(): AppRoute {
  */
 export default function App() {
   const [ready, setReady] = useState(false);
+  /** Boot screen shows at least 3s so the CEO loading motion is visible. */
+  const bootStartedAt = useRef(Date.now());
+  const sessionReadyRef = useRef(false);
   const [authenticated, setAuthenticated] = useState(false);
   /** When true, show existing AuthScreen (Assets/Profile/order gate). */
   const [showAuthGate, setShowAuthGate] = useState(false);
@@ -71,6 +74,16 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     let profileSeq = 0;
+
+    const markReady = () => {
+      if (sessionReadyRef.current) return;
+      sessionReadyRef.current = true;
+      const elapsed = Date.now() - bootStartedAt.current;
+      const wait = Math.max(0, 3000 - elapsed);
+      window.setTimeout(() => {
+        if (alive) setReady(true);
+      }, wait);
+    };
 
     async function loadProfileFlags(userId: string) {
       const seq = ++profileSeq;
@@ -143,7 +156,7 @@ export default function App() {
 
       const session = data.session;
       setAuthenticated(Boolean(session));
-      setReady(true);
+      markReady();
       console.log("[App] session resolved", {
         authenticated: Boolean(session),
         ms: Math.round(performance.now() - started),
@@ -163,13 +176,13 @@ export default function App() {
       if (!alive) return;
 
       if (event === "PASSWORD_RECOVERY") {
-        setReady(true);
+        markReady();
         return;
       }
 
       // SIGNED_OUT / TOKEN_REFRESHED / SIGNED_IN — update auth without blocking UI
       setAuthenticated(Boolean(session));
-      setReady(true);
+      markReady();
 
       if (session?.user?.id) {
         // Avoid treating INITIAL_SESSION as a second full bootstrap if getSession already ran;
